@@ -228,6 +228,8 @@ class ItemKind(StrEnum):
     ENV_SECTION = "env_section"
     ENV_FILE = "env_file"
     POSTGRES_DATABASE = "postgres_database"
+    # The SQLite copy and each of its `-wal`, `-shm`, and `-journal` side files; the side
+    # files are separate items whose `name` is their own absolute path (FR-039).
     SQLITE_FILE = "sqlite_file"
     COMPOSE_OVERRIDE = "compose_override"
     COMPOSE_PROJECT = "compose_project"

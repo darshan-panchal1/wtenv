@@ -595,7 +595,11 @@ reported with its own code and that `doctor` changed nothing.
 - **FR-039**: `down` and `gc` MUST remove only what wtenv created and recorded in the
   registry. A matching name alone MUST never be enough. For compose, this means the
   containers, networks, and volumes that belong to a project recorded in the registry;
-  volumes and networks declared external MUST never be removed.
+  volumes and networks declared external MUST never be removed. For SQLite, this also covers
+  the `-wal`, `-shm`, and `-journal` files in the same directory as a recorded SQLite
+  database file, named as the database file name plus that suffix (constitution v1.0.2,
+  Principle II). These side files MUST be deleted only together with the database file,
+  never on their own, and only when the database file itself is recorded in the registry.
 - **FR-040**: `down`, `gc`, and the uninstall action MUST support `--dry-run`, which changes
   nothing and lists exactly what would be removed.
 - **FR-041**: `down` and `gc` MUST report exactly what they removed, what was already

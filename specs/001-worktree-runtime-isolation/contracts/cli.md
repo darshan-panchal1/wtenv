@@ -177,6 +177,11 @@ databases; wtenv's section of the env file (and the file itself when wtenv creat
 nothing else is in it); registry entry and port block; and, when this was the last
 registered worktree of the repository, wtenv's entries in `.git/info/exclude` (FR-085).
 
+- SQLite side files (FR-039): each existing `-wal`, `-shm`, or `-journal` file beside the
+  recorded SQLite copy appears as its own item in `removed` (or in `would_remove` with
+  `--dry-run`), with `kind` `sqlite_file` and `name` the file's absolute path, the same shape
+  as the database file's own item. A side file that does not exist is not listed. Side files
+  are removed only together with the recorded database file.
 - A worktree with no registry entry: success, nothing changed (FR-043).
 - A recorded item that is already gone is reported under `already_absent`; that is not an
   error (FR-042).
@@ -206,7 +211,8 @@ Releases registry entries whose worktrees git confirms are gone, across all repo
    entry and report it under `skipped_busy`.
 3. Holding the lock, classify the entry again. If it is no longer `orphaned`, skip it
    (FR-074).
-4. Release it as `down` would.
+4. Release it as `down` would. This includes the SQLite side-file items, which are listed
+   under `removed` and, with `--dry-run`, under `would_remove`, as for `down`.
 
 Entries that are `unverifiable` are reported under `kept` with their reason. Entries of
 existing worktrees are not touched and not listed. Neither `kept` nor `skipped_busy` changes

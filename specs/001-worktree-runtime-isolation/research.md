@@ -695,8 +695,8 @@ it. Documented, <https://www.sqlite.org/wal.html>: "The WAL file is part of the 
 state of the database and should be kept with the database if the database is copied or
 moved." Documented, <https://www.sqlite.org/howtocorrupt.html>, section 1.4: "if the journal
 file does exist, it must be kept together with the database to avoid corruption." Leaving a
-stale journal beside a fresh copy is the mispairing that section describes. This is the one
-constitution deviation listed in the plan.
+stale journal beside a fresh copy is the mispairing that section describes. This deviation
+from Principle II was resolved by constitution v1.0.2.
 
 **Port holders in `doctor`.** A port in use belongs to the worktree when a container of the
 worktree's compose project publishes it, or when `lsof` shows the listening process's
