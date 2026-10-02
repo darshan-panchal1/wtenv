@@ -65,14 +65,17 @@ requirements (FR-055 not delivered), six user stories.
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-Checked against constitution **v1.0.1**, before research and again after the design in
-data-model.md and contracts/. Result both times: **pass, with one deviation**, listed under
-Violations and justified in Complexity Tracking.
+Checked against constitution **v1.0.2**. Result: **pass, with no violations**.
+
+The check was first made against v1.0.1, before research and again after the design in
+data-model.md and contracts/. Both times it passed with one deviation, the SQLite side
+files. Constitution v1.0.2 amended Principle II to cover them, so the deviation is resolved
+and the design is unchanged. It is listed under Resolved deviations.
 
 | Principle | Status | How the design meets it |
 |-----------|--------|-------------------------|
 | I. Local-First | Pass | Postgres host must be `localhost`, `127.0.0.1`, or `::1`, checked before connecting (FR-025). Docker endpoint must be local, checked before any engine call (FR-035). No other network code; no telemetry or update check. |
-| II. Never Destroy User Data | **Deviation (1)** | Everything is recorded before it is created (resource states). Removal needs a registry record, never a name match. Compose resources are selected by the recorded project's label (v1.0.1). `down`, `gc`, and `hook uninstall` have `--dry-run` and report every item. `up` never removes a database, container, or volume. The deviation is the SQLite side files. |
+| II. Never Destroy User Data | Pass | Everything is recorded before it is created (resource states). Removal needs a registry record, never a name match. Compose resources are selected by the recorded project's label (v1.0.1). A recorded SQLite file's `-wal`, `-shm`, and `-journal` side files are removed with it; that record covers them (v1.0.2). `down`, `gc`, and `hook uninstall` have `--dry-run` and report every item. `up` never removes a database, container, or volume. |
 | III. Deterministic & Idempotent | Pass | Port assignment and names are pure functions of the registry and configuration. Registry access is locked; writes are atomic. Interrupted work is resumed from recorded states. |
 | IV. Agent-Native | Pass | `--json` on every command, including `--version`. One stable code and one exit status per error category. No prompts, no `--interactive` flag. |
 | V. Zero-Config Default | Pass | Ports and env file work with no `wtenv.toml`. Database and compose are on only when their table is in `wtenv.toml`. |
@@ -86,13 +89,19 @@ Violations and justified in Complexity Tracking.
 
 ### Violations
 
-1. **Principle II, first rule, read literally.** On removing a worktree's SQLite database,
-   wtenv also deletes that file's `-wal`, `-shm`, and `-journal` side files. SQLite created
-   them, not wtenv, and they are not recorded one by one. See Complexity Tracking.
-   Recommended follow-up: a constitution patch (v1.0.2) that says a database's side files
-   belong to the database, as v1.0.1 did for compose resources.
+None.
 
-No other violation was found.
+### Resolved deviations
+
+1. **SQLite side files (Principle II): resolved by constitution v1.0.2.** On removing a
+   worktree's SQLite database, wtenv also deletes that file's `-wal`, `-shm`, and
+   `-journal` side files. SQLite created them, not wtenv, and they are not recorded one by
+   one, so under v1.0.1 this departed from Principle II's first rule, read literally.
+   Constitution v1.0.2 says that "created and recorded" also covers these side files next
+   to a recorded SQLite database file, as v1.0.1 did for compose resources. The
+   justification written for the deviation is kept in Complexity Tracking.
+
+No other deviation was found.
 
 ## Project Structure
 
@@ -339,6 +348,10 @@ All are in spec.md, under "Decided during planning" in the Clarifications sectio
 
 > **Fill ONLY if Constitution Check has violations that must be justified**
 
-| Violation | Why Needed | Simpler Alternative Rejected Because |
-|-----------|------------|-------------------------------------|
-| Principle II: deleting a SQLite database's `-wal`, `-shm`, and `-journal` files, which SQLite created and the registry does not list one by one | They are part of the database's stored state (sqlite.org/wal.html). A journal left beside a later fresh copy is paired with the wrong database, which SQLite documents as a cause of corruption (sqlite.org/howtocorrupt.html, section 1.4) | Deleting only the recorded file leaves stale side files that can corrupt the next copy. Recording them at creation is not possible, because SQLite creates them later, while the app runs |
+No open violations. The row below is the justification written for the SQLite side-file
+deviation, which constitution v1.0.2 resolved (see Constitution Check). It is kept as the
+reason for that amendment.
+
+| Resolved deviation | Why Needed | Simpler Alternative Rejected Because |
+|--------------------|------------|-------------------------------------|
+| Principle II as it stood in v1.0.1: deleting a SQLite database's `-wal`, `-shm`, and `-journal` files, which SQLite created and the registry does not list one by one | They are part of the database's stored state (sqlite.org/wal.html). A journal left beside a later fresh copy is paired with the wrong database, which SQLite documents as a cause of corruption (sqlite.org/howtocorrupt.html, section 1.4) | Deleting only the recorded file leaves stale side files that can corrupt the next copy. Recording them at creation is not possible, because SQLite creates them later, while the app runs |
