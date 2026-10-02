@@ -32,7 +32,8 @@ agents and scripts, not from a person at a keyboard.
   (the three checks in FR-045 all hold).
 - **Unverifiable**: recorded in the registry, the worktree cannot be found as recorded, but
   its removal is not confirmed. Examples: its drive is not mounted, its repository was moved
-  or deleted, or its directory was deleted by hand while git still lists it.
+  or deleted, its directory was deleted by hand while git still lists it, or it was moved
+  and no `up` or `down` has run in it since.
 
 ## Clarifications
 
@@ -83,6 +84,20 @@ Asked during the session:
   attempt, does not retry, and never closes connections to the template. Nothing is created
   for the database step, the worktree is left `incomplete`, and a later `up` completes it.
   The error is its own stable category with the JSON code `template_in_use`.
+
+Decided during planning (evidence in `research.md`, values in `plan.md` and `contracts/`):
+
+- Q: A linked worktree keeps its git directory when it is moved, so which rule decides its
+  identity? → A: The git directory is the identity. A moved linked worktree keeps its port
+  block and database, and the next `up` or `down` in it records the new location. Until
+  then it shows as `unverifiable` (moved) and `gc` leaves it alone. A moved repository
+  still gets new identities, because its git directories change.
+- Q: Claude Code's worktree hooks replace its own git logic instead of notifying, and it
+  disables git hooks when it creates a worktree. What does v1 do? → A: The Claude Code
+  integration is dropped from v1, as the "Claude Code hooks" assumption allows. FR-055 and
+  User Story 5 scenario 4 are not delivered. v1 has no automatic `down`.
+- Q: Does `down` remove wtenv's lines from `.git/info/exclude`? → A: Only when the last
+  registered worktree of that repository is torn down.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -273,9 +288,9 @@ worktree's variables are present.
    created, **Then** the worktree is still created, and the provisioning error is reported.
 3. **Given** the git hook is installed, **When** a branch is switched inside an existing
    worktree, **Then** the hook does nothing.
-4. **Given** the Claude Code integration is installed, **When** Claude Code creates a
-   worktree, **Then** it is provisioned; and **When** Claude Code removes it, **Then** its
-   resources are released as `wtenv down` would.
+4. *Not delivered in v1 (see FR-055).* **Given** the Claude Code integration is installed,
+   **When** Claude Code creates a worktree, **Then** it is provisioned; and **When** Claude
+   Code removes it, **Then** its resources are released as `wtenv down` would.
 5. **Given** a provisioned worktree, **When** `wtenv exec -- <command>` is run, **Then** the
    command sees the worktree's variables, and wtenv exits with the command's exit status.
 6. **Given** a worktree that is not provisioned, **When** `wtenv exec -- <command>` is run,
@@ -377,9 +392,22 @@ reported with its own code and that `doctor` changed nothing.
   `wtenv.toml` in that worktree.
 - **`wtenv.toml` changes after provisioning**: the next `up` applies the change without
   touching the existing database.
-- **A worktree or repository directory is moved or renamed, or one of its parent
-  directories is renamed**: wtenv treats the new location as a new worktree. The old entry
-  becomes unverifiable. `gc` keeps it and its database until it is named explicitly.
+- **A linked worktree is moved or renamed** (with `git worktree move`, or by hand): it keeps
+  its identity, its port block, and its database. Until `up` or `down` is run in it at the
+  new location, its entry is unverifiable and `gc` does not touch it. The next `up` or
+  `down` there records the new location and reports the move.
+- **A repository directory is moved or renamed, or one of its parent directories is
+  renamed**: the git directories of its worktrees change, so wtenv treats them as new
+  worktrees. The old entries become unverifiable. `gc` keeps them and their databases until
+  they are named explicitly.
+- **A worktree is removed and git gives a later worktree the same git directory, before
+  `gc` has run** (for example a worktree created again under the same directory name): wtenv
+  cannot tell the two apart. The new worktree takes over the old entry, including its port
+  block and its database. Running `gc` in between, or `down` and then `up`, gives it a
+  fresh database.
+- **A tool creates a worktree with git hooks switched off** (Claude Code does): the
+  auto-provisioning hook does not run. The worktree stays unprovisioned until `wtenv up` is
+  run in it.
 - **A worktree directory is deleted by hand while git still lists it**: it is unverifiable,
   because git cannot tell this apart from an unmounted drive. It becomes orphaned once the
   developer runs `git worktree prune`. wtenv never runs `git worktree prune` itself.
@@ -420,10 +448,16 @@ reported with its own code and that `doctor` changed nothing.
 
 **Worktree identity**
 
-- **FR-006**: Each worktree MUST have one identity, formed from its repository and its
-  resolved location on disk. Two worktrees MUST never share an identity, and the same
-  worktree MUST resolve to the same identity no matter which subdirectory or path spelling
-  (for example a symbolic link) is used to reach it.
+- **FR-006**: Each worktree MUST have one identity: the resolved location of its git
+  directory, which git keeps separate for every worktree and which lies inside its
+  repository. Two worktrees MUST never share an identity, and the same worktree MUST resolve
+  to the same identity no matter which subdirectory or path spelling (for example a symbolic
+  link) is used to reach it. wtenv MUST also record the worktree's resolved location on
+  disk.
+- **FR-084**: When `up` or `down` runs in a worktree whose identity is already in the
+  registry under a different location, wtenv MUST treat it as the same worktree, MUST keep
+  its port block, database, and compose project, MUST record the new location, and MUST
+  report the move.
 
 **Port allocation**
 
@@ -554,6 +588,10 @@ reported with its own code and that `doctor` changed nothing.
   its port block; its database; its compose project's containers, networks, and volumes;
   its generated override; wtenv's section of its env file (and the env file itself when
   wtenv created it and nothing else is in it); and its registry entry.
+- **FR-085**: `down` and `gc` MUST remove wtenv's entries from the repository's
+  `.git/info/exclude` only when they release the last registered worktree of that
+  repository. Until then the entries MUST stay, because the file is shared by every
+  worktree of the repository.
 - **FR-039**: `down` and `gc` MUST remove only what wtenv created and recorded in the
   registry. A matching name alone MUST never be enough. For compose, this means the
   containers, networks, and volumes that belong to a project recorded in the registry;
@@ -592,7 +630,8 @@ reported with its own code and that `doctor` changed nothing.
   the exit status of `gc`.
 - **FR-073**: `gc` MUST release an unverifiable entry only when its recorded worktree path
   is named explicitly on the command line (the option name is set during planning). `gc`
-  MUST refuse a named path at which a worktree still exists. This form MUST support
+  MUST refuse a named path at which a worktree still exists, and MUST refuse an entry whose
+  worktree was moved and still exists at another location. This form MUST support
   `--dry-run` and MUST report what it removed in the same way as a plain `gc`.
 - **FR-074**: `gc` MUST repeat the FR-045 checks for each entry immediately before
   releasing it, while holding that entry's worktree lock (FR-076), and MUST skip the entry
@@ -625,10 +664,14 @@ reported with its own code and that `doctor` changed nothing.
 - **FR-054**: Git provides no event when a worktree is removed. Resources of worktrees
   removed through plain git MUST therefore be reclaimed by `gc`, and MUST show as `orphaned`
   in `ls` and `doctor` until then.
-- **FR-055**: If planning confirms that Claude Code exposes worktree lifecycle hooks, wtenv
-  MUST offer an opt-in integration that runs `up` when Claude Code creates a worktree and
-  `down` when Claude Code removes one. This integration is the only automatic `down` in v1.
-  Installing it MUST NOT alter settings that wtenv did not write.
+- **FR-055**: *Not delivered in v1.* The intended integration ran `up` when Claude Code
+  created a worktree and `down` when Claude Code removed one. Planning found that Claude
+  Code's worktree lifecycle hooks replace its own worktree creation and removal instead of
+  notifying, and that Claude Code switches git hooks off when it creates a worktree
+  (`research.md`, section 2). The integration is therefore dropped, as the "Claude Code
+  hooks" assumption allows, and its alternatives are recorded in `docs/roadmap.md`. In v1 a
+  worktree that Claude Code creates is provisioned by running `wtenv up` in it, and is
+  reclaimed by `gc` after Claude Code removes it. v1 has no automatic `down`.
 - **FR-056**: `exec -- <command>` MUST run the command with the worktree's wtenv-managed
   variables added to the current environment, MUST pass standard input, output, and error
   through unchanged, and MUST exit with the command's exit status.
@@ -746,7 +789,7 @@ reported with its own code and that `doctor` changed nothing.
 
 ### Key Entities
 
-- **Worktree**: a git worktree, identified by its repository and its resolved location.
+- **Worktree**: a git worktree, identified by its git directory. Its location is recorded.
   Has a status: provisioned, unprovisioned, incomplete, orphaned, or unverifiable.
 - **Registry**: the per-user record of every worktree wtenv has provisioned and every
   resource it created for each. The single source of truth for teardown.
@@ -761,8 +804,8 @@ reported with its own code and that `doctor` changed nothing.
   to it.
 - **Configuration**: the optional `wtenv.toml` in a worktree, holding the settings listed in
   FR-063.
-- **Auto-provisioning hook**: the opt-in git hook, and the Claude Code integration, that
-  run wtenv on worktree lifecycle events.
+- **Auto-provisioning hook**: the opt-in git hook that runs `wtenv up` when a worktree is
+  created.
 
 ## Success Criteria *(mandatory)*
 
@@ -810,18 +853,21 @@ reported with its own code and that `doctor` changed nothing.
   start it. A developer who wants it started adds a post-up command.
 - **`down` removes the database**: the worktree's database and its data are deleted by
   `down`, and connections still open to it are closed. `--dry-run` shows this in advance.
-- **Removal automation**: git has no hook for worktree removal, so with plain git, removed
-  worktrees are cleaned up by running `gc`. Automatic `down` on removal exists only through
-  the Claude Code integration.
-- **Claude Code hooks**: Claude Code is understood to expose worktree creation and removal
-  hooks. Their exact behaviour is verified during planning. If they turn out to be
-  unusable, the integration is dropped from v1 and nothing else in this spec changes.
+- **Removal automation**: git has no hook for worktree removal, so removed worktrees are
+  cleaned up by running `gc`. v1 has no automatic `down`.
+- **Claude Code hooks**: Claude Code was understood to expose worktree creation and removal
+  hooks, with their exact behaviour to be verified during planning, and the integration to
+  be dropped from v1 if they turned out to be unusable. Planning verified them
+  (`research.md`, section 2): they replace Claude Code's own worktree handling, so the
+  integration is dropped and nothing else in this spec changes.
 - **Block stability**: a block is stable from `up` until `down` or `gc`. A worktree that is
   torn down and provisioned again may receive a different block.
-- **Identity follows location**: a worktree that is moved or renamed is a new worktree to
-  wtenv. Its old entry is unverifiable, not orphaned, so its database is kept until the
-  developer names it to `gc`. The same holds for a worktree on a removable or network
-  volume that is not mounted when `gc` runs.
+- **Identity follows the git directory**: a linked worktree that is moved or renamed keeps
+  its git directory, so it stays the same worktree and keeps its resources. A repository
+  that is moved or renamed gets new git directories, so its worktrees are new worktrees to
+  wtenv; their old entries are unverifiable, not orphaned, and their databases are kept
+  until the developer names them to `gc`. A worktree on a removable or network volume that
+  is not mounted when `gc` runs is also unverifiable.
 - **Hand-deleted worktrees need `git worktree prune`**: a worktree directory deleted
   without git is reclaimed by `gc` only after the developer runs `git worktree prune`,
   which is the developer's own statement that the worktree is gone.
