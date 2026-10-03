@@ -209,9 +209,15 @@ command's result model is printed even on failure. Typer 0.27 ships its own copy
 wtenv never imports `click`.
 
 **`up`** (provision.py): identify → worktree lock → all checks that need no resource →
-registry transaction (entry, block, port assignment, exclude block) → database → compose
-override and verification → env section → post-up commands → mark `provisioned`. Order and
-failure behaviour are in contracts/cli.md.
+registry transaction (entry saved as `incomplete`, block, port assignment, exclude patterns
+recorded) → exclude block → database → compose override and verification → env section →
+post-up commands → mark `provisioned`. Order and failure behaviour are in contracts/cli.md.
+
+**Write order (Principle II: nothing is created that is not already recorded).** The
+registry entry, with state `incomplete`, is saved before the `.git/info/exclude` block, the
+env file, the override file, or any database or file wtenv creates. Each later step updates
+the registry as it completes; the entry becomes `provisioned` only in the final save
+(data-model.md, "Write order of `up`").
 
 **`down`** (teardown.py): worktree lock → compose project → databases → env section →
 registry entry, block, and (for the last worktree of a repository) exclude block. Items that

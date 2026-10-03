@@ -348,7 +348,8 @@ byte-identical. Automated by T039–T043; manual by quickstart.md sections 1 and
     the section are not returned. A value edited by hand inside the section is returned as
     it stands.
   - Reading a file with damaged markers → `env_file_unusable`, reason `markers_damaged`; a
-    missing file → `env_file_unusable`, reason `missing` (cli.md, `wtenv exec`).
+    missing file → `env_file_unusable`, reason `missing`; a file with neither marker line →
+    `env_file_unusable`, reason `no_section` (cli.md, `wtenv exec`).
 - [ ] T034 [P] [US1] Write failing tests for removing the section and finding duplicates in `tests/unit/test_envfile_remove.py`
   - Removing takes out the section, both markers included, and nothing else; a recorded
     `added_newline` is removed again (FR-079).
@@ -371,7 +372,7 @@ byte-identical. Automated by T039–T043; manual by quickstart.md sections 1 and
   - Adding the same patterns again changes nothing; adding never removes a line.
   - Removing the block takes out the markers and the lines between them, nothing else (FR-085).
   - Damaged markers → `unsupported`, reason `markers_damaged`.
-- [ ] T038 [US1] Implement adding patterns and removing the block in `src/wtenv/exclude.py`
+- [ ] T038 [US1] Implement adding patterns (`add_patterns`) and removing the block in `src/wtenv/exclude.py`
 
 ### 3E. `wtenv up` (`provision.py`, `output.py`, `cli.py`)
 
@@ -399,18 +400,24 @@ byte-identical. Automated by T039–T043; manual by quickstart.md sections 1 and
     lock → `worktree_busy`, nothing changed; after that holder is killed, `up` runs at once
     (FR-077, FR-078).
 - [ ] T041 [P] [US1] Write failing recovery tests for `up` in `tests/integration/test_recovery.py`
-  - For each step of `up` that changes something, run `up` in a child process with one
-    function replaced by a call to `os._exit(137)`, then run `up` normally:
-    - registry step: the first call of `wtenv.registry.save` (the step-8 transaction is
-      never saved);
-    - env-file step: `wtenv.envfile.write_section` (step 8 saved, the section not written);
-    - completion: the call of `wtenv.registry.save` that marks the entry `provisioned`
-      (section written, entry not yet `provisioned`).
-  - After the env-file and completion interruptions, the entry exists with `state`
-    `incomplete` and a block; after the registry interruption, no entry exists. In all three
-    cases nothing exists that the registry does not record (FR-067).
-  - The second run exits 0, the entry ends `provisioned`, and the block is the one recorded
-    at the interruption, where there was one (FR-069).
+  - Write order (data-model.md, Write order of `up`). Run `up` in a child process that is
+    stopped with `os._exit(137)` at one point, then run `up` normally. The four points:
+    - after the registry step: the first call of `wtenv.registry.save` runs, then the
+      process exits (entry saved, exclude block not written);
+    - after the exclude step: `wtenv.exclude.add_patterns` runs, then the process exits
+      (exclude block written, env file not written);
+    - after the env-file step: `wtenv.envfile.write_section` runs, then the process exits
+      (section written, its record still `creating`);
+    - before the completion step: the call of `wtenv.registry.save` that marks the entry
+      `provisioned` is replaced by the exit (env-file record `created`, entry not yet
+      `provisioned`).
+  - At every point, the entry exists with `state` `incomplete` and a block, and every
+    resource that exists was recorded before it was created: each line of the exclude block
+    is in the entry's `exclude_patterns`, and an env file or section that exists has an
+    env-file record. Nothing exists that the registry does not record (FR-067).
+  - The second run finishes the work: it exits 0, the exclude block and the section are
+    written, the env-file record is `created`, the entry ends `provisioned`, and the block is
+    the one recorded at the interruption (FR-069).
 - [ ] T042 [US1] Add failing tests for env-file and configuration errors to `tests/integration/test_us1_ports_env.py`
   - Env file path is a directory, has no parent directory, is not writable, is tracked by git,
     or has damaged markers → exit 7 with `details.reason` `is_directory`, `parent_missing`,
@@ -441,9 +448,12 @@ byte-identical. Automated by T039–T043; manual by quickstart.md sections 1 and
 - [ ] T045 [US1] Implement the registry step of `up` in `src/wtenv/provision.py`
   - Step 8, in one registry transaction: create the entry as `incomplete`, or record a new
     location for a known identity (FR-084); allocate a block when the entry has none; assign
-    ports; record the env file as `creating`; add the env file's pattern to the exclude block
-    (files.md). The search and the write share the transaction (FR-013); the registry lock
-    is not held outside it (FR-068).
+    ports; record the env file as `creating` and its pattern in `exclude_patterns`; save.
+    The search and the write share the transaction (FR-013); the registry lock is held only
+    for this transaction and for writing the exclude block (FR-068).
+  - Only after that save: add the entry's `exclude_patterns` to the exclude block, under the
+    registry lock (files.md). Nothing is created before the entry is saved (data-model.md,
+    Write order of `up`).
 - [ ] T046 [US1] Implement the env-file step and completion of `up` in `src/wtenv/provision.py`
   - Step 11: write the section; mark the env-file record `created` with `created_file` and
     `added_newline` as observed. Step 13: mark the entry `provisioned`.
@@ -589,7 +599,8 @@ T059–T060, T062, T063, and T067. US2 scenario 5 (`down` removes only this data
     again (FR-082). The worktree lock is held during the copy; the registry lock is not
     (FR-068, FR-076).
   - A recorded database is kept as it is (FR-023); `up` never removes a database
-    (data-model.md, Resource states). SQLite adds `/.wtenv/` to the exclude patterns.
+    (data-model.md, Resource states). SQLite adds `/.wtenv/` to the exclude patterns in the
+    step-8 save, before the exclude block is written (data-model.md, Write order of `up`).
 - [ ] T065 [US2] Write `DATABASE_URL` and apply database configuration changes in `src/wtenv/provision.py`
   - The section holds the port variables in `ports` order, then `DATABASE_URL` when a database
     is configured and created (files.md). Config changes as in T062 (FR-065).
@@ -728,7 +739,8 @@ T079–T080.
     (research.md §4; FR-033).
 - [ ] T082 [US3] Implement the compose checks and the compose step in `src/wtenv/provision.py`
   - Step 5 before anything changes; step 6 counts published ports; step 8 records
-    `published` and adds the override's exclude pattern; step 10 writes and verifies.
+    `published` and the override's pattern in `exclude_patterns`, saved before the exclude
+    block is written; step 10 writes and verifies.
   - The project name is recorded before anything else is done for compose and never changed
     (data-model.md, Compose record); the override is recorded as `creating` before it is
     written. No container is started (FR-034). Compose code is imported only when
@@ -1033,6 +1045,9 @@ provisioned. `wtenv exec -- env` shows the worktree's variables. Automated by T1
       `markers_damaged`, command not run;
     - env file deleted → exit 125, `error.code` `env_file_unusable`, reason `missing`,
       command not run;
+    - env file present but with no wtenv section (both marker lines and the lines between
+      them deleted by hand) → exit 125, `error.code` `env_file_unusable`, reason
+      `no_section`, command not run;
     - `[database]` removed from `wtenv.toml` and `up` run again (the database stays
       recorded) → the command's environment has no `DATABASE_URL`.
   - Scenario 6 (FR-057): unprovisioned or incomplete → exit 125, command not run; with
@@ -1045,8 +1060,9 @@ provisioned. `wtenv exec -- env` shows the worktree's variables. Automated by T1
   - Status from `classify`; only `provisioned` runs. Environment: the current one plus every
     variable in wtenv's section of the recorded env file (`EnvFileRecord.path`), ports
     included, read and unquoted with `envfile.read_section` (reading R1). `wtenv.toml` is not
-    read; the registry supplies only the path. A missing file or damaged markers →
-    `env_file_unusable`, exit 125. Replace the process with `os.execvpe`, so signals reach
+    read; the registry supplies only the path. A missing file, a file with no section, or
+    damaged markers → `env_file_unusable` (reason `missing`, `no_section`, or
+    `markers_damaged`), exit 125. Replace the process with `os.execvpe`, so signals reach
     the command directly.
 - [ ] T123 [US5] Add `wtenv exec [--json] -- COMMAND [ARG]...` to `src/wtenv/cli.py`
   - `--` is required; any wtenv failure in `exec` exits 125 with the real code in
@@ -1324,7 +1340,7 @@ named in the last column.
 
 | # | Open point | Reading taken | Tasks | Recorded in |
 |---|------------|---------------|-------|-------------|
-| R1 | Where `exec` gets its variables, given that the registry holds no credentials | `exec` reads every managed variable, ports included, from wtenv's section of the recorded env file (`EnvFileRecord.path`), unquoted per files.md. It does not read `wtenv.toml`. A missing env file or damaged markers → `env_file_unusable`, exit 125. After `[database]` is removed, the section has no `DATABASE_URL`, so the command gets none | T033, T035, T121, T122 | cli.md, `wtenv exec`; files.md, Env file section |
+| R1 | Where `exec` gets its variables, given that the registry holds no credentials | `exec` reads every managed variable, ports included, from wtenv's section of the recorded env file (`EnvFileRecord.path`), unquoted per files.md. It does not read `wtenv.toml`. A missing env file, a file with no section, or damaged markers → `env_file_unusable`, exit 125. After `[database]` is removed, the section has no `DATABASE_URL`, so the command gets none | T033, T035, T121, T122 | cli.md, `wtenv exec`; files.md, Env file section |
 | R2 | A recorded SQLite copy already deleted by hand, with its side files still there | Report the copy as already absent and leave the side files (FR-039: "never on their own"). A later `up` then copies next to them | T087, T088 | cli.md, `wtenv down` |
 | R3 | FR-073 refuses `gc --release` "at which a worktree still exists" | A directory whose `.git` file points to a git directory that no longer exists is not a worktree, so `--release` can release it | T106, T110 | cli.md, `wtenv gc` |
 | R4 | files.md: install into an existing "POSIX shell" hook | A shebang naming `sh`, `bash`, `dash`, or `ksh` counts; anything else, or no shebang, is `hook_not_shell` | T116, T117 | files.md, Git hook block |

@@ -199,6 +199,26 @@ itself generated and recorded, such as the old env section or a moved override, 
 `up` and `down` and is reported in their results. It does not make `up` a destructive
 command that needs `--dry-run`.
 
+## Write order of `up`
+
+Principle II: nothing is created that is not already recorded. `up` therefore writes in this
+order:
+
+1. **Registry first.** The entry is saved, with `state` `incomplete`, its block, its ports,
+   its `exclude_patterns`, and the env file recorded as `creating`, before the
+   `.git/info/exclude` block, the env file, the override file, or any database or file wtenv
+   creates.
+2. **Then each step in turn** (cli.md, `wtenv up`, steps 8 to 12): the exclude block, the
+   database, the override file, the env section, the post-up commands. A step whose resource
+   the first save did not record saves it as `creating` before creating it. Each step
+   updates the entry as it completes (its resource `created`). The exclude block only gets
+   lines the entry already lists in `exclude_patterns`.
+3. **`provisioned` last.** The entry becomes `provisioned` only in the final save, after
+   every step has completed.
+
+An interruption at any point therefore leaves only resources the entry records, and the next
+`up` finishes the work from the recorded states (FR-067, FR-069).
+
 ---
 
 ## Status and the orphan checks

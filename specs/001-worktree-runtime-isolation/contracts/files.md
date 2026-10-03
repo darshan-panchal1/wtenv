@@ -30,7 +30,7 @@ a reason to remove something; only the registry is (FR-039).
 # >>> wtenv managed (rewritten by `wtenv up`; do not edit) >>>
 PORT=20010
 DB_PORT=20011
-DATABASE_URL='postgresql://myapp:s3cr%3Ft@localhost:5432/wtenv_feature_x_3f9a1c2b'
+DATABASE_URL=postgresql://myapp:s3cr%3Ft@localhost:5432/wtenv_feature_x_3f9a1c2b
 # <<< wtenv managed <<<
 ```
 

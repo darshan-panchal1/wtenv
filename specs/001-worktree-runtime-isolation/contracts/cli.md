@@ -73,7 +73,7 @@ Stable from the first release (Principle IV). One code, one exit status.
 | `not_in_worktree` | `cwd` |
 | `not_provisioned` | `path`; `status` (`unprovisioned`, `incomplete`, or `unverifiable`) |
 | `no_free_block` | `block_size`; `range` |
-| `env_file_unusable` | `path`; `reason`: `is_directory`, `parent_missing`, `not_writable`, `tracked_by_git`, `markers_damaged`, or `missing` (`exec` only) |
+| `env_file_unusable` | `path`; `reason`: `is_directory`, `parent_missing`, `not_writable`, `tracked_by_git`, `markers_damaged`, `missing` (`exec` only), or `no_section` (`exec` only) |
 | `dependency_unavailable` | `dependency`: `git`, `docker`, or `postgres`; `reason`: `not_installed`, `too_old`, `not_running`, `not_local`, `cannot_connect`, `authentication_failed`, or `permission_denied`; `required` and `found` for `too_old` |
 | `template_missing` | `kind` (`postgres` or `sqlite`); `template` |
 | `template_in_use` | `kind`; `template`; `connections` (Postgres only) |
@@ -268,8 +268,9 @@ wtenv exec [--json] -- COMMAND [ARG]...
 - The variables are those in wtenv's section of the recorded env file (`EnvFileRecord.path`),
   ports included, unquoted as in [files.md](files.md#env-file-section). `wtenv.toml` is not
   read. The developer's own lines in the env file are not loaded.
-- The env file missing, or its markers damaged: `env_file_unusable` (reason `missing` or
-  `markers_damaged`), reported with exit status 125; the command does not run.
+- The env file missing, present with no wtenv section (neither marker line), or its markers
+  damaged: `env_file_unusable` (reason `missing`, `no_section`, or `markers_damaged`),
+  reported with exit status 125; the command does not run.
 - The worktree must be `provisioned`. Otherwise wtenv fails with `not_provisioned` and does
   not run the command (FR-057).
 - wtenv replaces itself with the command, so standard input, output, error, and signals reach
