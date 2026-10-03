@@ -73,7 +73,7 @@ Stable from the first release (Principle IV). One code, one exit status.
 | `not_in_worktree` | `cwd` |
 | `not_provisioned` | `path`; `status` (`unprovisioned`, `incomplete`, or `unverifiable`) |
 | `no_free_block` | `block_size`; `range` |
-| `env_file_unusable` | `path`; `reason`: `is_directory`, `parent_missing`, `not_writable`, `tracked_by_git`, or `markers_damaged` |
+| `env_file_unusable` | `path`; `reason`: `is_directory`, `parent_missing`, `not_writable`, `tracked_by_git`, `markers_damaged`, or `missing` (`exec` only) |
 | `dependency_unavailable` | `dependency`: `git`, `docker`, or `postgres`; `reason`: `not_installed`, `too_old`, `not_running`, `not_local`, `cannot_connect`, `authentication_failed`, or `permission_denied`; `required` and `found` for `too_old` |
 | `template_missing` | `kind` (`postgres` or `sqlite`); `template` |
 | `template_in_use` | `kind`; `template`; `connections` (Postgres only) |
@@ -181,7 +181,8 @@ registered worktree of the repository, wtenv's entries in `.git/info/exclude` (F
   recorded SQLite copy appears as its own item in `removed` (or in `would_remove` with
   `--dry-run`), with `kind` `sqlite_file` and `name` the file's absolute path, the same shape
   as the database file's own item. A side file that does not exist is not listed. Side files
-  are removed only together with the recorded database file.
+  are removed only together with the recorded database file: when the recorded copy is
+  already gone, it is reported under `already_absent` and its side files are left in place.
 - A worktree with no registry entry: success, nothing changed (FR-043).
 - A recorded item that is already gone is reported under `already_absent`; that is not an
   error (FR-042).
@@ -191,6 +192,9 @@ registered worktree of the repository, wtenv's entries in `.git/info/exclude` (F
   invalid one produces the warning `config_ignored`.
 - The Postgres password for the drop comes from `wtenv.toml` when it resolves, otherwise from
   the libpq sources (`PGPASSWORD`, `~/.pgpass`).
+
+**Warnings**: `config_ignored`, `worktree_moved` (FR-084: the worktree moved since the last
+`up`; `down` records the new location before releasing).
 
 **JSON**: `DownResult`. **Exit statuses**: 0, 4, 13, 14, 15, 16.
 
@@ -222,7 +226,8 @@ the exit status.
 
 1. Every `PATH` is checked first. If any names an entry whose worktree still exists, at that
    path or (reason `moved`) at another, the command fails with `worktree_exists` and changes
-   nothing.
+   nothing. A directory whose `.git` file points to a git directory that no longer exists
+   is not a worktree, so its entry can be released.
 2. A `PATH` with no entry is reported under `no_entry`. That is not an error, so the command
    can be repeated safely.
 3. Each remaining entry is released as `down` would, with the same lock rule as plain `gc`.
@@ -260,8 +265,11 @@ wtenv exec [--json] -- COMMAND [ARG]...
 ```
 
 - `--` is required. Everything after it belongs to the command.
-- The variables are the worktree's port variables and, when a database is recorded,
-  `DATABASE_URL`. The developer's own lines in the env file are not loaded.
+- The variables are those in wtenv's section of the recorded env file (`EnvFileRecord.path`),
+  ports included, unquoted as in [files.md](files.md#env-file-section). `wtenv.toml` is not
+  read. The developer's own lines in the env file are not loaded.
+- The env file missing, or its markers damaged: `env_file_unusable` (reason `missing` or
+  `markers_damaged`), reported with exit status 125; the command does not run.
 - The worktree must be `provisioned`. Otherwise wtenv fails with `not_provisioned` and does
   not run the command (FR-057).
 - wtenv replaces itself with the command, so standard input, output, error, and signals reach

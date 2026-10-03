@@ -45,9 +45,12 @@ DATABASE_URL='postgresql://myapp:s3cr%3Ft@localhost:5432/wtenv_feature_x_3f9a1c2
   a line break, wtenv adds one first and records that it did; `down` removes that line break
   again (FR-079).
 - Later writes: the section is rewritten where it is, even if the developer moved it.
-- Damaged markers (a begin with no end, an end with no begin, or two sections): `up` fails
-  with `env_file_unusable`, reason `markers_damaged`; `down` reports the section under
-  `failed` (FR-081).
+- `wtenv exec` reads its variables from this section: each `NAME=value` line, with the
+  single quotes of a quoted value removed. Values are passed as they stand in the file, so a
+  hand edit inside the section reaches the command until the next `up` rewrites it.
+- Damaged markers (a begin with no end, an end with no begin, or two sections): `up` and
+  `exec` fail with `env_file_unusable`, reason `markers_damaged`; `down` reports the section
+  under `failed` (FR-081).
 - A file wtenv creates gets mode `0600` (FR-019). An existing file keeps its mode. Writes go
   through a temporary file and an atomic rename of the real path, so a symbolic link stays a
   link.
@@ -100,6 +103,8 @@ fi
 - Never changes the hook's exit status and never stops the rest of the hook (FR-052).
 - Existing hook content is never altered; `hook uninstall` removes exactly the block
   (FR-053).
+- An existing hook counts as a POSIX shell script when its shebang names `sh`, `bash`,
+  `dash`, or `ksh`. Any other shebang, or none, is `unsupported`, reason `hook_not_shell`.
 
 ## Compose override file
 

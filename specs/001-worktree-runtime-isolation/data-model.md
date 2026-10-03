@@ -194,6 +194,11 @@ things `up` deletes are files it generated and can generate again: its own env s
 `env_file` changed, and its own override file when the compose file moved or `[compose]` was
 removed. Removing data is the job of `down` and `gc`, which have `--dry-run` (Principle II).
 
+Reading of Principle II's "destructive command": regenerating or removing a file that wtenv
+itself generated and recorded, such as the old env section or a moved override, is part of
+`up` and `down` and is reported in their results. It does not make `up` a destructive
+command that needs `--dry-run`.
+
 ---
 
 ## Status and the orphan checks
