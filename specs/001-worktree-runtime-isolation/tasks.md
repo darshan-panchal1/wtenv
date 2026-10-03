@@ -1,0 +1,1267 @@
+---
+description: "Task list for wtenv per-worktree runtime isolation"
+---
+
+# Tasks: wtenv — Per-Worktree Runtime Isolation
+
+**Input**: Design documents from `/specs/001-worktree-runtime-isolation/`
+
+**Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/ (cli.md,
+config.md, files.md, json_models.py), quickstart.md, constitution v1.0.2
+
+**Tests**: included and written first. Constitution Principle VII and the maintainer's
+request require tests before implementation for the eight core areas of NFR-003: registry,
+port allocation, worktree identity, config parsing, env-file writing, database provisioning,
+compose override generation, and garbage collection.
+
+**Organization**: one phase per user story, in priority order. Inside a phase, tasks are in
+groups (`###`). Each group writes its tests first, sees them fail, then implements until they
+pass. Phase order follows plan.md, "Delivery order for `/speckit-tasks`".
+
+## Format: `[ID] [P?] [Story] Description`
+
+- **[P]**: can run at the same time as the [P] tasks next to it: different files, and no
+  dependency on an unfinished task. Whole groups can also run side by side; see
+  "Dependencies & Execution Order".
+- **[Story]**: US1–US6, the user stories of spec.md. Setup, Foundational, and Polish tasks
+  have no story label.
+- Every task line names the files it touches. Indented lines under a task belong to it: the
+  cases to cover, and rules quoted from the design documents.
+- Short names: `cli.md`, `config.md`, `files.md`, and `json_models.py` are in
+  `specs/001-worktree-runtime-isolation/contracts/`; `data-model.md`, `research.md`, and
+  `quickstart.md` are in the feature directory.
+
+## Path Conventions
+
+Single project with a `src/` layout (plan.md, Project Structure): `src/wtenv/`,
+`tests/unit/` (no git worktrees, no Docker), `tests/contract/`, `tests/integration/` (marker
+`integration`), `tests/fixtures/`, `scripts/`, `docs/`, `.github/workflows/`.
+
+## Working rules
+
+- **Test-first**: run a group's new tests and see them fail for the expected reason before
+  writing the code that makes them pass.
+- **One commit per task group**: commit a `###` group when its tests pass and the five gates
+  pass. Conventional Commits. No `Co-Authored-By`, "Generated with", or session-link trailers.
+- **The five gates**: `uv run pytest -m "not integration"`, `uv run pytest -m integration`,
+  `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy src`.
+- **Code**: full type hints, docstrings on public functions, plain functions and pydantic
+  models, no metaprogramming (Principle IX). `cli.py` imports implementations inside each
+  command function (NFR-001).
+- **Scope**: build only what a task says. An idea outside the spec goes to
+  `docs/roadmap.md` (Principle X). If a task is ambiguous, stop and ask.
+- **Readings R1–R4** (end of this file) are choices the design documents leave open. The
+  tasks that depend on one say so.
+
+---
+
+## Phase 1: Setup (Shared Infrastructure)
+
+**Purpose**: an installable, empty `wtenv` package on which all five gates pass.
+
+- [ ] T001 Create `pyproject.toml` (build, metadata, dependencies, console script) and `.python-version`
+  - `[build-system]` hatchling. `[project]`: `name = "wtenv"`, `requires-python = ">=3.11"`,
+    `dynamic = ["version"]` with `[tool.hatch.version] path = "src/wtenv/__init__.py"`.
+  - Runtime dependencies, exactly these five (plan.md, Build): `typer>=0.27,<1`,
+    `pydantic>=2.13,<3`, `psycopg[binary]>=3.3,<4`, `filelock>=4.0,<5`,
+    `platformdirs>=4.12,<5`.
+  - `[dependency-groups] dev`: `pytest`, `pytest-cov`, `ruff`, `mypy`, `testcontainers`.
+  - `[project.scripts] wtenv = "wtenv.cli:main"`. `.python-version` holds `3.12`.
+  - No `readme` key yet; T138 adds it with the README.
+- [ ] T002 Add tool settings to `pyproject.toml`: mypy, ruff, pytest, coverage
+  - `[tool.mypy]`: `strict = true`, `python_version = "3.11"`, `plugins = ["pydantic.mypy"]`.
+  - `[tool.ruff]`: `line-length = 100`, `target-version = "py311"`.
+  - `[tool.pytest.ini_options]`: `testpaths = ["tests"]`, `addopts = "--strict-markers"`,
+    `markers = ["integration: needs real git worktrees or Docker"]`.
+  - `[tool.coverage.run]`: `source = ["wtenv"]`, `patch = ["subprocess", "execv"]`, so that
+    `wtenv` processes started by tests are measured (pytest-cov 7 no longer does this; the
+    `subprocess` patch turns on `parallel`).
+- [ ] T003 [P] Create `src/wtenv/__init__.py` with a module docstring and `__version__ = "0.1.0"`, the single source of the version
+- [ ] T004 [P] Create shared test fixtures in `tests/conftest.py`
+  - `state_home` (autouse): `XDG_STATE_HOME` points at a temporary directory for the test
+    and every process it starts, so no test touches the developer's registry (research.md §7).
+  - Git setup for every test: fixed author and committer identity; `GIT_CONFIG_GLOBAL` and
+    `GIT_CONFIG_SYSTEM` set to `os.devnull`, so the developer's own git config (for example
+    `core.hooksPath`) cannot change results.
+  - `make_repo(name)`: `git init -b main` plus one empty commit; returns the resolved path.
+    `add_worktree(repo, name, branch)`: the real `git worktree add` (constitution, Technical
+    Constraints).
+  - `run_wtenv(args, cwd, env=None)`: runs `sys.executable -m wtenv` with standard input
+    closed and returns exit status, stdout, and stderr. Closed input makes any prompt fail
+    the test (FR-004).
+  - `docker` (session): runs `docker info` once; a test that requests it is skipped with the
+    message `Docker is not available` when that fails (constitution, Technical Constraints).
+- [ ] T005 Add one smoke test per pytest gate in `tests/unit/test_package.py` and `tests/integration/test_git_worktrees.py`
+  - Unit: `wtenv.__version__` is a non-empty string.
+  - Integration (`pytestmark = pytest.mark.integration`): `make_repo` and `add_worktree`
+    give a main and a linked worktree that `git worktree list --porcelain` reports.
+  - Each pytest gate needs at least one test: with none collected, pytest exits 5.
+- [ ] T006 Run `uv sync` and make all five gates exit 0 on the empty package; keep `uv.lock` tracked
+  - `ruff` also reads `contracts/json_models.py`; it passes as it is today. Do not edit it.
+
+**Checkpoint**: `uv sync` works and the five gates exit 0.
+
+---
+
+## Phase 2: Foundational (Blocking Prerequisites)
+
+**Purpose**: error codes and exit statuses, the `--json` models, git helpers, worktree
+identity, the registry and its locks, and the CLI shell with a lazy-import `--version`.
+
+**⚠️ CRITICAL**: no user story can start until this phase is complete.
+
+### 2A. Error codes and exit statuses (`errors.py`)
+
+- [ ] T007 [P] Write failing tests for the error-code table in `tests/unit/test_errors.py`
+  - The 19 codes and their statuses exactly as cli.md, "Error codes and exit statuses":
+    1 `internal_error`, 2 `usage_error`, 3 `config_invalid`, 4 `not_in_worktree`,
+    5 `not_provisioned`, 6 `no_free_block`, 7 `env_file_unusable`, 8 `dependency_unavailable`,
+    9 `template_missing`, 10 `template_in_use`, 11 `ownership_conflict`, 12 `post_up_failed`,
+    13 `partial_failure`, 14 `registry_busy`, 15 `worktree_busy`, 16 `registry_unreadable`,
+    17 `problems_found`, 18 `worktree_exists`, 19 `unsupported` (FR-059).
+  - Each code has exactly one status and no status is used twice; `EXIT_SUCCESS` is 0; the
+    `exec` statuses are 125, 126, 127.
+  - `WtenvError` carries `code`, `message`, `hint`, and `details`.
+  - A fresh interpreter that imports `wtenv.errors` has imported nothing outside the standard
+    library.
+- [ ] T008 Implement `ErrorCode`, `EXIT_STATUS`, `EXIT_SUCCESS`, the three `exec` statuses, and `WtenvError` in `src/wtenv/errors.py`
+  - Standard library only (plan.md, Project Structure); names and values as in `json_models.py`.
+
+### 2B. The `--json` models and output (`output.py`)
+
+- [ ] T009 [P] Write failing contract tests in `tests/contract/conftest.py` and `tests/contract/test_models_match_contract.py`
+  - Fixture `contract`: loads `contracts/json_models.py` from its path.
+  - For every model in the contract, `wtenv.output` has a model of the same name with an
+    equal `model_json_schema()`; every enum has the same members and values;
+    `SCHEMA_VERSION` is 1.
+- [ ] T010 [P] Write failing tests for printing results, errors, and warnings in `tests/unit/test_output.py`
+  - With `--json`, standard output gets exactly one document, the result model serialised
+    with `model_dump_json()`; everything else goes to standard error (FR-058).
+  - Standard error lines: `wtenv: error [<code>]: <message>`, then `hint: …` when there is
+    one; `wtenv: warning [<code>]: <message>` (cli.md, Rules for every command).
+  - A failed command still prints its own result model: `ok` false, `error` set with
+    `exit_status` equal to the code's status, other fields at their defaults.
+- [ ] T011 Port every model and enum of `json_models.py` to `src/wtenv/output.py`
+  - `ErrorCode`, `EXIT_STATUS`, and the `exec` statuses are imported from `wtenv.errors`, not
+    defined twice. `output.py` imports no other wtenv module. Base model: `extra="forbid"`.
+- [ ] T012 Implement the functions that print a result, an error, and warnings in `src/wtenv/output.py`
+
+### 2C. Git helpers and worktree identity (`gitutil.py`, `identity.py`) — core area 3
+
+- [ ] T013 [P] Write failing tests for git output parsing in `tests/unit/test_gitutil.py`
+  - `git worktree list --porcelain` text → one record per worktree with its path and the
+    `bare`, `detached`, `locked`, and `prunable` attributes (research.md §6).
+  - Git missing → `dependency_unavailable`, `details.dependency` `git`, `reason`
+    `not_installed`. A git call that fails on a git older than 2.31 → `reason` `too_old`
+    with `required` and `found`.
+  - The environment given to git lacks every repository-local variable (`GIT_DIR`,
+    `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR`, and the rest of
+    `git rev-parse --local-env-vars`).
+- [ ] T014 [P] Write failing tests for `points_to`, the identity parser, and `short_id` in `tests/unit/test_identity.py`
+  - `points_to(p)` (data-model.md, Status and the orphan checks): `p/.git` is a directory →
+    that directory; a file holding `gitdir: <path>` → the path resolved against `p`;
+    missing or unreadable → nothing.
+  - The three lines of `git rev-parse --path-format=absolute --absolute-git-dir
+    --show-toplevel --git-common-dir` become `git_dir`, `path`, and `repository`, each
+    through `os.path.realpath` (data-model.md, Worktree identity).
+  - `short_id(git_dir, n)`: the first `n` hexadecimal digits of the SHA-256 of the git
+    directory path (files.md: `<id8>`, `<id16>`).
+- [ ] T015 [P] Write failing integration tests for identity on real worktrees in `tests/integration/test_identity_git.py`
+  - The same identity from the worktree root, a subdirectory, and through a symbolic link;
+    main and linked worktrees differ and share `repository` (FR-006).
+  - After `git worktree move` and after a plain `mv`, `git_dir` is unchanged and `path` is
+    the new location (research.md §6).
+  - Outside a repository and inside `.git`: `not_in_worktree` with `details.cwd` (FR-002).
+  - An inherited `GIT_DIR` that points at another repository does not change the result.
+  - Every name printed by `git rev-parse --local-env-vars` is in gitutil's scrub list.
+- [ ] T016 Implement `src/wtenv/gitutil.py`: run git with a scrubbed environment, the porcelain parser, `git_path`, and `is_tracked`
+  - The scrub list is a constant, so no extra git call is made. The git version is read only
+    after a git call fails, to report `too_old`; the normal path makes no version call
+    (NFR-001).
+  - `git_path(worktree, name)` runs `git rev-parse --path-format=absolute --git-path <name>`;
+    `is_tracked(worktree, path)` asks git whether the path is tracked.
+- [ ] T017 Implement `WorktreeIdentity`, the current-worktree lookup, `points_to`, and `short_id` in `src/wtenv/identity.py`
+  - One `git rev-parse` call; exit status 128 → `not_in_worktree` with `details.cwd`.
+
+### 2D. Registry and locks (`locks.py`, `registry.py`) — core area 1
+
+- [ ] T018 [P] Write failing tests for the state directory and locks in `tests/unit/test_locks.py`
+  - State directory: `platformdirs.user_state_path("wtenv", appauthor=False)`, moved by
+    `XDG_STATE_HOME`; created with mode `0700`; `registry.lock` and `locks/<id16>.lock` get
+    mode `0600` (files.md, State directory).
+  - Registry lock: the wait bound defaults to 10 s and is a parameter; past it,
+    `registry_busy` with `details.waited_seconds` (research.md §9).
+  - Worktree lock: default bound 60 s, a parameter; past it, `worktree_busy`. A no-wait form
+    reports "held" without raising (for `gc`, FR-077).
+  - A lock whose holder was killed with `SIGKILL` can be taken at once (FR-078). Lock files
+    are never deleted.
+  - Locks use `fallback_to_soft=False`; a filesystem without `flock` gives
+    `registry_unreadable`, reason `lock_unsupported`.
+- [ ] T019 [P] Write failing tests for the registry models in `tests/unit/test_registry_models.py`
+  - The example in data-model.md, "Registry file", loads and dumps back to equal JSON.
+  - Unknown fields are rejected (`extra="forbid"`). A field named like a password does not
+    exist (FR-019).
+  - Each constraint quoted in T022 is enforced, one test per rule.
+- [ ] T020 [P] Write failing tests for loading and saving the registry in `tests/unit/test_registry_store.py`
+  - No file → an empty registry with `version` 1, in the per-user state directory (FR-066).
+  - Save writes a temporary file, `fsync`s it, and `os.replace`s it; the file has mode `0600`.
+  - Not valid JSON, not matching the schema, an unknown `version`, or unreadable → stop with
+    `registry_unreadable`, `details.path` and `details.reason` (`invalid_json`,
+    `invalid_schema`, `unknown_version`, `not_readable`); the file is never rewritten (FR-070).
+  - A transaction runs read-check-write under the registry lock; an exception inside it
+    saves nothing (FR-068).
+- [ ] T021 Implement the state directory, the registry lock, and the worktree lock in `src/wtenv/locks.py`
+- [ ] T022 Implement the registry models in `src/wtenv/registry.py`
+  - `Registry`: `version` (1), `worktrees` keyed by `git_dir`, `hooks` keyed by repository.
+  - `WorktreeEntry`: `git_dir` "Equals the key"; `path` "Location at the last `up` or `down`
+    in the worktree. Updated when the worktree moved (FR-084)"; `repository` "Common git
+    directory"; `state` `"incomplete"` or `"provisioned"`; `block` "Always present once the
+    entry exists"; `ports` "Same order as `ports` in `wtenv.toml`"; `published` "Empty
+    without compose"; `env_file` `EnvFileRecord` or null; `databases` "At most one per kind.
+    A kind no longer configured stays here until `down` (FR-065)"; `compose`
+    `ComposeRecord` or null; `exclude_patterns` "This worktree's generated paths, as written
+    to `.git/info/exclude`".
+  - `PortBlock`: `start` "`20000 + k × size` for some whole number `k`"; `size` "1 to 1000;
+    `start + size - 1 ≤ 29999`".
+  - `VariablePort`: `variable`, `port`. `PublishedPort`: `service`, `target` (container
+    port), `protocol` (`tcp` or `udp`), `host_ip` (or null), `port` (the assigned host port),
+    `variable` (the variable it is tied to, or null).
+  - `EnvFileRecord`: `path` "Relative to the worktree root"; `created_file`; `added_newline`;
+    `state`.
+  - `DatabaseRecord`: `kind` `"postgres"` or `"sqlite"`; `name` (Postgres) or null; `host`,
+    `port`, `user` (Postgres, "From the URL pattern at creation") or null; `path` (SQLite,
+    "Copy's path, relative to the worktree root") or null; `state`.
+  - `ComposeRecord`: `project`, `file`, `override` (both relative to the worktree root),
+    `override_state`. `HookRecord`: `hook_file` (absolute path), `created_file`.
+  - Resource states `creating`, `created`, `removing` use `ResourceState` from
+    `wtenv.output`. No password field anywhere (FR-019).
+- [ ] T023 Implement registry load, atomic save, and the transaction in `src/wtenv/registry.py`
+
+### 2E. CLI shell and `--version` (`cli.py`, `__main__.py`)
+
+- [ ] T024 [P] Write failing tests for the CLI shell in `tests/contract/test_cli_shell.py`
+  - `wtenv --version` prints `wtenv <version>`; `wtenv --version --json` prints a
+    `VersionResult`; both exit 0. `python -m wtenv` behaves like `wtenv`.
+  - An unknown command or option exits 2. With `--json` before any `--`, stdout holds one
+    document with `error.code` `usage_error`, and `command` null when no known command was
+    named. `--json` at the root is accepted only with `--version`.
+  - An unexpected exception inside a command exits 1 with `internal_error` and
+    `details.exception` set to the class name.
+  - `--help` works; no shell-completion option is offered (cli.md, Rules for every command).
+- [ ] T025 [P] Write failing lazy-import tests in `tests/unit/test_lazy_imports.py`
+  - In a fresh interpreter, after `wtenv.cli.main(["--version"])`: `pydantic`, `filelock`,
+    `platformdirs`, `psycopg`, and `click` are not in `sys.modules` (NFR-001; research.md §7,
+    §8).
+- [ ] T026 Implement the Typer app, `main`, `--version`, and exit-status mapping in `src/wtenv/cli.py`; add `src/wtenv/__main__.py`
+  - `main(argv)` runs the app with `standalone_mode=False` and returns the exit status:
+    `WtenvError` → its status; a Typer usage error → `usage_error`; anything else →
+    `internal_error` (plan.md, Design overview).
+  - `--json` is detected by scanning the arguments before any `--`, so a usage error still
+    prints one JSON document.
+  - Module-level imports: `typer`, the standard library, `wtenv.__version__`, and
+    `wtenv.errors` only. Each command imports its implementation inside its function.
+    `add_completion=False`. Never `import click` (research.md §7).
+
+**Checkpoint**: the five gates pass; `uv run wtenv --version` prints the version.
+
+---
+
+## Phase 3: User Story 1 - Port and env isolation (Priority: P1) 🎯 MVP
+
+**Goal**: `wtenv up` gives the worktree its own port block and writes its port variables to
+its env file, with no configuration. Running it again changes nothing.
+
+**Independent Test**: in a repository with no `wtenv.toml`, create two worktrees and run
+`wtenv up` in each: the blocks share no port, `.env.local` sets `PORT` in each, and a dev
+server reading `PORT` runs in both at once. A repeat `up` leaves ports and env file
+byte-identical. Automated by T039–T043; manual by quickstart.md sections 1 and 2.
+
+### 3A. Configuration: `ports`, `block_size`, `env_file` (`config.py`) — core area 4
+
+- [ ] T027 [P] [US1] Write failing tests for configuration loading in `tests/unit/test_config.py`
+  - No `wtenv.toml`: `ports = ["PORT"]`, `block_size = 10`, `env_file = ".env.local"` (FR-005, FR-063).
+  - `ports` (config.md): "At least one name. Names are unique and match
+    `[A-Za-z_][A-Za-z0-9_]*`. `DATABASE_URL` is not allowed."
+  - `block_size`: "1 to 1000".
+  - `env_file`: "A relative path inside the worktree; `..` may not leave the worktree."
+  - An unknown key, a wrong type, or invalid TOML → `config_invalid` with `details.file`
+    and `details.setting` (dotted name); nothing is read further (FR-064).
+- [ ] T028 [US1] Implement `Config` and loading of `ports`, `block_size`, and `env_file` in `src/wtenv/config.py`
+  - `tomllib` and a pydantic model with `extra="forbid"`; validation errors become
+    `config_invalid` naming the setting. The file is read from the worktree root (FR-062).
+
+### 3B. Port allocation (`ports.py`) — core area 2
+
+- [ ] T029 [P] [US1] Write failing tests for the free-port test and the block search in `tests/unit/test_ports_search.py`
+  - A port is free when a TCP `bind` without `SO_REUSEADDR` succeeds on `127.0.0.1`,
+    `0.0.0.0`, and `::1`; an unavailable address family (`EADDRNOTAVAIL`, `EAFNOSUPPORT`) is
+    skipped (data-model.md, Port allocation; FR-009).
+  - Candidates `20000 + k × size` while `20000 + k × size + size - 1 ≤ 29999`; a candidate
+    that overlaps any registry block of any repository (FR-008) or holds a busy port is
+    skipped; the first one left is taken (FR-007, FR-010).
+  - None left → `no_free_block` with `details.block_size` and `details.range` (FR-012).
+  - The same registry and the same free ports give the same block. The search takes the
+    free-port test as a parameter, so tests can fake it.
+- [ ] T030 [P] [US1] Write failing tests for assigning variable ports in `tests/unit/test_ports_assign.py`
+  - Variable `i` (from 0) in `ports` gets `start + i`, the same on every call (FR-014, FR-017).
+  - More variables than the block holds → `config_invalid`, `details.setting` `block_size`,
+    `details.min_block_size` the number needed (FR-014). No port outside the block (FR-011).
+- [ ] T031 [US1] Implement the free-port test and the block search in `src/wtenv/ports.py`
+- [ ] T032 [US1] Implement assigning variable ports in `src/wtenv/ports.py`
+
+### 3C. Env file section (`envfile.py`) — core area 8
+
+- [ ] T033 [P] [US1] Write failing tests for writing wtenv's section in `tests/unit/test_envfile_write.py`
+  - No file → created with mode `0600`, holding only the section: the two marker lines of
+    FR-016 and one `NAME=value` line per variable, each ending in `\n` (FR-019).
+  - Existing developer lines are kept byte for byte and the section is appended at the end;
+    a file without a final line break gets one first, and that is reported (`added_newline`).
+  - An existing section is rewritten where it is, even after it was moved or lines were added
+    after it; lines edited inside it are restored; the same values twice give identical bytes
+    (FR-017, FR-079).
+  - Markers are recognised with trailing whitespace or a trailing carriage return.
+  - Damaged markers (a begin with no end, an end with no begin, two sections) →
+    `env_file_unusable`, reason `markers_damaged`, file unchanged (FR-081).
+  - Quoting (files.md, Env file section): a value made only of
+    `A–Z a–z 0–9 _ . / : @ % + = , ~ -` is bare; any other value is in single quotes.
+  - An existing file keeps its mode; writing uses a temporary file and an atomic rename of the
+    real path, so a symbolic link stays a link.
+- [ ] T034 [P] [US1] Write failing tests for removing the section and finding duplicates in `tests/unit/test_envfile_remove.py`
+  - Removing takes out the section, both markers included, and nothing else; a recorded
+    `added_newline` is removed again (FR-079).
+  - A file that wtenv created and that holds nothing else afterwards is deleted (FR-038).
+  - No file or no section → already absent, not an error (FR-042). Damaged markers → file
+    unchanged and the failure returned to the caller (FR-081).
+  - A managed variable also defined outside the section is reported by name; that line is
+    left unchanged (FR-080).
+- [ ] T035 [US1] Implement reading and writing the section in `src/wtenv/envfile.py`
+- [ ] T036 [US1] Implement removing the section and the duplicate check in `src/wtenv/envfile.py`
+
+### 3D. `.git/info/exclude` block (`exclude.py`)
+
+- [ ] T037 [P] [US1] Write failing tests for the exclude block in `tests/unit/test_exclude.py`
+  - Adding patterns creates or extends the block (files.md, `.git/info/exclude` block): the
+    same two marker lines as the env file; inside, the sorted union of the patterns, each
+    starting with `/`; every other line kept; a missing file or `info/` directory created.
+  - Adding the same patterns again changes nothing; adding never removes a line.
+  - Removing the block takes out the markers and the lines between them, nothing else (FR-085).
+  - Damaged markers → `unsupported`, reason `markers_damaged`.
+- [ ] T038 [US1] Implement adding patterns and removing the block in `src/wtenv/exclude.py`
+
+### 3E. `wtenv up` (`provision.py`, `output.py`, `cli.py`)
+
+- [ ] T039 [P] [US1] Write failing integration tests for the US1 acceptance scenarios in `tests/integration/test_us1_ports_env.py`
+  - Scenario 1 (FR-005, FR-007, FR-015): `up` allocates a block; `.env.local` sets `PORT` to
+    a port in it with mode `0600`; the `UpResult` reports the block and each change.
+  - Scenario 2 (FR-008): two worktrees get blocks that share no port.
+  - Scenario 3 (FR-011, FR-017, SC-006): a repeat `up`, also from a subdirectory, keeps the
+    ports, leaves the env file byte-identical, and reports every change as `unchanged`.
+  - Scenario 4 (FR-009): with a listener on a port of the first candidate, the block avoids it.
+  - Scenario 5 (FR-014): `ports = ["PORT", "API_PORT", "VITE_PORT"]` gives three different
+    ports in that order, the same on every run.
+  - Scenario 6 (FR-016): the developer's lines are unchanged and the section follows them.
+  - Scenario 7 (FR-015): `env_file` set to another path writes there; `.env.local` is not
+    created.
+  - The main worktree works like any other; outside a worktree → exit 4, nothing changed
+    (FR-002). `git status --porcelain` is empty in both worktrees (FR-018). `up --json`
+    prints one document that validates as `UpResult` (FR-058). SC-009.
+- [ ] T040 [P] [US1] Write failing concurrency tests in `tests/integration/test_concurrency.py`
+  - SC-005, FR-013: five `up` processes started at once in five worktrees get blocks that
+    share no port; 20 trials, each with a fresh state directory.
+  - Two `up` processes at once in one worktree: both exit 0, one block, the env file a single
+    run writes (spec Edge Cases).
+  - `up` called in-process with a small worktree-lock bound while another process holds the
+    lock → `worktree_busy`, nothing changed; after that holder is killed, `up` runs at once
+    (FR-077, FR-078).
+- [ ] T041 [P] [US1] Write failing recovery tests for `up` in `tests/integration/test_recovery.py`
+  - For each step of `up` that changes something (registry step, env-file step,
+    completion): run `up` in a child process where that step calls `os._exit(137)` half
+    way, then run `up` normally. The second run completes with the block first allocated;
+    the entry ends `provisioned` (FR-069).
+  - After each interruption the entry exists with `state` `incomplete`, and nothing exists
+    that the registry does not record (FR-067).
+- [ ] T042 [US1] Add failing tests for env-file and configuration errors to `tests/integration/test_us1_ports_env.py`
+  - Env file path is a directory, has no parent directory, is not writable, is tracked by git,
+    or has damaged markers → exit 7 with `details.reason` `is_directory`, `parent_missing`,
+    `not_writable`, `tracked_by_git`, or `markers_damaged`; file and registry unchanged
+    (FR-018, FR-081). Skip the not-writable case when running as root.
+  - An unknown setting, or more variables than the block holds → exit 3, the second with
+    `details.min_block_size`; nothing changes, on a first `up` and on a provisioned worktree.
+  - A managed variable also set outside the section → warning `env_duplicate_variable` naming
+    it, in stderr and in `warnings` (FR-080).
+  - A registry file that is not JSON → exit 16; the file is not rewritten (FR-070).
+  - `block_size = 1000` leaves ten candidates; with a listener in each (ports already taken
+    count as taken) → exit 6 `no_free_block`, nothing allocated (FR-012).
+- [ ] T043 [US1] Add failing tests for configuration changes and moves to `tests/integration/test_us1_ports_env.py`
+  - FR-065 (config.md, Changes after provisioning): a changed `ports` list is reassigned
+    within the same block; a changed `block_size` allocates a new block, releases the old
+    one, and reports both; a changed `env_file` writes the section to the new file and
+    removes it from the old one.
+  - Two worktrees on branches with different `wtenv.toml` are each provisioned from their
+    own (FR-062).
+  - After `git worktree move`, `up` keeps the block, records the new location, and warns
+    `worktree_moved` (FR-084).
+  - A port of the block later taken by another process: a repeat `up` keeps the block (FR-011).
+- [ ] T044 [US1] Implement the checks of `up` that change nothing in `src/wtenv/provision.py`
+  - cli.md, `wtenv up`, steps 1–4 and 6: identify the worktree; take the worktree lock
+    (bound a parameter, default 60 s); load `wtenv.toml` or the defaults; check the env file
+    path (parent present, not a directory, not tracked by git, writable, markers intact);
+    check that the block size holds all port variables. Nothing changes unless all pass.
+- [ ] T045 [US1] Implement the registry step of `up` in `src/wtenv/provision.py`
+  - Step 8, in one registry transaction: create the entry as `incomplete`, or record a new
+    location for a known identity (FR-084); allocate a block when the entry has none; assign
+    ports; record the env file as `creating`; add the env file's pattern to the exclude block
+    (files.md). The search and the write share the transaction (FR-013); the registry lock
+    is not held outside it (FR-068).
+- [ ] T046 [US1] Implement the env-file step and completion of `up` in `src/wtenv/provision.py`
+  - Step 11: write the section; mark the env-file record `created` with `created_file` and
+    `added_newline` as observed. Step 13: mark the entry `provisioned`.
+  - A repeat `up` with nothing to change stays `provisioned` throughout and writes nothing
+    (data-model.md, Entry states).
+  - Return an `UpResult`: worktree view, one change per item (`created`, `updated`,
+    `unchanged`, `released`), warnings.
+- [ ] T047 [US1] Apply configuration changes in `up` in `src/wtenv/provision.py`
+  - `ports`, `block_size`, and `env_file` changes as in T043 (FR-065). A changed block size is
+    checked against the new size before anything changes (FR-014).
+- [ ] T048 [US1] Add the `up` text output (`provisioned`, `ports`, `env file` lines of cli.md) to `src/wtenv/output.py`
+- [ ] T049 [US1] Add `wtenv up [--json]` to `src/wtenv/cli.py`
+  - Imports `wtenv.provision` inside the function. Exit statuses so far: 0, 3, 4, 6, 7, 14,
+    15, 16.
+
+**Checkpoint**: the MVP. US1 works on its own; the five gates pass.
+
+---
+
+## Phase 4: User Story 2 - Database isolation (Priority: P2)
+
+**Goal**: with `[database]` in `wtenv.toml`, `up` gives the worktree its own Postgres
+database or SQLite file, copied from a template, and sets `DATABASE_URL`. Post-up commands
+run after provisioning (plan.md: delivered with US2).
+
+**Independent Test**: configure Postgres with a template, run `up` in two worktrees, change
+the schema in one: the other and the template are unchanged. Repeat with SQLite. Automated by
+T057–T060 and T066–T068. US2 scenario 5 (`down` removes only this database) needs `down`,
+which plan.md delivers with US4; it is tested in T092–T094.
+
+### 4A. Configuration: `[database]` and `post_up` (`config.py`) — core area 4
+
+- [ ] T050 [P] [US2] Write failing tests for the database table and `post_up` in `tests/unit/test_config_database.py`
+  - `database.type` `"postgres"` or `"sqlite"`, `database.template`, and `database.url` are
+    required (config.md, Settings).
+  - Placeholders `{name}`, `{path}`, `{env:NAME}`: "Any other text in braces is
+    `config_invalid`."
+  - Postgres patterns: scheme `postgresql://` or `postgres://`, with or without a driver
+    suffix such as `postgresql+psycopg://`; `{name}` as the database name; "name the host
+    explicitly as `localhost`, `127.0.0.1`, or `[::1]`. Any other host, a missing host, a
+    `host`, `hostaddr`, or `service` query parameter, or a Unix-socket directory is
+    `config_invalid`" (FR-025).
+  - SQLite patterns "must contain `{path}`".
+  - `post_up`: a list of shell commands; "Each must be non-empty."
+  - Each error names its setting (`database.url`, `database.type`, `post_up`).
+- [ ] T051 [US2] Add the `database` table and `post_up` to `src/wtenv/config.py`
+
+### 4B. Names and the URL pattern (`identity.py`, `database.py`)
+
+- [ ] T052 [P] [US2] Write failing tests for names in `tests/unit/test_names.py`
+  - `slug` (files.md, Names): the worktree directory's name "lowercased, with every run of
+    characters outside `a–z` and `0–9` replaced by one `_` (for databases) or `-` (for
+    compose), trimmed of those characters at both ends, and cut to 40 characters. An empty
+    slug becomes `wt`."
+  - Postgres name `wtenv_<slug>_<id8>`; SQLite copy `<worktree>/.wtenv/<template file name>`
+    (FR-022).
+- [ ] T053 [P] [US2] Write failing tests for resolving the URL pattern in `tests/unit/test_database_url.py`
+  - `{name}` → database name; `{path}` → absolute path of the copy; `{env:NAME}` → the
+    variable's value; unset → `config_invalid` with `details.variable` (FR-026).
+  - A resolved URL with a single quote or a line break → `config_invalid`.
+  - wtenv's own connection: the pattern's user, password, host, and port, and the database
+    `postgres`; the driver suffix is dropped for it and kept in `DATABASE_URL`; query
+    parameters are kept in `DATABASE_URL` and not used (config.md).
+- [ ] T054 [US2] Add `slug` to `src/wtenv/identity.py`
+- [ ] T055 [US2] Implement database names and URL-pattern resolution in `src/wtenv/database.py`
+  - `psycopg` is never imported at module level (NFR-001).
+
+### 4C. Creating SQLite copies (`database.py`) — core area 5
+
+- [ ] T056 [P] [US2] Write failing tests for SQLite creation in `tests/unit/test_database_sqlite.py`
+  - The template (relative to the worktree root, or absolute) is copied byte for byte to
+    `<worktree>/.wtenv/<file name>` through a temporary file and an atomic rename (FR-021;
+    research.md §11).
+  - Template missing → `template_missing`, `details.kind` `sqlite`, `details.template`;
+    nothing created (FR-083).
+  - A non-empty `-wal` or `-journal` file beside the template → `template_in_use`.
+  - Something at the target path that is not recorded → `ownership_conflict`,
+    `details.kind` `sqlite_file`, `details.name`; it is not modified (FR-024).
+  - A recorded copy that exists is left alone (FR-023); the template is never modified (FR-027).
+- [ ] T057 [US2] Implement SQLite creation in `src/wtenv/database.py`
+
+### 4D. Creating Postgres databases (`database.py`) — core area 5
+
+- [ ] T058 [P] [US2] Add the `postgres_server` fixture to `tests/integration/conftest.py`
+  - Session scope; requests `docker`; starts `postgres:17` with testcontainers, published on
+    `127.0.0.1`; creates a template database with one small table; yields host, port, user,
+    and password.
+- [ ] T059 [P] [US2] Write failing tests for Postgres error mapping in `tests/unit/test_database_postgres_errors.py`
+  - research.md §3 table: `55006` → `template_in_use`; `3D000` → `template_missing`;
+    `42P04` → `ownership_conflict`; cannot connect, authentication failure, `42501`, or a
+    server older than 13 → `dependency_unavailable`, `details.dependency` `postgres`,
+    `reason` `cannot_connect`, `authentication_failed`, `permission_denied`, or `too_old`.
+  - The `42501` message says the template needs `IS_TEMPLATE` or ownership (research.md §3).
+  - No message or detail contains the password (FR-019).
+- [ ] T060 [P] [US2] Write failing Postgres tests in `tests/integration/test_us2_database.py`
+  - Request `postgres_server`. Scenario 1 (FR-020): database `wtenv_<slug>_<id8>` exists,
+    holds the template's rows, and `DATABASE_URL` names it.
+  - Scenario 2: a schema change in one worktree leaves the other's database and the template
+    unchanged. Scenario 3 (FR-023, SC-006): a repeat `up` keeps the database and its rows.
+  - Scenario 6 (FR-024): an unrecorded database with the target name → exit 11, unmodified.
+  - Scenario 7: a closed port → exit 8; once the server answers, `up` completes.
+  - Scenario 8 (FR-082, FR-027): another session on the template → exit 10 within 2 s,
+    `details.connections` the count, the session still connected, no database created or
+    recorded, `DATABASE_URL` not written, block kept, entry `incomplete`; after the session
+    closes, `up` completes.
+  - The password comes from `{env:NAME}` (FR-026) and is in no output and not in the
+    registry (FR-019); `UpResult` shows kind, name, host, and port.
+  - A host other than `localhost`, `127.0.0.1`, or `[::1]` → exit 3 before any connection
+    (FR-025).
+- [ ] T061 [US2] Implement the Postgres connection and `CREATE DATABASE … TEMPLATE` in `src/wtenv/database.py`
+  - One autocommit connection to the `postgres` maintenance database, never to the template
+    (research.md §3). `psycopg` imported inside the functions.
+  - Before `CREATE DATABASE <name> TEMPLATE <template>` (no `STRATEGY`): count other sessions
+    on the template in `pg_stat_activity`; above zero → `template_in_use` at once, naming
+    the template and the count; nothing issued (FR-082). Names quoted with
+    `psycopg.sql.Identifier`.
+  - Template absent from `pg_database` → `template_missing`; a target name that exists is
+    reported so the caller can raise `ownership_conflict`. Errors mapped as in T059.
+
+### 4E. The database step of `up` (`provision.py`)
+
+- [ ] T062 [US2] Add failing SQLite tests to `tests/integration/test_us2_database.py`
+  - Scenario 4 (FR-021, FR-022): the worktree's copy exists, `DATABASE_URL` points to it
+    after the port variables, and writing to it changes neither the template nor another
+    worktree's copy. Scenario 3 for SQLite: a repeat `up` keeps the copy's data.
+  - Scenario 6 for SQLite: an unrecorded file at the target → exit 11, file unchanged.
+  - Template missing → exit 9; template with a non-empty `-wal` → exit 10. In both, nothing
+    recorded for the database, no `DATABASE_URL`, block kept, entry `incomplete`; a later
+    `up` completes (FR-083).
+  - `git status --porcelain` stays empty: `/.wtenv/` is in the exclude block (FR-018).
+  - Config changes (config.md): a new `database.template` or `database.url` rewrites
+    `DATABASE_URL` and keeps the database; a new `database.type` creates the new kind and
+    keeps the old one recorded; removing `[database]` removes `DATABASE_URL` and keeps the
+    database recorded (FR-065).
+- [ ] T063 [US2] Add failing recovery tests for the database step to `tests/integration/test_recovery.py`
+  - `up` interrupted (as in T041) after the database is recorded as `creating` but before it
+    exists, and after it exists but before it is marked `created`: the next `up` creates or
+    keeps it and marks it `created`; no database exists that the registry does not record
+    (FR-067, FR-069; data-model.md, Resource states). SQLite always; Postgres with Docker.
+- [ ] T064 [US2] Implement the database checks and the database step in `src/wtenv/provision.py`
+  - Step 7, before anything changes: the URL pattern resolves and names a local host.
+  - Step 9, when no database of the configured kind is recorded: check the template exists
+    and is not busy, check nothing exists at the target (`ownership_conflict`), record it as
+    `creating`, create it, mark it `created`. `template_in_use` and `template_missing` record
+    nothing; if the server answers `55006` after the record was written, remove the record
+    again (FR-082). The worktree lock is held during the copy; the registry lock is not
+    (FR-068, FR-076).
+  - A recorded database is kept as it is (FR-023); `up` never removes a database
+    (data-model.md, Resource states). SQLite adds `/.wtenv/` to the exclude patterns.
+- [ ] T065 [US2] Write `DATABASE_URL` and apply database configuration changes in `src/wtenv/provision.py`
+  - The section holds the port variables in `ports` order, then `DATABASE_URL` when a database
+    is configured and created (files.md). Config changes as in T062 (FR-065).
+- [ ] T066 [US2] Show the database (kind, name or path, host, port; never a URL) in the `up` output in `src/wtenv/output.py`
+
+### 4F. Post-up commands (`provision.py`)
+
+- [ ] T067 [US2] Add failing post-up tests to `tests/integration/test_us2_database.py`
+  - FR-036: commands run in order through `sh -c`, from the worktree root, with the
+    worktree's variables set, standard input closed, and their standard output sent to
+    wtenv's standard error, on every successful `up`, including a repeat one (cli.md).
+  - FR-037: the first non-zero exit stops `up` with exit 12, `details.command` and
+    `details.exit_status`; later commands do not run; resources stay; the entry is
+    `incomplete`; `UpResult.post_up` lists each command run.
+  - With `--json`, stdout still holds exactly one document.
+- [ ] T068 [US2] Implement post-up commands (step 12) in `src/wtenv/provision.py`
+
+**Checkpoint**: US1 and US2 work; the five gates pass.
+
+---
+
+## Phase 5: User Story 3 - docker-compose isolation (Priority: P3)
+
+**Goal**: with `[compose]` in `wtenv.toml`, `up` gives the worktree its own compose project
+name and an auto-loaded override that moves every host port into the worktree's block.
+
+**Independent Test**: with a compose file that publishes a host port and declares a named
+volume, run `up` and then plain `docker compose up` in two worktrees: two stacks run at once,
+each on its own block's ports, with separate containers, networks, and volumes. Automated by
+T079–T080.
+
+### 5A. Configuration: `[compose]` (`config.py`) — core area 4
+
+- [ ] T069 [P] [US3] Write failing tests for the compose table in `tests/unit/test_config_compose.py`
+  - `compose.file` is required: "Relative path of the compose file inside the worktree. Its
+    file name must be `compose.yaml`, `compose.yml`, `docker-compose.yaml`, or
+    `docker-compose.yml`" (config.md); any other name → `config_invalid` naming
+    `compose.file` (research.md §4, v1 limits).
+- [ ] T070 [US3] Add the `compose` table to `src/wtenv/config.py`
+
+### 5B. Reading the compose model (`compose.py`)
+
+- [ ] T071 [P] [US3] Write failing tests for parsing the resolved compose model in `tests/unit/test_compose_model.py`
+  - Input: documents shaped like `docker compose config --format json` output (research.md §4,
+    Observed). Output: one record per mapping with `service`, `target`, `protocol`,
+    `host_ip`, the published value, and the other fields Compose reported (`mode`, `name`,
+    `app_protocol`).
+  - A mapping without `published` (`"3000"`) is kept as having no host port.
+  - A published range such as `"7000-7005"` → `unsupported`, reason `compose_port_range`,
+    `details.service` (FR-033).
+  - A service with `container_name` → warning `compose_fixed_container_name` naming it.
+  - The resolution command: `docker compose -f <file> --profile "*" config --format json`,
+    with variable `i` set to the marker value `i + 1` (data-model.md, Port allocation).
+- [ ] T072 [US3] Implement resolving and parsing the compose model in `src/wtenv/compose.py`
+  - Compose runs as a subprocess; no YAML library, no Docker SDK (research.md §4, §7).
+
+### 5C. Ports for published ports (`ports.py`) — core area 2
+
+- [ ] T073 [P] [US3] Write failing tests for assigning published ports in `tests/unit/test_ports_published.py`
+  - A published port equal to marker `i + 1` is tied to variable `i` and gets its port (FR-031).
+  - Every other published port, including one with no host port, gets the next port after
+    the variables, in the order (service, container port, protocol, host IP).
+  - Two mappings with the same protocol and host IP on one port → `unsupported`, reason
+    `compose_port_clash`.
+  - Too many ports → `config_invalid` with
+    `min_block_size = len(ports) + untied published ports` (FR-014, FR-032).
+  - Same input, same result.
+- [ ] T074 [US3] Extend port assignment to published ports in `src/wtenv/ports.py`
+
+### 5D. The override file (`compose.py`) — core area 6
+
+- [ ] T075 [P] [US3] Write failing override tests in `tests/unit/test_compose_override.py` with the golden file `tests/unit/golden/compose.override.yaml`
+  - The golden file is the example in files.md, "Compose override file", byte for byte; the
+    matching input generates exactly it, and generating twice gives identical bytes (US3
+    scenario 4).
+  - `name:` is `wtenv-<slug>-<id8>` (slug with `-`); one entry per service that publishes
+    ports, in service-name order; `ports: !override`; each mapping repeats every field
+    Compose reported, with only `published` changed; strings in JSON quoting (FR-029).
+  - Override file name: `compose.override.yaml` for `compose.yaml`, `compose.override.yml`
+    for `compose.yml`, `docker-compose.override.yaml` for `docker-compose.yaml`,
+    `docker-compose.override.yml` for `docker-compose.yml`.
+- [ ] T076 [US3] Implement the project name, the override text, and the override file name in `src/wtenv/compose.py`
+
+### 5E. Compose limit checks (`compose.py`)
+
+- [ ] T077 [P] [US3] Write failing tests for the compose limit checks in `tests/unit/test_compose_checks.py`
+  - Docker endpoint (FR-035; research.md §11): `DOCKER_HOST` if set, otherwise
+    `docker context inspect --format '{{.Endpoints.docker.Host}}'`; `unix://`, and `tcp://`
+    to `localhost`, `127.0.0.1`, or `[::1]`, pass; anything else → `dependency_unavailable`,
+    `dependency` `docker`, `reason` `not_local`.
+  - Docker missing or not running → `not_installed` or `not_running`; Compose older than
+    2.24.4 → `too_old` with `required` and `found`.
+  - Default name: covered by T069.
+  - Existing override: any of the four override names beside the compose file that the
+    registry does not record as wtenv's → `ownership_conflict`, `kind` `compose_override`,
+    `name` the path; the recorded one passes.
+  - `COMPOSE_PROJECT_NAME` or `COMPOSE_FILE` in the environment, or in `.env` beside the
+    compose file → `unsupported`, reason `compose_env_override`, with `details.file` for
+    `.env` (research.md §4, v1 limits).
+  - The checks take the command runner and the environment as parameters; no Docker needed.
+- [ ] T078 [US3] Implement the Docker, Compose-version, override-file, and environment checks in `src/wtenv/compose.py`
+
+### 5F. The compose step of `up` (`compose.py`, `provision.py`, `output.py`)
+
+- [ ] T079 [P] [US3] Write failing integration tests for US3 in `tests/integration/test_us3_compose.py`
+  - Request `docker`. Scenario 1 (FR-028, FR-029): a project name no other worktree has;
+    every host-published port in the override is a port of the block; container ports
+    unchanged.
+  - Scenario 2 (FR-030): plain `docker compose config` in each of two worktrees shows that
+    worktree's project and ports; `docker compose up -d` in both runs two stacks with
+    separate containers, networks, and volumes (the test removes them afterwards).
+  - Scenario 3 (FR-031): `"${CACHE_PORT:-6379}:6379"` with `CACHE_PORT` in `ports`: the env
+    file and the override carry the same number.
+  - Scenario 4: a repeat `up` leaves the project name and the override byte-identical.
+  - Scenario 5 (FR-029): the compose file is unchanged and `git status --porcelain` is empty.
+  - FR-034: after `up` no container carries the project's label. Untied published ports
+    appear in the `UpResult` ports with `service`, `target`, and `protocol` (FR-031).
+- [ ] T080 [US3] Add failing tests for the compose limits to `tests/integration/test_us3_compose.py`
+  - Each fails before anything changes for the compose step (no override, no compose record):
+    another compose file name → exit 3 naming `compose.file`; a developer's own override →
+    exit 11, unmodified; `COMPOSE_PROJECT_NAME` in the environment, and `COMPOSE_FILE` in
+    `.env`, → exit 19; `"8000-9000:80"` → exit 19 naming the service (FR-033);
+    `DOCKER_HOST=tcp://192.0.2.1:2375` → exit 8 `not_local`, never contacted (FR-035).
+  - Variables plus published ports above the block size → exit 3 with
+    `details.min_block_size`, on a first `up` and a provisioned worktree (FR-032).
+  - `container_name` → success with warning `compose_fixed_container_name`.
+  - Config changes (config.md): a new `compose.file` moves the override and keeps the
+    project name; removing `[compose]` removes the override and keeps the project recorded.
+- [ ] T081 [US3] Implement writing and verifying the override in `src/wtenv/compose.py`
+  - Write through a temporary file and an atomic rename. Verify with a plain
+    `docker compose --profile "*" config --format json` in the compose file's directory: the
+    recorded project name and only assigned published ports; otherwise remove the override
+    just written and fail with `unsupported`, reason `compose_verification_failed`
+    (research.md §4; FR-033).
+- [ ] T082 [US3] Implement the compose checks and the compose step in `src/wtenv/provision.py`
+  - Step 5 before anything changes; step 6 counts published ports; step 8 records
+    `published` and adds the override's exclude pattern; step 10 writes and verifies.
+  - The project name is recorded before anything else is done for compose and never changed
+    (data-model.md, Compose record); the override is recorded as `creating` before it is
+    written. No container is started (FR-034). Compose code is imported only when
+    `[compose]` is configured (research.md §8).
+- [ ] T083 [US3] Apply compose configuration changes in `up` in `src/wtenv/provision.py`
+  - `compose.file` changed: the override moves, the project name stays. `[compose]` removed:
+    wtenv's override file is removed, the project stays recorded until `down` (FR-065).
+- [ ] T084 [US3] Show published ports and the compose project in the `up` output in `src/wtenv/output.py`
+
+**Checkpoint**: US1–US3 work; the five gates pass.
+
+---
+
+## Phase 6: User Story 4 - Lifecycle and cleanup (Priority: P4)
+
+**Goal**: `down` releases everything wtenv made for a worktree; `gc` releases worktrees git
+confirms are gone; `ls` lists every worktree with its status.
+
+**Independent Test**: provision three worktrees, `down` one, `git worktree remove` the other
+two, run `gc`: nothing of the three remains and nothing else was touched. A worktree whose
+directory was deleted by hand keeps its database and entry. Automated by T092–T094,
+T098–T100, T104, and T106.
+
+### 6A. Classification (`orphans.py`) — core area 7
+
+- [ ] T085 [P] [US4] Write failing tests for `classify` in `tests/unit/test_classify.py`
+  - Every row of data-model.md, "Status and the orphan checks", with hand-made directories
+    and canned listings: no listing → `unverifiable`, `repository_not_found`;
+    `points_to(entry.path)` is `entry.git_dir` → `provisioned` or `incomplete` by
+    `entry.state`; git dir still present and path missing but listed → `unverifiable`,
+    `git_still_lists`; git dir present otherwise → `unverifiable`, `moved`, with
+    `current_path` when a listed path points to it; git dir gone and something at the path →
+    `path_exists`; git dir gone and the path listed → `git_still_lists`; otherwise
+    `orphaned` (FR-045, FR-072).
+  - `classify` changes nothing.
+- [ ] T086 [US4] Implement `classify(entry, listing)` in `src/wtenv/orphans.py`
+
+### 6B. Removing databases (`database.py`) — core area 5
+
+- [ ] T087 [P] [US4] Write failing tests for database removal in `tests/unit/test_database_remove.py`
+  - SQLite (FR-039; constitution v1.0.2, Principle II): removing a recorded copy deletes it
+    and each existing side file in the same directory named `<copy file name>-wal`, `-shm`,
+    or `-journal`; the result has one item per file, `kind` `sqlite_file`, `name` the
+    absolute path.
+  - A side file that does not exist is not listed. Other files (`other.sqlite3-wal`,
+    `<copy>-wal.bak`, `<copy>.backup`) are not touched.
+  - Listing only (for `--dry-run`) returns the same items and deletes nothing.
+  - A recorded copy that is already gone → already absent; its side files are left alone
+    (FR-039: never on their own; reading R2).
+  - Postgres: the password comes from the resolved `wtenv.toml` pattern when there is one,
+    otherwise from libpq (`PGPASSWORD`, `PGPASSFILE`, `~/.pgpass`); a failed connection is
+    returned as a failure reason that never contains the password (FR-019).
+- [ ] T088 [US4] Implement SQLite removal with side files in `src/wtenv/database.py`
+- [ ] T089 [US4] Implement Postgres removal in `src/wtenv/database.py`
+  - `DROP DATABASE IF EXISTS <name> WITH (FORCE)` from the `postgres` database (research.md
+    §3); a missing database is already absent (FR-042); the template is never touched (FR-027).
+
+### 6C. Removing a compose project (`compose.py`)
+
+- [ ] T090 [P] [US4] Write failing tests for compose project removal in `tests/unit/test_compose_teardown.py`
+  - With a fake command runner: list containers, networks, and volumes labelled
+    `com.docker.compose.project=<project>` before and after
+    `docker compose -p <project> down --volumes --remove-orphans`, run from a directory with
+    no compose file (research.md §4).
+  - Each removed resource is an item (`compose_container`, `compose_network`,
+    `compose_volume`); a project with nothing left is already absent.
+  - Labelled resources still there are removed with `docker rm`, `docker network rm`,
+    `docker volume rm`; what remains is failed.
+  - Only resources with the recorded project's label are ever named in a removal command;
+    external volumes and networks (no label) never are (FR-039). Listing only runs no removal.
+- [ ] T091 [US4] Implement compose project listing and removal in `src/wtenv/compose.py`
+
+### 6D. `wtenv down` (`teardown.py`, `provision.py`, `cli.py`, `output.py`)
+
+- [ ] T092 [P] [US4] Write failing integration tests for `down` in `tests/integration/test_us4_lifecycle.py`
+  - Scenario 1 (FR-038, FR-041): `down` removes wtenv's section (and the env file when wtenv
+    created it and nothing else is in it), releases the block, removes the entry, and lists
+    each item under `removed`.
+  - Scenario 2 (FR-040): `down --dry-run` changes nothing (registry and files
+    byte-identical) and lists the same items under `would_remove`.
+  - Scenario 7 (FR-043): `down` in a never-provisioned worktree exits 0 and changes nothing;
+    `down` twice is harmless. From a subdirectory works; outside a worktree → exit 4 (FR-002).
+  - FR-044: `down` works with no `wtenv.toml`; an invalid one gives warning
+    `config_ignored`; an env file deleted by hand is under `already_absent` (FR-042).
+  - FR-081: damaged markers → section under `failed`, file unchanged, entry `incomplete`,
+    exit 13; after repair, `down` finishes (FR-042).
+  - FR-085: with two worktrees of one repository, the first `down` keeps the exclude block,
+    the second removes it, markers included, keeping the developer's lines.
+  - FR-079: the line break wtenv added is removed; the developer's lines match the bytes
+    before the first `up`. FR-084: `down` after `git worktree move` releases and reports the
+    move. `DownResult` validates with `worktree_path` set.
+  - SQLite side files (FR-039): with `-wal`, `-shm`, and `-journal` beside the recorded copy,
+    `down --dry-run --json` lists the copy and each side file as separate `would_remove`
+    items (`kind` `sqlite_file`, `name` the absolute path) and deletes nothing; `down --json`
+    lists the same items under `removed` and they are gone; a missing side file is not
+    listed. US2 scenario 5 for SQLite: the template and another worktree's copy are unchanged.
+- [ ] T093 [P] [US4] Write failing decoy tests for `down` in `tests/integration/test_safety_decoys.py`
+  - SC-007, FR-039: an unrecorded `<worktree>/.wtenv/decoy.sqlite3` with `-wal` and
+    `-journal` files, and a wtenv-marked section in a file that is not the recorded env file,
+    are still there after `down`.
+  - With `docker`: database `wtenv_decoy_00000000`, a volume and a container labelled
+    `com.docker.compose.project=wtenv-decoy-00000000` survive `down`.
+- [ ] T094 [US4] Add failing Docker-backed `down` tests to `tests/integration/test_us4_lifecycle.py`
+  - US2 scenario 5 (Postgres): `down` drops the worktree's database, also while a session is
+    connected to it (spec Edge Cases), and leaves the template and other databases.
+  - No password available (none in `wtenv.toml`, no `PGPASSWORD`) → database under `failed`,
+    still recorded, exit 13; with the password, `down` finishes.
+  - Compose: after `docker compose up -d`, `down` removes the project's containers, networks,
+    named volumes, and the override, listing each; an `external` volume is kept.
+  - Items come out in the order of cli.md, `wtenv down`.
+- [ ] T095 [US4] Add failing recovery tests for `down` to `tests/integration/test_recovery.py`
+  - `down` interrupted (as in T041) after a resource is marked `removing` and before it is
+    removed, and after it is removed and before its record is dropped: `down` again finishes
+    and reports what was gone under `already_absent` (FR-069).
+  - After an interrupted `down`, `up` restores the worktree: a `removing` resource that still
+    exists is kept and marked `created`; one that is gone is created again (data-model.md,
+    Resource states).
+  - With Postgres: a database the server marks invalid (simulate with
+    `UPDATE pg_database SET datconnlimit = -2`, PostgreSQL's mark for an interrupted drop)
+    → `up` exits 19, reason `interrupted_removal`, hint naming `wtenv down`.
+- [ ] T096 [US4] Add a failing test for `up` and `down` at once to `tests/integration/test_concurrency.py`
+  - Both started together in one worktree run one after the other; the end state is that of
+    the two in lock order (spec Edge Cases).
+- [ ] T097 [US4] Implement the release plan in `src/wtenv/teardown.py`
+  - From the entry alone (FR-044), the items a release would remove, in cli.md's order:
+    compose containers, networks, volumes, the override; databases (a SQLite copy followed
+    by its existing side files); the env section (and the file when it would be deleted);
+    the port block; the registry entry; the exclude entries when this is the repository's
+    last entry (FR-085). This is the `--dry-run` output; no worktree lock, no change.
+- [ ] T098 [US4] Implement releasing one entry in `src/wtenv/teardown.py`
+  - Per resource: mark it `removing`, remove it, drop its record; the registry lock only for
+    those short updates (FR-068).
+  - Each item ends `removed`, `already_absent`, or `failed` with a reason (FR-041). Failed
+    items stay recorded, the entry stays `incomplete`, the caller exits 13 (FR-042).
+  - When nothing is left: delete the entry and its block in one transaction, and remove the
+    exclude block if no other entry of that repository remains (FR-085). Shared by `down`
+    and `gc`; removes only what the entry records (FR-039).
+- [ ] T099 [US4] Handle resources recorded as `removing` in `up` in `src/wtenv/provision.py`
+  - data-model.md, Resource states, column "Next `up`": still there and usable → keep, mark
+    `created`; gone → create again; an invalid Postgres database → `unsupported`, reason
+    `interrupted_removal`.
+- [ ] T100 [US4] Add `wtenv down [--dry-run] [--json]` to `src/wtenv/cli.py` and its text output to `src/wtenv/output.py`
+  - Identify the worktree; without `--dry-run` take the worktree lock (60 s); record a new
+    location and warn `worktree_moved` if it moved (FR-084); release. No entry → exit 0,
+    nothing removed (FR-043). Exit statuses 0, 4, 13, 14, 15, 16.
+
+### 6E. `wtenv gc` (`orphans.py`, `cli.py`, `output.py`)
+
+- [ ] T101 [US4] Add failing tests for plain `gc` to `tests/integration/test_us4_lifecycle.py`
+  - Scenario 3 (FR-045): entries of worktrees removed with `git worktree remove` are
+    released; items under `removed`, paths under `released`.
+  - Scenario 4 (FR-075): `gc --dry-run` changes nothing and fills `would_release` and
+    `would_remove`.
+  - Scenario 5 (FR-046, FR-047): with existing, orphaned, and unverifiable entries, only the
+    orphaned are released; existing worktrees are not listed.
+  - Scenario 8 (FR-072): under `kept` with reason, nothing removed, exit 0: directory deleted
+    by hand (`git_still_lists`); repository deleted (`repository_not_found`); moved
+    (`moved`, `current_path`); something at a removed worktree's path (`path_exists`).
+  - After `git worktree prune` the hand-deleted one is released; `gc` itself never prunes:
+    git still lists a prunable worktree after `gc` (FR-075).
+  - Works outside any repository (FR-003); a second run behaves the same (FR-075).
+  - An entry whose worktree lock is held → `skipped_busy`, exit 0 (FR-077).
+  - FR-074: a worktree that reappears between the first classification and the release is
+    skipped (in-process, second classification patched).
+- [ ] T102 [US4] Add failing tests for `gc --release` to `tests/integration/test_us4_lifecycle.py`
+  - Scenario 9 (FR-073): after the repository is deleted, `gc --release <path>` releases
+    the entry and lists each item; a second run reports the path under `no_entry`, exit 0.
+  - Only the named entries are acted on; an unnamed orphan stays.
+  - A path whose worktree still exists → exit 18 `worktree_exists` with `details.path`; a
+    moved worktree that exists elsewhere → exit 18 with `details.current_path`; nothing
+    changed for any path.
+  - `--release PATH --dry-run` lists and changes nothing.
+  - SQLite side files (FR-039; reading R3): a linked worktree with a SQLite copy and side
+    files; its repository deleted, the worktree directory left. `gc --release <path>
+    --dry-run --json` lists the copy and each existing side file as separate `would_remove`
+    items; without `--dry-run` they are under `removed` and gone.
+  - With `docker`: an orphan's Postgres database without a password → `failed`, still
+    recorded, exit 13; with `PGPASSWORD`, the next `gc` removes it (cli.md, Credentials).
+    SC-003: with Postgres and a started compose stack, `git worktree remove --force` then one
+    `gc` leaves no database, container, volume, or entry of it.
+- [ ] T103 [US4] Add `gc` decoy tests to `tests/integration/test_safety_decoys.py`
+  - The decoys of T093 survive plain `gc` and `gc --release` of a neighbouring entry (SC-007).
+- [ ] T104 [US4] Implement plain `gc` in `src/wtenv/orphans.py`
+  - Read the registry once; one `git --git-dir=<repository> worktree list --porcelain` per
+    repository; classify every entry.
+  - Each `orphaned` entry: try its worktree lock without waiting (held → `skipped_busy`);
+    holding it, classify again with a fresh listing and skip the entry if it is no longer
+    orphaned (FR-074); release through `teardown`.
+  - `unverifiable` → `kept`. `kept` and `skipped_busy` never change the exit status; a
+    failed item gives 13. `--dry-run`: classify and list through the release plan, no lock.
+  - Never run a git command that changes a repository (FR-075).
+- [ ] T105 [US4] Implement `gc --release PATH` in `src/wtenv/orphans.py`
+  - Check every `PATH` first: an entry whose worktree still exists there, or (reason
+    `moved`) elsewhere → `worktree_exists`, nothing changed. A `PATH` with no entry →
+    `no_entry`. Then release each named entry with the plain `gc` lock rule (cli.md).
+- [ ] T106 [US4] Add `wtenv gc [--dry-run] [--release PATH]... [--json]` to `src/wtenv/cli.py` and its text output to `src/wtenv/output.py`
+  - `GcResult`; exit statuses 0, 13, 14, 16, 18.
+
+### 6F. `wtenv ls` (`listing.py`, `cli.py`, `output.py`)
+
+- [ ] T107 [US4] Add failing tests for `ls` to `tests/integration/test_us4_lifecycle.py`
+  - Scenario 6 (FR-048, FR-049): entries of two repositories listed from anywhere, each with
+    repository, path, block, each variable's port, published ports, database, compose
+    project, and status.
+  - Inside a repository, its worktrees without an entry are `unprovisioned`; outside any
+    repository `ls` still works (FR-003).
+  - Statuses: `provisioned`; `incomplete` after a failed `up`; `orphaned` after
+    `git worktree remove` (FR-054); `unverifiable` with `reason`, and `current_path` when
+    moved.
+  - FR-050: the registry is byte-identical afterwards; `ls` works while another process
+    holds a worktree lock (FR-068, FR-076).
+  - `LsResult` validates; the text table has cli.md's columns; no credentials (FR-019).
+- [ ] T108 [P] [US4] Add an `ls --json` case to `tests/unit/test_lazy_imports.py`
+  - After `wtenv.cli.main(["ls", "--json"])` in a fresh interpreter, `psycopg` and
+    `wtenv.compose` are not in `sys.modules` (NFR-001; research.md §8).
+- [ ] T109 [US4] Implement the `ls` views in `src/wtenv/listing.py`
+  - One `WorktreeView` per entry, status from `classify`. Inside a repository, add the
+    worktrees that are in the listing, exist on disk, and whose `points_to` is not a registry
+    key, as `unprovisioned` (data-model.md).
+- [ ] T110 [US4] Add `wtenv ls [--json]` to `src/wtenv/cli.py` and its table to `src/wtenv/output.py`
+  - Registry lock only, briefly; no worktree lock (FR-076). Exit statuses 0, 14, 16.
+
+**Checkpoint**: US1–US4 work; the five gates pass.
+
+---
+
+## Phase 7: User Story 5 - Auto-provisioning and exec (Priority: P5)
+
+**Goal**: an opt-in git `post-checkout` hook runs `wtenv up` in new worktrees, and
+`wtenv exec -- <command>` runs a command with the worktree's variables. The Claude Code
+integration (FR-055, US5 scenario 4) is not delivered; it has no tasks.
+
+**Independent Test**: install the hook, run `git worktree add`: the new worktree is
+provisioned. `wtenv exec -- env` shows the worktree's variables. Automated by T113 and T116.
+
+### 7A. The hook block (`hooks.py`)
+
+- [ ] T111 [P] [US5] Write failing tests for the hook block in `tests/unit/test_hooks_block.py`
+  - The block is the text in files.md, "Git hook block", byte for byte; its `wtenv up` line
+    ends in `|| true`, so the hook's exit status is never changed (FR-052).
+  - Insert directly after the shebang of an existing POSIX shell hook (reading R4); a new
+    file gets `#!/bin/sh`; inserting again changes no byte; an outdated block is rewritten in
+    place.
+  - Remove takes out exactly the block; every other byte stays.
+  - A hook that is not a POSIX shell script → `unsupported`, reason `hook_not_shell`, with
+    the block in the hint. Damaged markers → reason `markers_damaged`.
+- [ ] T112 [US5] Implement the block text, insertion, and removal in `src/wtenv/hooks.py`
+
+### 7B. `wtenv hook install` and `wtenv hook uninstall`
+
+- [ ] T113 [P] [US5] Write failing integration tests for the hook in `tests/integration/test_us5_hook_exec.py`
+  - Setup: `PATH` starts with the directory of the test environment's `wtenv` script
+    (`Path(sys.executable).parent`).
+  - Scenario 1 (FR-051): after `hook install`, `git worktree add` with a branch and with
+    `--detach` leaves the new worktree provisioned.
+  - Scenario 2 (FR-052), the hook always lets git exit 0: a `wtenv.toml` that makes `up`
+    fail → `git worktree add` exits 0, the worktree exists, wtenv's error is on stderr;
+    `wtenv` missing from `PATH` → exit 0 with the not-found message.
+  - Scenario 3 (FR-051): `git switch -c`, `git checkout HEAD -- <file>`, and `git clone`
+    provision nothing (registry unchanged).
+  - Scenario 7 (FR-053): an existing hook keeps running its own lines after install, and is
+    byte-identical after uninstall.
+  - A hook file wtenv created is deleted by uninstall when only the shebang is left;
+    `hook uninstall --dry-run` lists `hook_block` (and `hook_file`) under `would_remove`
+    and changes nothing (FR-040); no block → `action` `absent`.
+  - Installing twice → `action` `unchanged`; `up`, `down`, `gc`, `ls`, and `doctor` never
+    install it (FR-051).
+  - `core.hooksPath` elsewhere → exit 19, reason `hooks_path_redirected`, block in the hint,
+    nothing written; a non-shell hook → reason `hook_not_shell`.
+- [ ] T114 [US5] Implement install and uninstall in `src/wtenv/hooks.py`
+  - Hook file `<git-common-dir>/hooks/post-checkout`; `git rev-parse --git-path hooks` must
+    equal `<git-common-dir>/hooks`, otherwise `hooks_path_redirected` (research.md §1).
+  - A new file gets mode `0755` and a `HookRecord` with `created_file` true; uninstall
+    deletes the file only then, and only when nothing but the shebang is left.
+- [ ] T115 [US5] Add `wtenv hook install` and `wtenv hook uninstall [--dry-run]` to `src/wtenv/cli.py` and their output to `src/wtenv/output.py`
+  - `HookInstallResult`, `HookUninstallResult`; exit statuses 0, 4, 14, 16, 19.
+
+### 7C. `wtenv exec` (`execcmd.py`, `cli.py`)
+
+- [ ] T116 [US5] Add failing tests for `exec` to `tests/integration/test_us5_hook_exec.py`
+  - Scenario 5 (FR-056): the command sees the port variables and, with a database recorded,
+    `DATABASE_URL`; standard input, output, and error pass through; wtenv exits with the
+    command's status (for example 7). The developer's own env-file lines are not loaded.
+  - Scenario 6 (FR-057): unprovisioned or incomplete → exit 125, command not run; with
+    `--json`, an `ExecResult` with `error.code` `not_provisioned`, `error.exit_status` 125,
+    and `details.status`.
+  - A missing `--` or command → usage error, exit 125. Command not found → 127; found but
+    not executable → 126 (cli.md, `wtenv exec`).
+  - When the command runs, wtenv prints nothing. `exec` takes no worktree lock (FR-076).
+- [ ] T117 [US5] Implement `exec` in `src/wtenv/execcmd.py`
+  - Status from `classify`; only `provisioned` runs. Environment: the current one plus the
+    recorded port variables and `DATABASE_URL` (reading R1). Replace the process with
+    `os.execvpe`, so signals reach the command directly.
+- [ ] T118 [US5] Add `wtenv exec [--json] -- COMMAND [ARG]...` to `src/wtenv/cli.py`
+  - `--` is required; any wtenv failure in `exec` exits 125 with the real code in
+    `error.code` (cli.md).
+
+**Checkpoint**: US1–US5 work; the five gates pass.
+
+---
+
+## Phase 8: User Story 6 - Diagnostics (Priority: P6)
+
+**Goal**: `wtenv doctor` reports port conflicts, stale entries, and missing dependencies,
+and the `--json` contract is checked for every command.
+
+**Independent Test**: run every command with `--json` and parse stdout as one document;
+create each problem `doctor` checks for and confirm its code, and that `doctor` changed
+nothing. Automated by T119–T120 and T125–T127.
+
+### 8A. `wtenv doctor` (`doctor.py`, `cli.py`, `output.py`)
+
+- [ ] T119 [P] [US6] Write failing tests for the doctor checks in `tests/unit/test_doctor_checks.py`
+  - Findings (cli.md, `wtenv doctor`): `block_overlap` (FR-060a); `orphaned_worktree`,
+    `unverifiable_worktree` with `details.reason`, `incomplete_worktree`, from `classify`
+    (FR-060c, d; FR-054); `missing_resource` for a recorded env section, env file, SQLite
+    copy, override, or Postgres database (on a reachable server) that no longer exists;
+    `resource_check_skipped` (info) when the server cannot be reached.
+  - Ports (FR-060b; research.md §11): a busy assigned port belongs to the worktree when a
+    container of its compose project publishes it, or `lsof` shows the listener's working
+    directory inside the worktree; anything else → `port_conflict`; `lsof` missing or unsure
+    → `port_in_use` (info).
+  - Dependencies (FR-060e): `git`, `docker`, `postgres` each `ok`, `unavailable`, or
+    `not_required`; not needed by the current worktree's `wtenv.toml` → `not_required`,
+    never a finding; outside a repository `docker` and `postgres` are `not_required`; needed
+    and unavailable → `dependency_unavailable`.
+  - Exit 0 without `problem` findings; otherwise 17, `ok` false, `error.code`
+    `problems_found`, `details.problems` the count (FR-061).
+  - The checks take the command runner as a parameter (`lsof`, `docker`).
+- [ ] T120 [P] [US6] Write failing integration tests for `doctor` in `tests/integration/test_us6_diagnostics.py`
+  - Scenario 3: a healthy setup → exit 0, no `problem` finding.
+  - Scenario 4: a listener started outside the worktree on an assigned port →
+    `port_conflict`; an entry whose worktree was removed with git → `orphaned_worktree`; a
+    `wtenv.toml` needing Postgres on a closed local port → `dependency_unavailable`; exit 17;
+    registry and files byte-identical afterwards (FR-060).
+  - A listener started inside the worktree is not a conflict.
+  - Works outside any repository (FR-003); takes no worktree lock (FR-076); `DoctorResult`
+    validates.
+- [ ] T121 [US6] Implement the registry checks in `src/wtenv/doctor.py`
+- [ ] T122 [US6] Implement the port-holder checks in `src/wtenv/doctor.py`
+- [ ] T123 [US6] Implement the dependency checks in `src/wtenv/doctor.py`
+- [ ] T124 [US6] Add `wtenv doctor [--json]` to `src/wtenv/cli.py` and its output to `src/wtenv/output.py`
+  - Exit statuses 0, 14, 16, 17.
+
+### 8B. The agent contract for every command
+
+- [ ] T125 [P] [US6] Write contract tests for the command surface in `tests/contract/test_command_surface.py`
+  - The commands and options are exactly cli.md's synopsis, nothing more (FR-001).
+- [ ] T126 [P] [US6] Write contract tests for every `--json` document in `tests/contract/test_json_documents.py`
+  - For `--version`, `up`, `down`, `down --dry-run`, `gc`, `gc --dry-run`, `gc --release`,
+    `ls`, `doctor`, `hook install`, `hook uninstall`, `hook uninstall --dry-run`, and a
+    failing `exec`: stdout is exactly one document that validates against the matching
+    model of `json_models.py`; everything else is on stderr; `ok` is true exactly when the
+    exit status is 0 (FR-058; US6 scenarios 1–2; SC-008).
+- [ ] T127 [P] [US6] Write contract tests for exit statuses in `tests/contract/test_exit_statuses.py`
+  - One triggering case per code that a command can produce, checking code and status:
+    1, 2, 3, 4, 6, 7, 8 (Postgres on a closed port), 9 and 10 and 11 (SQLite), 12, 13
+    (damaged markers on `down`), 16, 17, 18, 19 (`core.hooksPath`); 14 and 15 through the
+    in-process functions with small bounds; 5 inside `exec`'s 125 (FR-059).
+- [ ] T128 [US6] Run `tests/contract/` and correct each deviation in `src/wtenv/cli.py` or `src/wtenv/output.py`
+
+**Checkpoint**: all six stories work; the five gates pass.
+
+---
+
+## Phase 9: Polish & Cross-Cutting Concerns
+
+**Purpose**: performance, coverage, CI, release, documentation, and the end-to-end run.
+
+- [ ] T129 [P] Write a local-only test in `tests/unit/test_local_only.py`
+  - Principle I, FR-071: no module under `src/wtenv/` imports `urllib`, `http`, `requests`,
+    `httpx`, `ftplib`, `smtplib`, or similar; `socket` is used only by `ports.py` and
+    `doctor.py`, for `bind`.
+- [ ] T130 [P] Create the sample app in `tests/fixtures/sample_app/app.py`, `tests/fixtures/sample_app/compose.yaml`, `tests/fixtures/sample_app/wtenv.toml`
+  - Exactly as quickstart.md, "The sample app fixture".
+- [ ] T131 Write the provisioning-time test in `tests/integration/test_up_time.py`
+  - NFR-002, SC-002 on the sample app (URL rewritten to the `postgres_server` port): (a) a
+    first `up` with `[database]` and `post_up` removed; (b) a repeat `up` in a provisioned
+    worktree with the full configuration and `post_up` removed; each under 5 s.
+- [ ] T132 [P] Write the startup benchmark `scripts/bench-startup.sh`
+  - NFR-001: against the installed `wtenv` called directly, from the root of a repository
+    with only its main worktree and an empty registry (`XDG_STATE_HOME` in a temporary
+    directory): `hyperfine --warmup 5 --runs 30 'wtenv --version'` and the same for
+    `'wtenv ls --json'`; exit non-zero when a mean is 300 ms or more.
+- [ ] T133 Run the benchmark on the maintainer's machine and record the result in `docs/benchmarks.md`
+  - Machine model, OS version, wtenv version, both means (NFR-001, SC-004). Needs
+    `hyperfine`; ask the maintainer if it is missing. If a mean fails, stop and ask: the
+    contingency in research.md §8 changes the dependency list.
+- [ ] T134 [P] Write the CI workflow `.github/workflows/ci.yml`
+  - On pushes and pull requests. Matrix `ubuntu-latest` and `macos-latest`, Python 3.11 and
+    3.12, with `astral-sh/setup-uv` and `uv sync --locked`. Each job runs the five gates
+    (plan.md, Build, CI and release; NFR-004); on macOS the Docker tests skip themselves.
+  - The ubuntu jobs have Docker, so the Docker and Postgres integration tests run there
+    with nothing skipped.
+  - Pin each action to a full commit SHA with its version in a comment, as the uv guide does.
+- [ ] T135 Add the NFR-003 coverage check to `.github/workflows/ci.yml`
+  - In one ubuntu job: `uv run pytest --cov=wtenv`, then one
+    `uv run coverage report --fail-under=80 --include=<modules>` per row of plan.md's
+    coverage map: `registry.py` with `locks.py`; `ports.py`; `identity.py`; `config.py`;
+    `database.py`; `compose.py`; `orphans.py`; `envfile.py`. Each row measured on its own.
+- [ ] T136 Run the coverage check locally with Docker available and add tests in `tests/unit/` or `tests/integration/` for any area under 80%
+- [ ] T137 [P] Write the release workflow `.github/workflows/release.yml`
+  - On `v*` tags: a `build` job running `uv build` and uploading `dist/`, and a separate
+    `publish` job with `environment: pypi` and `permissions: id-token: write` running
+    `uv publish` with PyPI trusted publishing; no stored credentials (plan.md; research.md
+    §5, §11). The first release uses a "pending" publisher.
+- [ ] T138 [P] Write `README.md` and add `readme = "README.md"` to `pyproject.toml`
+  - Install (`uv tool install wtenv` or `pipx install wtenv`); the nine commands with one
+    example each; `wtenv.toml` (config.md); `--json` and exit statuses (cli.md); platforms
+    (macOS, Linux, WSL2); limits (research.md §1, §4); working with Claude Code
+    (quickstart.md: the `CLAUDE.md` line, no env file in `.worktreeinclude`, `gc` after
+    removal). No feature beyond the spec.
+- [ ] T139 Check `docs/roadmap.md` against the code
+  - The command surface matches cli.md (T125); nothing on the roadmap was built; every idea
+    noted during implementation is added with its source (FR-001, Principle X).
+- [ ] T140 Run quickstart.md end to end and fix what it finds
+  - `uv tool install --force --reinstall .`, extract the script with the `awk` command at the
+    top of quickstart.md, run it with Docker; it must end with `ACCEPTANCE PASSED`
+    (SC-001–SC-009).
+- [ ] T141 Run the five gates one last time and confirm `CLAUDE.md` still matches the constitution
+
+---
+
+## Dependencies & Execution Order
+
+### Phase dependencies
+
+- **Setup (Phase 1)**: none.
+- **Foundational (Phase 2)**: after Setup; blocks every story.
+- **US1 (Phase 3)**: after Foundational. The MVP.
+- **US2 (Phase 4)** and **US3 (Phase 5)**: after US1 (both use the block, the env file, and
+  `provision.py`). Independent of each other, but both edit `config.py`, `provision.py`, and
+  `output.py`, so run them one after the other or merge with care.
+- **US4 (Phase 6)**: after US1. Groups 6B (database removal) and 6C (compose removal) need
+  US2 and US3; without them, skip those groups and the Docker cases.
+- **US5 (Phase 7)**: after US4 (`exec` uses `classify`).
+- **US6 (Phase 8)**: after US4 (`doctor` uses `classify`); its contract suite covers every
+  command delivered so far.
+- **Polish (Phase 9)**: after the stories that will ship. T134, T137, and T138 depend only
+  on Setup and can be pulled forward, for example to release the MVP early.
+
+### Groups that can run side by side
+
+- Phase 2: 2A, 2B (after 2A's T008), 2C, and 2D; 2E after all four.
+- Phase 3: 3A, 3B, 3C, and 3D; 3E after all four.
+- Phase 4: 4A, 4B, 4C, and 4D; 4E and 4F after them.
+- Phase 5: 5A, 5B, 5C, 5D, and 5E; 5F after them.
+- Phase 6: 6A, 6B, and 6C; 6D after them; 6E and 6F after 6D.
+- Phase 7: 7A, then 7B; 7C can run beside 7A and 7B.
+- Phase 8: 8A, then 8B.
+
+### Inside each group
+
+- Tests first, and seen to fail; then the implementation tasks in order.
+- Tasks on the same file run in ID order.
+
+---
+
+## Parallel Example: Phase 2
+
+```text
+Task: "T007 Write failing tests for the error-code table in tests/unit/test_errors.py"
+Task: "T013 Write failing tests for git output parsing in tests/unit/test_gitutil.py"
+Task: "T014 Write failing tests for points_to … in tests/unit/test_identity.py"
+Task: "T018 Write failing tests for the state directory and locks in tests/unit/test_locks.py"
+Task: "T019 Write failing tests for the registry models in tests/unit/test_registry_models.py"
+```
+
+## Parallel Example: User Story 1
+
+```text
+# Four agents, one group each (3A–3D), each writing its tests first:
+Task: "T027 Write failing tests for configuration loading in tests/unit/test_config.py"
+Task: "T029 Write failing tests for the free-port test and the block search in tests/unit/test_ports_search.py"
+Task: "T033 Write failing tests for writing wtenv's section in tests/unit/test_envfile_write.py"
+Task: "T037 Write failing tests for the exclude block in tests/unit/test_exclude.py"
+# Then group 3E's three test files together:
+Task: "T039 … tests/integration/test_us1_ports_env.py"
+Task: "T040 … tests/integration/test_concurrency.py"
+Task: "T041 … tests/integration/test_recovery.py"
+```
+
+## Parallel Example: User Story 2
+
+```text
+Task: "T050 … tests/unit/test_config_database.py"
+Task: "T052 … tests/unit/test_names.py"
+Task: "T056 … tests/unit/test_database_sqlite.py"
+Task: "T059 … tests/unit/test_database_postgres_errors.py"
+```
+
+## Parallel Example: User Story 3
+
+```text
+Task: "T069 … tests/unit/test_config_compose.py"
+Task: "T071 … tests/unit/test_compose_model.py"
+Task: "T073 … tests/unit/test_ports_published.py"
+Task: "T075 … tests/unit/test_compose_override.py"
+Task: "T077 … tests/unit/test_compose_checks.py"
+```
+
+## Parallel Example: User Story 4
+
+```text
+Task: "T085 … tests/unit/test_classify.py"
+Task: "T087 … tests/unit/test_database_remove.py"
+Task: "T090 … tests/unit/test_compose_teardown.py"
+# Then:
+Task: "T092 … tests/integration/test_us4_lifecycle.py"
+Task: "T093 … tests/integration/test_safety_decoys.py"
+```
+
+## Parallel Example: User Stories 5 and 6
+
+```text
+Task: "T111 … tests/unit/test_hooks_block.py"
+Task: "T113 … tests/integration/test_us5_hook_exec.py"
+Task: "T119 … tests/unit/test_doctor_checks.py"
+Task: "T120 … tests/integration/test_us6_diagnostics.py"
+```
+
+---
+
+## Implementation Strategy
+
+### MVP first (User Story 1 only)
+
+1. Phase 1: Setup. 2. Phase 2: Foundational. 3. Phase 3: US1.
+4. **Stop and validate**: the US1 independent test and quickstart.md sections 1–2.
+5. To publish the MVP (research.md §5 suggests an early `0.1.0` to secure the PyPI name),
+   pull T134, T137, and T138 forward first; that is the maintainer's choice.
+
+### Incremental delivery
+
+Each phase ends at a checkpoint where the product works and the five gates pass: US1 ports
+and env file → US2 databases → US3 compose → US4 `down`, `gc`, `ls` → US5 hook and `exec` →
+US6 `doctor` and the full contract → Polish and release.
+
+### Parallel team strategy
+
+After Foundational, independent groups go to separate agents, each in its own worktree
+(using wtenv's own `up` once US1 exists). Merge a group only when its tests and the five
+gates pass.
+
+---
+
+## Readings taken where the design leaves a choice
+
+Confirm or change these before the tasks that use them are started.
+
+| # | Open point | Reading taken | Tasks |
+|---|------------|---------------|-------|
+| R1 | cli.md says `exec` sets `DATABASE_URL` "when a database is recorded", but the registry holds no credentials | Resolve it as `up` does: the URL pattern in the worktree's `wtenv.toml` with the recorded database's name or path. No `[database]` in `wtenv.toml` means no `DATABASE_URL` | T116, T117 |
+| R2 | A recorded SQLite copy already deleted by hand, with its side files still there | Report the copy as already absent and leave the side files (FR-039: "never on their own"). A later `up` then copies next to them; say if `up` should refuse instead | T087, T088 |
+| R3 | FR-073 refuses `gc --release` "at which a worktree still exists" | A directory whose `.git` file points to a git directory that no longer exists is not a worktree, so `--release` can release it | T102, T105 |
+| R4 | files.md: install into an existing "POSIX shell" hook | A shebang naming `sh`, `bash`, `dash`, or `ksh` counts; anything else, or no shebang, is `hook_not_shell` | T111, T112 |
+
+---
+
+## Notes
+
+- [P] tasks touch different files and need nothing unfinished.
+- The story label maps each task to spec.md for traceability; FR, NFR, and SC numbers in the
+  task text map it to requirements.
+- FR-055 and US5 scenario 4 are not delivered (spec.md, Clarifications); they have no tasks.
+- Commit after each completed group; stop at any checkpoint to validate a story on its own.
