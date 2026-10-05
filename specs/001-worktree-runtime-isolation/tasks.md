@@ -780,7 +780,7 @@ T104–T108, and T112.
 
 ### 6B. Removing databases (`database.py`) — core area 5
 
-- [ ] T087 [P] [US4] Write failing tests for database removal in `tests/unit/test_database_remove.py`
+- [X] T087 [P] [US4] Write failing tests for database removal in `tests/unit/test_database_remove.py`
   - SQLite (FR-039; constitution v1.0.2, Principle II): removing a recorded copy deletes it
     and each existing side file in the same directory named `<copy file name>-wal`, `-shm`,
     or `-journal`; the result has one item per file, `kind` `sqlite_file`, `name` the
@@ -793,8 +793,8 @@ T104–T108, and T112.
   - Postgres: the password comes from the resolved `wtenv.toml` pattern when there is one,
     otherwise from libpq (`PGPASSWORD`, `PGPASSFILE`, `~/.pgpass`); a failed connection is
     returned as a failure reason that never contains the password (FR-019).
-- [ ] T088 [US4] Implement SQLite removal with side files in `src/wtenv/database.py`
-- [ ] T089 [US4] Implement Postgres removal in `src/wtenv/database.py`
+- [X] T088 [US4] Implement SQLite removal with side files in `src/wtenv/database.py`
+- [X] T089 [US4] Implement Postgres removal in `src/wtenv/database.py`
   - `DROP DATABASE IF EXISTS <name> WITH (FORCE)` from the `postgres` database (research.md
     §3); a missing database is already absent (FR-042); the template is never touched (FR-027).
 

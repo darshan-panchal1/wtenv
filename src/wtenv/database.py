@@ -19,11 +19,13 @@ from urllib.parse import unquote, urlsplit
 from wtenv.config import ENV_PLACEHOLDER, LOCAL_HOSTS, PLACEHOLDER
 from wtenv.errors import ErrorCode, JsonValue, WtenvError
 from wtenv.identity import short_id, slug
+from wtenv.output import FailedItem, Item, ItemKind
 
 if TYPE_CHECKING:
     import psycopg
 
 SQLITE_DIR = ".wtenv"  # in the worktree root; the copies live here (files.md, Names)
+SQLITE_SIDE_SUFFIXES = ("-wal", "-shm", "-journal")  # SQLite's own files beside a database file
 POSTGRES_DEFAULT_PORT = 5432
 MAINTENANCE_DATABASE = "postgres"  # the database wtenv connects to (research.md section 3)
 _URL_SETTING = "database.url"
@@ -214,6 +216,62 @@ def create_sqlite_copy(template: Path, target: Path) -> None:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(temporary)
         raise
+
+
+# --- removing databases (FR-039, FR-042; constitution v1.0.2, Principle II) --------------------
+
+
+@dataclass(frozen=True)
+class Removal:
+    """What removing one recorded database did, or, when only listing, would do.
+
+    `removed` holds the items deleted (or that would be); `already_absent` the recorded things
+    that were not there (FR-042); `failed` the ones that could not be removed, each with a reason
+    that never holds a password (FR-019).
+    """
+
+    removed: list[Item] = field(default_factory=list)
+    already_absent: list[Item] = field(default_factory=list)
+    failed: list[FailedItem] = field(default_factory=list)
+
+
+def _sqlite_item(path: Path) -> Item:
+    return Item(kind=ItemKind.SQLITE_FILE, name=str(path))
+
+
+def remove_sqlite_copy(copy: Path, *, dry_run: bool = False) -> Removal:
+    """Remove the recorded SQLite copy `copy` and each existing side file beside it (FR-039).
+
+    `copy` is the absolute path of a copy the registry records. Its side files are the files in
+    the same directory named `<copy file name>-wal`, `-shm`, and `-journal`; each that exists is
+    its own item, listed after the copy. Nothing else is touched. When the copy itself is already
+    gone it is `already_absent` and its side files are left alone: side files go only together
+    with the recorded database file (reading R2). The side files are deleted first and the copy
+    last, so a failure leaves the copy in place and recorded, for the next `down` to finish.
+    With `dry_run` nothing is deleted and the same items are returned.
+    """
+    if not os.path.lexists(copy):
+        return Removal(already_absent=[_sqlite_item(copy)])
+    side_files = [
+        side
+        for side in (Path(f"{copy}{suffix}") for suffix in SQLITE_SIDE_SUFFIXES)
+        if os.path.lexists(side)
+    ]
+    items = [copy, *side_files]
+    if dry_run:
+        return Removal(removed=[_sqlite_item(path) for path in items])
+    deleted: set[Path] = set()
+    for path in [*side_files, copy]:
+        try:
+            os.unlink(path)
+        except OSError as error:
+            reason = error.strerror or type(error).__name__
+            failed = FailedItem(kind=ItemKind.SQLITE_FILE, name=str(path), reason=reason)
+            return Removal(
+                removed=[_sqlite_item(item) for item in items if item in deleted], failed=[failed]
+            )
+        deleted.add(path)
+    return Removal(removed=[_sqlite_item(path) for path in items])
 
 
 # --- Postgres (FR-020, FR-025, FR-082; research.md section 3) ----------------------------------
@@ -464,3 +522,63 @@ def create_postgres_database(target: PostgresTarget, *, template: str, name: str
                 raise
     except psycopg.Error as error:
         _raise_mapped(error, target, template, name, connections)
+
+
+def _drop_failure_reason(error: Exception, target: PostgresTarget) -> str:
+    """Say why the drop failed. The text of `error` is never copied: it could hold a password."""
+    from psycopg import OperationalError, errors
+
+    server = _server_text(target)
+    if isinstance(error, errors.InsufficientPrivilege):
+        return f"permission denied: the role {target.user or '(default)'} may not drop the database"
+    refused = isinstance(error, errors.Error) and (error.sqlstate or "").startswith("28")
+    text = str(error).lower() if isinstance(error, OperationalError) else ""
+    if refused or "authentication failed" in text or "no password supplied" in text:
+        return (
+            f"the Postgres server at {server} refused the login; "
+            "put the password in wtenv.toml, or set PGPASSWORD or ~/.pgpass, "
+            "then run the command again"
+        )
+    if isinstance(error, OperationalError):
+        return f"cannot connect to the Postgres server at {server}"
+    return f"the server did not drop the database ({type(error).__name__})"
+
+
+def remove_postgres_database(
+    target: PostgresTarget, name: str, *, dry_run: bool = False
+) -> Removal:
+    """Drop the recorded database `name` with `DROP DATABASE IF EXISTS … WITH (FORCE)`.
+
+    `target` is the server the registry records for it; with no password in it, libpq looks in
+    `PGPASSWORD`, `PGPASSFILE`, and `~/.pgpass`. A database that is not on the server is
+    `already_absent` (FR-042). Only `name` is ever dropped, and only a name wtenv would have
+    generated (`wtenv_<slug>_<id8>`, FR-022); the template is never touched (FR-027). Every
+    failure is returned in `failed`, never raised, with a reason that holds no password. With
+    `dry_run` the server is asked and nothing is dropped; when it cannot be asked, the recorded
+    database is listed, because `down` would try to drop it.
+    """
+    import psycopg
+    from psycopg import sql
+
+    item = Item(kind=ItemKind.POSTGRES_DATABASE, name=name)
+    if not name.startswith("wtenv_"):
+        reason = "not a database name wtenv generates (wtenv_<name>_<id>); it was left alone"
+        return Removal(failed=[FailedItem(kind=item.kind, name=name, reason=reason)])
+    try:
+        with _connect(target) as connection:
+            check_postgres_version(connection.info.server_version, target)
+            if not _exists(connection, name):
+                return Removal(already_absent=[item])
+            if not dry_run:
+                connection.execute(
+                    sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name))
+                )
+    except WtenvError as error:
+        # An unsupported server version: the message names no credentials.
+        return Removal(failed=[FailedItem(kind=item.kind, name=name, reason=error.message)])
+    except psycopg.Error as error:
+        if dry_run:
+            return Removal(removed=[item])
+        reason = _drop_failure_reason(error, target)
+        return Removal(failed=[FailedItem(kind=item.kind, name=name, reason=reason)])
+    return Removal(removed=[item])
