@@ -112,11 +112,11 @@ def read_section(path: Path) -> list[tuple[str, str]]:
     """
     content = _read(path)
     if content is None:
-        raise _unusable(path, "missing")
+        raise unusable(path, "missing")
     lines = content.splitlines(keepends=True)
     located = _locate(path, lines)
     if located is None:
-        raise _unusable(path, "no_section")
+        raise unusable(path, "no_section")
     begin, end = located
     pairs = []
     for line in lines[begin + 1 : end]:
@@ -207,7 +207,7 @@ def _locate(path: Path, lines: Sequence[bytes]) -> tuple[int, int] | None:
     try:
         return locate_section(lines)
     except MarkersDamaged:
-        raise _unusable(path, "markers_damaged") from None
+        raise unusable(path, "markers_damaged") from None
 
 
 def _read(path: Path) -> bytes | None:
@@ -217,9 +217,9 @@ def _read(path: Path) -> bytes | None:
     except FileNotFoundError:
         return None
     except IsADirectoryError:
-        raise _unusable(path, "is_directory") from None
+        raise unusable(path, "is_directory") from None
     except OSError:
-        raise _unusable(path, "not_writable") from None
+        raise unusable(path, "not_writable") from None
 
 
 def write_atomic(path: Path, data: bytes, mode: int) -> None:
@@ -258,13 +258,21 @@ _UNUSABLE = {
         "it cannot be read or written",
         "Make the file readable and writable, then run the command again.",
     ),
+    "parent_missing": (
+        "its directory does not exist",
+        "Create the directory, or change env_file in wtenv.toml.",
+    ),
+    "tracked_by_git": (
+        "git tracks it, and wtenv never changes a tracked file",
+        "Untrack it with `git rm --cached`, or set env_file in wtenv.toml to an untracked path.",
+    ),
     "missing": ("it does not exist", "Run `wtenv up` to write the env file."),
     "no_section": ("it has no wtenv section", "Run `wtenv up` to write wtenv's section."),
 }
 
 
-def _unusable(path: Path, reason: str) -> WtenvError:
-    """Build the `env_file_unusable` error for `path`."""
+def unusable(path: Path, reason: str) -> WtenvError:
+    """Build the `env_file_unusable` error for `path`; `reason` is a key of `details.reason`."""
     problem, hint = _UNUSABLE[reason]
     return WtenvError(
         ErrorCode.ENV_FILE_UNUSABLE,

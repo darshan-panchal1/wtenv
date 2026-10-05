@@ -45,6 +45,31 @@ def root(
         raise WtenvError(ErrorCode.USAGE_ERROR, "missing command", hint=_HELP_HINT)
 
 
+@app.command()
+def up(
+    json_output: bool = typer.Option(False, "--json", help="Print one JSON document."),
+) -> None:
+    """Give the current worktree its ports and env file, or bring it up to date."""
+    from wtenv.output import (
+        UpResult,
+        failed_result,
+        print_error,
+        print_result,
+        print_warnings,
+        render_up_text,
+    )
+    from wtenv.provision import up as provision_up
+
+    try:
+        result = provision_up()
+    except WtenvError as error:
+        print_error(error)
+        print_result(failed_result(UpResult, error), json_mode=json_output)
+        raise typer.Exit(EXIT_STATUS[error.code]) from error
+    print_warnings(result.warnings)
+    print_result(result, json_mode=json_output, text=render_up_text(result))
+
+
 def _print_version(json_mode: bool) -> None:
     """Print `wtenv <version>`, or a `VersionResult` document with `--json`."""
     if json_mode:

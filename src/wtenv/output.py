@@ -346,6 +346,38 @@ def failed_result(model: type[R], error: WtenvError, warnings: Sequence[WarningI
     return model(ok=False, error=info, warnings=list(warnings))
 
 
+def render_up_text(result: UpResult) -> str:
+    """Return the text `wtenv up` prints for people (cli.md, `wtenv up`; not a stable interface).
+
+    One header line, then one line per part of the worktree: its ports with their variables, and
+    the env file with what happened to it.
+    """
+    worktree = result.worktree
+    if worktree is None:
+        return ""
+    lines = [f"wtenv: provisioned {worktree.path}"]
+    if worktree.block is not None:
+        variables = " ".join(
+            f"{port.variable}={port.port}" for port in worktree.ports if port.variable is not None
+        )
+        lines.append(f"  {'ports':<11}{worktree.block.start}-{worktree.block.end}  {variables}")
+    for change in result.changes:
+        if change.action == "released":
+            lines.append(f"  {'released':<11}{change.item.kind.value} {change.item.name}")
+    if worktree.env_file is not None:
+        # The section of the env file that is in use, not one that was released.
+        action = next(
+            (
+                change.action
+                for change in result.changes
+                if change.item.kind is ItemKind.ENV_SECTION and change.action != "released"
+            ),
+            "unchanged",
+        )
+        lines.append(f"  {'env file':<11}{worktree.env_file} ({action})")
+    return "\n".join(lines)
+
+
 def print_result(result: Result, *, json_mode: bool, text: str = "") -> None:
     """Print a command's result to standard output.
 

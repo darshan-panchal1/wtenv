@@ -376,7 +376,7 @@ byte-identical. Automated by T039–T043; manual by quickstart.md sections 1 and
 
 ### 3E. `wtenv up` (`provision.py`, `output.py`, `cli.py`)
 
-- [ ] T039 [P] [US1] Write failing integration tests for the US1 acceptance scenarios in `tests/integration/test_us1_ports_env.py`
+- [X] T039 [P] [US1] Write failing integration tests for the US1 acceptance scenarios in `tests/integration/test_us1_ports_env.py`
   - Scenario 1 (FR-005, FR-007, FR-015): `up` allocates a block; `.env.local` sets `PORT` to
     a port in it with mode `0600`; the `UpResult` reports the block and each change.
   - Scenario 2 (FR-008): two worktrees get blocks that share no port.
@@ -391,7 +391,7 @@ byte-identical. Automated by T039–T043; manual by quickstart.md sections 1 and
   - The main worktree works like any other; outside a worktree → exit 4, nothing changed
     (FR-002). `git status --porcelain` is empty in both worktrees (FR-018). `up --json`
     prints one document that validates as `UpResult` (FR-058). SC-009.
-- [ ] T040 [P] [US1] Write failing concurrency tests in `tests/integration/test_concurrency.py`
+- [X] T040 [P] [US1] Write failing concurrency tests in `tests/integration/test_concurrency.py`
   - SC-005, FR-013: five `up` processes started at once in five worktrees get blocks that
     share no port; 20 trials, each with a fresh state directory.
   - Two `up` processes at once in one worktree: both exit 0, one block, the env file a single
@@ -399,7 +399,7 @@ byte-identical. Automated by T039–T043; manual by quickstart.md sections 1 and
   - `up` called in-process with a small worktree-lock bound while another process holds the
     lock → `worktree_busy`, nothing changed; after that holder is killed, `up` runs at once
     (FR-077, FR-078).
-- [ ] T041 [P] [US1] Write failing recovery tests for `up` in `tests/integration/test_recovery.py`
+- [X] T041 [P] [US1] Write failing recovery tests for `up` in `tests/integration/test_recovery.py`
   - Write order (data-model.md, Write order of `up`). Run `up` in a child process that is
     stopped with `os._exit(137)` at one point, then run `up` normally. The four points:
     - after the registry step: the first call of `wtenv.registry.save` runs, then the
@@ -418,7 +418,7 @@ byte-identical. Automated by T039–T043; manual by quickstart.md sections 1 and
   - The second run finishes the work: it exits 0, the exclude block and the section are
     written, the env-file record is `created`, the entry ends `provisioned`, and the block is
     the one recorded at the interruption (FR-069).
-- [ ] T042 [US1] Add failing tests for env-file and configuration errors to `tests/integration/test_us1_ports_env.py`
+- [X] T042 [US1] Add failing tests for env-file and configuration errors to `tests/integration/test_us1_ports_env.py`
   - Env file path is a directory, has no parent directory, is not writable, is tracked by git,
     or has damaged markers → exit 7 with `details.reason` `is_directory`, `parent_missing`,
     `not_writable`, `tracked_by_git`, or `markers_damaged`; file and registry unchanged
@@ -430,7 +430,7 @@ byte-identical. Automated by T039–T043; manual by quickstart.md sections 1 and
   - A registry file that is not JSON → exit 16; the file is not rewritten (FR-070).
   - `block_size = 1000` leaves ten candidates; with a listener in each (ports already taken
     count as taken) → exit 6 `no_free_block`, nothing allocated (FR-012).
-- [ ] T043 [US1] Add failing tests for configuration changes and moves to `tests/integration/test_us1_ports_env.py`
+- [X] T043 [US1] Add failing tests for configuration changes and moves to `tests/integration/test_us1_ports_env.py`
   - FR-065 (config.md, Changes after provisioning): a changed `ports` list is reassigned
     within the same block; a changed `block_size` allocates a new block, releases the old
     one, and reports both; a changed `env_file` writes the section to the new file and
@@ -440,12 +440,12 @@ byte-identical. Automated by T039–T043; manual by quickstart.md sections 1 and
   - After `git worktree move`, `up` keeps the block, records the new location, and warns
     `worktree_moved` (FR-084).
   - A port of the block later taken by another process: a repeat `up` keeps the block (FR-011).
-- [ ] T044 [US1] Implement the checks of `up` that change nothing in `src/wtenv/provision.py`
+- [X] T044 [US1] Implement the checks of `up` that change nothing in `src/wtenv/provision.py`
   - cli.md, `wtenv up`, steps 1–4 and 6: identify the worktree; take the worktree lock
     (bound a parameter, default 60 s); load `wtenv.toml` or the defaults; check the env file
     path (parent present, not a directory, not tracked by git, writable, markers intact);
     check that the block size holds all port variables. Nothing changes unless all pass.
-- [ ] T045 [US1] Implement the registry step of `up` in `src/wtenv/provision.py`
+- [X] T045 [US1] Implement the registry step of `up` in `src/wtenv/provision.py`
   - Step 8, in one registry transaction: create the entry as `incomplete`, or record a new
     location for a known identity (FR-084); allocate a block when the entry has none; assign
     ports; record the env file as `creating` and its pattern in `exclude_patterns`; save.
@@ -454,18 +454,18 @@ byte-identical. Automated by T039–T043; manual by quickstart.md sections 1 and
   - Only after that save: add the entry's `exclude_patterns` to the exclude block, under the
     registry lock (files.md). Nothing is created before the entry is saved (data-model.md,
     Write order of `up`).
-- [ ] T046 [US1] Implement the env-file step and completion of `up` in `src/wtenv/provision.py`
+- [X] T046 [US1] Implement the env-file step and completion of `up` in `src/wtenv/provision.py`
   - Step 12: write the section; mark the env-file record `created` with `created_file` and
     `added_newline` as observed. Step 14: mark the entry `provisioned`.
   - A repeat `up` with nothing to change stays `provisioned` throughout and writes nothing
     (data-model.md, Entry states).
   - Return an `UpResult`: worktree view, one change per item (`created`, `updated`,
     `unchanged`, `released`), warnings.
-- [ ] T047 [US1] Apply configuration changes in `up` in `src/wtenv/provision.py`
+- [X] T047 [US1] Apply configuration changes in `up` in `src/wtenv/provision.py`
   - `ports`, `block_size`, and `env_file` changes as in T043 (FR-065). A changed block size is
     checked against the new size before anything changes (FR-014).
-- [ ] T048 [US1] Add the `up` text output (`provisioned`, `ports`, `env file` lines of cli.md) to `src/wtenv/output.py`
-- [ ] T049 [US1] Add `wtenv up [--json]` to `src/wtenv/cli.py`
+- [X] T048 [US1] Add the `up` text output (`provisioned`, `ports`, `env file` lines of cli.md) to `src/wtenv/output.py`
+- [X] T049 [US1] Add `wtenv up [--json]` to `src/wtenv/cli.py`
   - Imports `wtenv.provision` inside the function. Exit statuses so far: 0, 3, 4, 6, 7, 14,
     15, 16.
 
