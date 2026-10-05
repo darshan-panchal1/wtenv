@@ -8,9 +8,19 @@ and the same free ports always give the same block (Principle III).
 import errno
 import socket
 from collections.abc import Callable, Iterable, Sequence
+from typing import TYPE_CHECKING, Literal, cast
 
 from wtenv.errors import ErrorCode, WtenvError
-from wtenv.registry import PORT_RANGE_END, PORT_RANGE_START, PortBlock, VariablePort
+from wtenv.registry import (
+    PORT_RANGE_END,
+    PORT_RANGE_START,
+    PortBlock,
+    PublishedPort,
+    VariablePort,
+)
+
+if TYPE_CHECKING:
+    from wtenv.compose import PortMapping
 
 # A bind to these addresses must succeed for a port to count as free (FR-009).
 _PROBE_ADDRESSES = (
@@ -70,17 +80,19 @@ def find_block(
     )
 
 
-def check_block_size(variable_count: int, block_size: int) -> None:
-    """Raise `config_invalid` when a block of `block_size` ports cannot hold the variables.
+def check_block_size(variable_count: int, block_size: int, published: int = 0) -> None:
+    """Raise `config_invalid` when a block of `block_size` ports cannot hold the ports needed.
 
-    The error states the smallest block size that fits (FR-014).
+    The ports needed are the variables plus `published`, the published ports not tied to a
+    variable. The error states the smallest block size that fits (FR-014, FR-032).
     """
-    if variable_count > block_size:
+    needed = variable_count + published
+    if needed > block_size:
         raise WtenvError(
             ErrorCode.CONFIG_INVALID,
-            f"block_size is {block_size}, but {variable_count} ports are needed",
-            hint=f"Set block_size to {variable_count} or more, or list fewer ports.",
-            details={"setting": "block_size", "min_block_size": variable_count},
+            f"block_size is {block_size}, but {needed} ports are needed",
+            hint=f"Set block_size to {needed} or more, or list fewer ports.",
+            details={"setting": "block_size", "min_block_size": needed},
         )
 
 
@@ -95,3 +107,75 @@ def assign_variable_ports(variables: Sequence[str], block: PortBlock) -> list[Va
         VariablePort(variable=name, port=block.start + index)
         for index, name in enumerate(variables)
     ]
+
+
+# --- published ports (data-model.md, Port allocation, steps 2 to 5) ----------------------------
+
+
+def _is_tied(mapping: "PortMapping", variable_count: int) -> bool:
+    """Return whether the host port is the marker of one of the variables (FR-031)."""
+    return mapping.published in {str(index + 1) for index in range(variable_count)}
+
+
+def count_untied_ports(mappings: Sequence["PortMapping"], variable_count: int) -> int:
+    """Return how many mappings need a port of their own: those not tied to a variable.
+
+    A mapping without a host port counts. Step 6 of `up` adds this to the number of variables
+    to check the block size before a block is searched for (FR-032).
+    """
+    return sum(1 for mapping in mappings if not _is_tied(mapping, variable_count))
+
+
+def _order(mapping: "PortMapping") -> tuple[str, int, str, str]:
+    """The order in which untied ports are numbered: service, container port, protocol, IP."""
+    return (mapping.service, mapping.target, mapping.protocol, mapping.host_ip or "")
+
+
+def assign_published_ports(
+    mappings: Sequence["PortMapping"], variables: Sequence[str], block: PortBlock
+) -> list[PublishedPort]:
+    """Give every mapping a host port in `block` (FR-031, FR-032).
+
+    A mapping whose host port is the marker `i + 1` is tied to variable `i` and gets that
+    variable's port. Every other mapping gets the next port after the variables, in the order
+    (service, container port, protocol, host IP). The result is in that order too and depends
+    only on the mappings, the variables, and the block. Raises `unsupported`
+    (`compose_port_clash`) when two mappings with one protocol and host IP end on one port, and
+    `config_invalid` when the block is too small.
+    """
+    check_block_size(len(variables), block.size, count_untied_ports(mappings, len(variables)))
+    next_free = block.start + len(variables)
+    result: list[PublishedPort] = []
+    taken: dict[tuple[int, str, str | None], str] = {}
+    for mapping in sorted(mappings, key=_order):
+        tied = _is_tied(mapping, len(variables))
+        if tied:
+            index = int(cast(str, mapping.published)) - 1
+            port, variable = block.start + index, variables[index]
+        else:
+            port, variable = next_free, None
+            next_free += 1
+        key = (port, mapping.protocol, mapping.host_ip)
+        if key in taken:
+            raise _port_clash(mapping.service, taken[key], port)
+        taken[key] = mapping.service
+        result.append(
+            PublishedPort(
+                service=mapping.service,
+                target=mapping.target,
+                protocol=cast(Literal["tcp", "udp"], mapping.protocol),
+                host_ip=mapping.host_ip,
+                port=port,
+                variable=variable,
+            )
+        )
+    return result
+
+
+def _port_clash(service: str, other: str, port: int) -> WtenvError:
+    return WtenvError(
+        ErrorCode.UNSUPPORTED,
+        f"services {other} and {service} publish port {port} with the same protocol and host IP",
+        hint="Give each service its own variable, or its own host port in the compose file.",
+        details={"reason": "compose_port_clash", "service": service, "port": port},
+    )

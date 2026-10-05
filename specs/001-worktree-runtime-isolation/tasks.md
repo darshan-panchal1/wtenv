@@ -659,7 +659,7 @@ T079–T080.
 
 ### 5C. Ports for published ports (`ports.py`) — core area 2
 
-- [ ] T073 [P] [US3] Write failing tests for assigning published ports in `tests/unit/test_ports_published.py`
+- [X] T073 [P] [US3] Write failing tests for assigning published ports in `tests/unit/test_ports_published.py`
   - A published port equal to marker `i + 1` is tied to variable `i` and gets its port (FR-031).
   - Every other published port, including one with no host port, gets the next port after
     the variables, in the order (service, container port, protocol, host IP).
@@ -668,7 +668,7 @@ T079–T080.
   - Too many ports → `config_invalid` with
     `min_block_size = len(ports) + untied published ports` (FR-014, FR-032).
   - Same input, same result.
-- [ ] T074 [US3] Extend port assignment to published ports in `src/wtenv/ports.py`
+- [X] T074 [US3] Extend port assignment to published ports in `src/wtenv/ports.py`
 
 ### 5D. The override file (`compose.py`) — core area 6
 
