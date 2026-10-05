@@ -503,17 +503,17 @@ T059–T060, T062, T063, and T067. US2 scenario 5 (`down` removes only this data
 
 ### 4B. Names and the URL pattern (`database.py`)
 
-- [ ] T052 [P] [US2] Write failing tests for database names in `tests/unit/test_names.py`
+- [X] T052 [P] [US2] Write failing tests for database names in `tests/unit/test_names.py`
   - Postgres name `wtenv_<slug>_<id8>` (`slug` with `_`, from T017); SQLite copy
     `<worktree>/.wtenv/<template file name>` (FR-022).
-- [ ] T053 [P] [US2] Write failing tests for resolving the URL pattern in `tests/unit/test_database_url.py`
+- [X] T053 [P] [US2] Write failing tests for resolving the URL pattern in `tests/unit/test_database_url.py`
   - `{name}` → database name; `{path}` → absolute path of the copy; `{env:NAME}` → the
     variable's value; unset → `config_invalid` with `details.variable` (FR-026).
   - A resolved URL with a single quote or a line break → `config_invalid`.
   - wtenv's own connection: the pattern's user, password, host, and port, and the database
     `postgres`; the driver suffix is dropped for it and kept in `DATABASE_URL`; query
     parameters are kept in `DATABASE_URL` and not used (config.md).
-- [ ] T054 [US2] Implement database names and URL-pattern resolution in `src/wtenv/database.py`
+- [X] T054 [US2] Implement database names and URL-pattern resolution in `src/wtenv/database.py`
   - Names use `identity.slug` and `identity.short_id` (T017). `psycopg` is never imported at
     module level (NFR-001).
 
