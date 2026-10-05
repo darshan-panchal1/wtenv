@@ -208,7 +208,7 @@ order:
    its `exclude_patterns`, and the env file recorded as `creating`, before the
    `.git/info/exclude` block, the env file, the override file, or any database or file wtenv
    creates.
-2. **Then each step in turn** (cli.md, `wtenv up`, steps 8 to 12): the exclude block, the
+2. **Then each step in turn** (cli.md, `wtenv up`, steps 9 to 14): the exclude block, the
    database, the override file, the env section, the post-up commands. A step whose resource
    the first save did not record saves it as `creating` before creating it. Each step
    updates the entry as it completes (its resource `created`). The exclude block only gets

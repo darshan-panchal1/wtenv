@@ -455,8 +455,8 @@ byte-identical. Automated by T039–T043; manual by quickstart.md sections 1 and
     registry lock (files.md). Nothing is created before the entry is saved (data-model.md,
     Write order of `up`).
 - [ ] T046 [US1] Implement the env-file step and completion of `up` in `src/wtenv/provision.py`
-  - Step 11: write the section; mark the env-file record `created` with `created_file` and
-    `added_newline` as observed. Step 13: mark the entry `provisioned`.
+  - Step 12: write the section; mark the env-file record `created` with `created_file` and
+    `added_newline` as observed. Step 14: mark the entry `provisioned`.
   - A repeat `up` with nothing to change stays `provisioned` throughout and writes nothing
     (data-model.md, Entry states).
   - Return an `UpResult`: worktree view, one change per item (`created`, `updated`,
@@ -592,7 +592,7 @@ T059–T060, T062, T063, and T067. US2 scenario 5 (`down` removes only this data
     (FR-067, FR-069; data-model.md, Resource states). SQLite always; Postgres with Docker.
 - [ ] T064 [US2] Implement the database checks and the database step in `src/wtenv/provision.py`
   - Step 7, before anything changes: the URL pattern resolves and names a local host.
-  - Step 9, when no database of the configured kind is recorded: check the template exists
+  - Step 10, when no database of the configured kind is recorded: check the template exists
     and is not busy, check nothing exists at the target (`ownership_conflict`), record it as
     `creating`, create it, mark it `created`. `template_in_use` and `template_missing` record
     nothing; if the server answers `55006` after the record was written, remove the record
@@ -616,7 +616,7 @@ T059–T060, T062, T063, and T067. US2 scenario 5 (`down` removes only this data
     `details.exit_status`; later commands do not run; resources stay; the entry is
     `incomplete`; `UpResult.post_up` lists each command run.
   - With `--json`, stdout still holds exactly one document.
-- [ ] T068 [US2] Implement post-up commands (step 12) in `src/wtenv/provision.py`
+- [ ] T068 [US2] Implement post-up commands (step 13) in `src/wtenv/provision.py`
 
 **Checkpoint**: US1 and US2 work; the five gates pass.
 
@@ -740,7 +740,7 @@ T079–T080.
 - [ ] T082 [US3] Implement the compose checks and the compose step in `src/wtenv/provision.py`
   - Step 5 before anything changes; step 6 counts published ports; step 8 records
     `published` and the override's pattern in `exclude_patterns`, saved before the exclude
-    block is written; step 10 writes and verifies.
+    block is written; step 11 writes and verifies.
   - The project name is recorded before anything else is done for compose and never changed
     (data-model.md, Compose record); the override is recorded as `creating` before it is
     written. No container is started (FR-034). Compose code is imported only when
