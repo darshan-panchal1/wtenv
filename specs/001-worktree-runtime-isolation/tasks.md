@@ -1101,7 +1101,7 @@ provisioned. `wtenv exec -- env` shows the worktree's variables. Automated by T1
 
 ### 7C. `wtenv exec` (`execcmd.py`, `cli.py`)
 
-- [ ] T121 [US5] Add failing tests for `exec` to `tests/integration/test_us5_hook_exec.py`
+- [X] T121 [US5] Add failing tests for `exec` to `tests/integration/test_us5_hook_exec.py`
   - Scenario 5 (FR-056): the command sees every variable in wtenv's section of the env file;
     standard input, output, and error pass through; wtenv exits with the command's status
     (for example 7). The developer's own env-file lines are not loaded.
@@ -1126,7 +1126,7 @@ provisioned. `wtenv exec -- env` shows the worktree's variables. Automated by T1
   - A missing `--` or command → usage error, exit 125. Command not found → 127; found but
     not executable → 126 (cli.md, `wtenv exec`).
   - When the command runs, wtenv prints nothing. `exec` takes no worktree lock (FR-076).
-- [ ] T122 [US5] Implement `exec` in `src/wtenv/execcmd.py`
+- [X] T122 [US5] Implement `exec` in `src/wtenv/execcmd.py`
   - Status from `classify`; only `provisioned` runs. Environment: the current one plus every
     variable in wtenv's section of the recorded env file (`EnvFileRecord.path`), ports
     included, read and unquoted with `envfile.read_section` (reading R1). `wtenv.toml` is not
@@ -1134,7 +1134,7 @@ provisioned. `wtenv exec -- env` shows the worktree's variables. Automated by T1
     damaged markers → `env_file_unusable` (reason `missing`, `no_section`, or
     `markers_damaged`), exit 125. Replace the process with `os.execvpe`, so signals reach
     the command directly.
-- [ ] T123 [US5] Add `wtenv exec [--json] -- COMMAND [ARG]...` to `src/wtenv/cli.py`
+- [X] T123 [US5] Add `wtenv exec [--json] -- COMMAND [ARG]...` to `src/wtenv/cli.py`
   - `--` is required; any wtenv failure in `exec` exits 125 with the real code in
     `error.code` (cli.md).
 

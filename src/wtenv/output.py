@@ -331,15 +331,22 @@ class HookUninstallResult(Result):
 R = TypeVar("R", bound=Result)
 
 
-def failed_result(model: type[R], error: WtenvError, warnings: Sequence[WarningInfo] = ()) -> R:
+def failed_result(
+    model: type[R],
+    error: WtenvError,
+    warnings: Sequence[WarningInfo] = (),
+    *,
+    exit_status: int | None = None,
+) -> R:
     """Return the result `model` of a failed command: `ok` false, `error` set.
 
     Every other field keeps its default, so `model` must be a result whose other fields all
-    have one. `error.exit_status` is the exit status of the error's code.
+    have one. `error.exit_status` is the exit status of the error's code, unless `exit_status`
+    says otherwise (`wtenv exec` reports 125 for every failure of wtenv).
     """
     info = ErrorInfo(
         code=error.code,
-        exit_status=EXIT_STATUS[error.code],
+        exit_status=EXIT_STATUS[error.code] if exit_status is None else exit_status,
         message=error.message,
         hint=error.hint,
         details=error.details,

@@ -16,7 +16,7 @@ from typer.exceptions import TyperException
 from typer.main import get_command
 
 from wtenv import __version__
-from wtenv.errors import EXIT_STATUS, EXIT_SUCCESS, ErrorCode, WtenvError
+from wtenv.errors import EXEC_WTENV_FAILED, EXIT_STATUS, EXIT_SUCCESS, ErrorCode, WtenvError
 
 app = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
 
@@ -157,6 +157,36 @@ def ls(
     print_result(result, json_mode=json_output, text=render_ls_text(result))
 
 
+@app.command("exec")
+def exec_command(
+    command: list[str] = typer.Argument(  # noqa: B008 - Typer reads arguments from defaults
+        ...,
+        metavar="COMMAND [ARG]...",
+        help="The command to run, after `--`. Everything after `--` belongs to it.",
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Describe a failure of wtenv itself as a JSON document."
+    ),
+) -> None:
+    """Run a command with the worktree's variables added to the environment.
+
+    Write `--` before the command: `wtenv exec -- npm run dev`.
+
+    Exit status: the command's own. 125: wtenv itself failed. 126: the command could not be run. 127: the command was not found.
+    """
+    from wtenv.execcmd import command_environment, replace_process
+    from wtenv.output import ExecResult, failed_result, print_error, print_result
+
+    try:
+        environment = command_environment()
+    except WtenvError as error:
+        print_error(error)
+        failed = failed_result(ExecResult, error, exit_status=EXEC_WTENV_FAILED)
+        print_result(failed, json_mode=json_output)
+        raise typer.Exit(EXEC_WTENV_FAILED) from error
+    raise typer.Exit(replace_process(command, environment))
+
+
 hook_app = typer.Typer(
     help="Install or remove the git hook that provisions new worktrees.", no_args_is_help=True
 )
@@ -231,6 +261,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """
     args = list(sys.argv[1:] if argv is None else argv)
     try:
+        _require_exec_separator(args)
         status = app(args, prog_name="wtenv", standalone_mode=False)
     except WtenvError as error:
         return _report(error, args)
@@ -249,14 +280,44 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _report(error: WtenvError, args: list[str]) -> int:
-    """Print a failure the way the command line asks for, and return its exit status."""
+    """Print a failure the way the command line asks for, and return its exit status.
+
+    `exec` is a wrapper that follows `env(1)`: any failure of wtenv itself is 125, whatever its
+    code, and the real code stays in the error (cli.md, `wtenv exec`).
+    """
     from wtenv.output import Result, failed_result, print_error, print_result
 
+    status = EXEC_WTENV_FAILED if _is_exec(args) else EXIT_STATUS[error.code]
     print_error(error)
     if _wants_json(args):
-        result = failed_result(Result, error).model_copy(update={"command": _command_name(args)})
+        result = failed_result(Result, error, exit_status=status).model_copy(
+            update={"command": _command_name(args)}
+        )
         print_result(result, json_mode=True)
-    return EXIT_STATUS[error.code]
+    return status
+
+
+def _is_exec(args: list[str]) -> bool:
+    """Return whether the command line is a `wtenv exec` one: its first word is `exec`.
+
+    Scanned, not parsed, like `_wants_json`: a usage error must still exit with 125.
+    """
+    words = [word for word in _before_double_dash(args) if not word.startswith("-")]
+    return words[:1] == ["exec"]
+
+
+def _require_exec_separator(args: list[str]) -> None:
+    """Raise a usage error when `wtenv exec` has no `--` before its command.
+
+    Typer would run `wtenv exec env` too, but without the separator a command's own options
+    could be taken for wtenv's. `--help` needs no separator.
+    """
+    if _is_exec(args) and "--" not in args and "--help" not in args:
+        raise WtenvError(
+            ErrorCode.USAGE_ERROR,
+            "exec needs `--` before the command",
+            hint="Write `wtenv exec -- COMMAND [ARG]...`.",
+        )
 
 
 def _before_double_dash(args: list[str]) -> list[str]:
