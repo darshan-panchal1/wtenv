@@ -519,7 +519,7 @@ T059–T060, T062, T063, and T067. US2 scenario 5 (`down` removes only this data
 
 ### 4C. Creating SQLite copies (`database.py`) — core area 5
 
-- [ ] T055 [P] [US2] Write failing tests for SQLite creation in `tests/unit/test_database_sqlite.py`
+- [X] T055 [P] [US2] Write failing tests for SQLite creation in `tests/unit/test_database_sqlite.py`
   - The template (relative to the worktree root, or absolute) is copied byte for byte to
     `<worktree>/.wtenv/<file name>` through a temporary file and an atomic rename (FR-021;
     research.md §11).
@@ -529,7 +529,7 @@ T059–T060, T062, T063, and T067. US2 scenario 5 (`down` removes only this data
   - Something at the target path that is not recorded → `ownership_conflict`,
     `details.kind` `sqlite_file`, `details.name`; it is not modified (FR-024).
   - A recorded copy that exists is left alone (FR-023); the template is never modified (FR-027).
-- [ ] T056 [US2] Implement SQLite creation in `src/wtenv/database.py`
+- [X] T056 [US2] Implement SQLite creation in `src/wtenv/database.py`
 
 ### 4D. Creating Postgres databases (`database.py`) — core area 5
 

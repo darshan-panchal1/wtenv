@@ -5,15 +5,18 @@ themselves. No function here puts a password into a message, a detail, or a `rep
 registry has no field for one either.
 """
 
+import contextlib
 import os
 import re
+import shutil
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from wtenv.config import ENV_PLACEHOLDER, LOCAL_HOSTS, PLACEHOLDER
-from wtenv.errors import ErrorCode, WtenvError
+from wtenv.errors import ErrorCode, JsonValue, WtenvError
 from wtenv.identity import short_id, slug
 
 SQLITE_DIR = ".wtenv"  # in the worktree root; the copies live here (files.md, Names)
@@ -143,3 +146,67 @@ def postgres_target(url: str, *, config_file: str | None = None) -> PostgresTarg
         user=None if parts.username is None else unquote(parts.username),
         password=None if parts.password is None else unquote(parts.password),
     )
+
+
+# --- SQLite (FR-021 to FR-024; research.md section 11) -----------------------------------------
+
+
+def check_sqlite_template(template: Path) -> None:
+    """Raise unless `template` is a file that can be copied as it stands (FR-083).
+
+    `template_missing` when it does not exist; `template_in_use` when a non-empty `-wal` or
+    `-journal` file lies beside it, because a copy would miss or corrupt the data in it.
+    """
+    details: dict[str, JsonValue] = {"kind": "sqlite", "template": str(template)}
+    if not template.is_file():
+        raise WtenvError(
+            ErrorCode.TEMPLATE_MISSING,
+            f"the SQLite template {template} does not exist",
+            hint="Create the template, or fix database.template in wtenv.toml.",
+            details=details,
+        )
+    for suffix in ("-wal", "-journal"):
+        side_file = Path(f"{template}{suffix}")
+        if side_file.is_file() and side_file.stat().st_size > 0:
+            raise WtenvError(
+                ErrorCode.TEMPLATE_IN_USE,
+                f"the SQLite template {template} has unfinished work in {side_file.name}",
+                hint="Close whatever uses the template, then run `wtenv up` again.",
+                details=details,
+            )
+
+
+def check_sqlite_target(target: Path) -> None:
+    """Raise `ownership_conflict` when anything exists at `target`; it is not touched (FR-024).
+
+    Call it only for a copy the registry does not record.
+    """
+    if os.path.lexists(target):
+        raise WtenvError(
+            ErrorCode.OWNERSHIP_CONFLICT,
+            f"{target} exists, and wtenv has no record of creating it",
+            hint="Rename or remove it by hand; wtenv will not touch it.",
+            details={"kind": "sqlite_file", "name": str(target)},
+        )
+
+
+def create_sqlite_copy(template: Path, target: Path) -> None:
+    """Copy `template` to `target` byte for byte, through a temporary file and an atomic rename.
+
+    The template is only read (FR-027). The copy appears whole or not at all, so a copy that
+    exists is never half written. Raises `ownership_conflict` rather than replace a file.
+    """
+    check_sqlite_target(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.")
+    try:
+        with os.fdopen(descriptor, "wb") as file, open(template, "rb") as source:
+            shutil.copyfileobj(source, file)
+            file.flush()
+            os.fsync(file.fileno())
+        shutil.copymode(template, temporary)
+        os.replace(temporary, target)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temporary)
+        raise
