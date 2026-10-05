@@ -180,7 +180,11 @@ Releases everything the registry records for the current worktree (FR-038).
 |--------|--------|
 | `--dry-run` | Changes nothing, takes no worktree lock, and lists what `down` would remove (FR-040). An item that cannot be checked because Postgres or Docker cannot be reached is listed under `failed`, with a `reason` naming the dependency, not under `would_remove`; the exit status stays 0 |
 
-**Order of work**: compose project (containers, networks, volumes, then the override file);
+**Order of work**: compose project (containers, networks, volumes, then the override file;
+`docker compose down` is run without `--volumes`, and wtenv removes each volume labelled
+`com.docker.compose.project=<recorded project name>` by name, as its own item in `removed`
+or, with `--dry-run`, `would_remove`; a volume without that label is never removed and is
+reported under `kept` with `reason` `unlabelled`);
 databases; wtenv's section of the env file (and the file itself when wtenv created it and
 nothing else is in it); registry entry and port block; and, when this was the last
 registered worktree of the repository, wtenv's entries in `.git/info/exclude` (FR-085).
@@ -254,6 +258,9 @@ the exit status.
 2. A `PATH` with no entry is reported under `no_entry`. That is not an error, so the command
    can be repeated safely.
 3. Each remaining entry is released as `down` would, with the same lock rule as plain `gc`.
+   Holding the lock, immediately before each delete, the step-1 check is repeated. If the
+   worktree has reappeared, that entry is stopped with `worktree_exists` (exit 18) and
+   nothing of it is changed.
 
 **Credentials**: `gc` has no `wtenv.toml` to read. The Postgres password comes from the libpq
 sources. Without it, the database is reported under `failed`, stays recorded, and the exit

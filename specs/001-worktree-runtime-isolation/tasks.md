@@ -1296,13 +1296,26 @@ after groups 3F and 6G, and before T146–T148. Each pair is a failing test, the
 - [ ] T161 List unreachable items as failed in dry runs, in `src/wtenv/database.py` and `src/wtenv/compose.py`
   - cli.md, `wtenv down` and `wtenv gc`, `--dry-run`. `teardown` already leaves the block and
     the entry out when an item failed.
-- [ ] T162 Add a failing Docker-backed test for anonymous volumes to `tests/integration/test_us4_lifecycle.py`
-  - LOW-4, FR-039, FR-041: a service with an anonymous volume (`volumes: ["/data"]`),
-    started with `docker compose up -d`; `down --json`: every volume gone afterwards is
-    listed under `removed`, and an unlabelled volume of another project is still there.
-    If `down` already reports it, record that on the task and skip T163.
-- [ ] T163 Report the anonymous volumes `down` removes, in `src/wtenv/compose.py`
-  - Reading R6 (proposed; confirm with the maintainer before starting).
+- [ ] T162 Add a failing Docker-backed test for volumes to `tests/integration/test_us4_lifecycle.py`
+  - LOW-4, FR-039, FR-041, reading R6: the test's own compose project has a service with an
+    anonymous volume (`volumes: ["/data"]`), started with `docker compose up -d`, so a real
+    anonymous volume is attached to a container of that project. It also creates an
+    unlabelled decoy volume with `docker volume create`.
+  - `down --dry-run --json`: each volume labelled `com.docker.compose.project=<recorded
+    project name>` is its own `compose_volume` item in `would_remove`; nothing is removed.
+  - `down --json`: the same items are in `removed`, and the volumes are gone together with
+    the project. The decoy is still there and is reported under `kept` with `reason`
+    `unlabelled`. The same cases through `gc --release` after the repository is deleted.
+  - `docker compose down` is run without `--volumes` (assert on the command, in
+    `tests/unit/test_compose_teardown.py`).
+- [ ] T163 Remove labelled volumes by name instead of `--volumes`, in `src/wtenv/compose.py`
+  - Reading R6 (accepted): drop `--volumes` from `docker compose down`; list the volumes
+    labelled `com.docker.compose.project=<recorded project name>`, remove each by name, and
+    report each as its own item. A volume without the label is never removed and is reported
+    under `kept` with `reason` `unlabelled`. External volumes are never removed (FR-039).
+  - Needs a model change first: `kept` in `json_models.py` holds only `KeptEntry` of `gc`
+    (an unverifiable entry), and `DownResult` has no `kept`. Decide the field and update
+    `json_models.py` before this task.
 - [ ] T164 Add a failing Docker-backed test for a compose project that already exists to `tests/integration/test_us3_compose.py`
   - LOW-4, FR-024, FR-039: containers started with `docker compose -p <generated name>
     up -d` before the first `up` → `up` exits 11, `ownership_conflict`, `details.kind`
@@ -1325,10 +1338,13 @@ after groups 3F and 6G, and before T146–T148. Each pair is a failing test, the
 - [ ] T169 Check the recorded name and host before a drop, in `src/wtenv/database.py`
 - [ ] T170 Add a failing test for a worktree that appears at a `--release` path during `gc` to `tests/integration/test_us4_lifecycle.py`
   - LOW-7, FR-073, FR-074: in-process, with a worktree created at the named path after the
-    step-1 check and before the release (patched as in T105) → the entry is not released;
-    it is reported as reading R7 says.
-- [ ] T171 Repeat the `--release` refusal under the worktree lock, in `src/wtenv/orphans.py`
-  - Reading R7 (proposed; confirm with the maintainer before starting).
+    step-1 check and before the release (patched as in T105) → that entry is stopped with
+    `worktree_exists`, exit 18, `details.path`; its files, database, and registry entry are
+    unchanged (reading R7).
+- [ ] T171 Re-check that the worktree is still gone before each delete, in `src/wtenv/orphans.py`
+  - Reading R7 (accepted): under the worktree lock, immediately before each delete of an
+    entry, repeat the step-1 check (`_refuse_if_it_exists`) on the re-read entry. If the
+    worktree has reappeared, stop that entry with `worktree_exists`, exit 18.
 
 ---
 
@@ -1467,8 +1483,8 @@ gates pass.
 
 The maintainer decided R1 and accepted R2–R4 as written. R5 came from the review of the
 destructive paths (2026-10-05). Each is recorded in the contract
-named in the last column. R6 and R7 are proposals from the same review and are not
-confirmed: T163 and T171 wait for the maintainer.
+named in the last column. R6 and R7 came from the same review; the maintainer
+accepted both on 2026-10-05.
 
 | # | Open point | Reading taken | Tasks | Recorded in |
 |---|------------|---------------|-------|-------------|
@@ -1477,8 +1493,8 @@ confirmed: T163 and T171 wait for the maintainer.
 | R3 | FR-073 refuses `gc --release` "at which a worktree still exists" | A directory whose `.git` file points to a git directory that no longer exists is not a worktree, so `--release` can release it | T106, T110 | cli.md, `wtenv gc` |
 | R4 | files.md: install into an existing "POSIX shell" hook | A shebang naming `sh`, `bash`, `dash`, or `ksh` counts; anything else, or no shebang, is `hook_not_shell` | T116, T117 | files.md, Git hook block |
 | R5 | FR-073, for a worktree at the path whose git directory is not the entry's (the repository was moved and repaired, or another worktree took the path) | The converse of R3: a directory whose `.git` names a git directory that exists is a worktree, whatever the entry records, so `--release` refuses it | T149, T150 | cli.md, `wtenv gc` |
-| R6 | FR-041, for anonymous volumes that `compose down --volumes` removes without a project label (review LOW-4) | **Proposed.** Before `compose down`, list the volumes mounted by the project's labelled containers and report each removed one as a `compose_volume` item. The alternative is to drop `--volumes` and remove only labelled volumes | T162, T163 | Not yet; cli.md, `wtenv down`, once confirmed |
-| R7 | FR-073 and FR-074, for a `--release` entry whose worktree appears after step 1 (review LOW-7) | **Proposed.** Under the worktree lock, repeat the step-1 check on the re-read entry. If it now refuses, leave the entry alone and end the command with `worktree_exists` (exit 18), naming the path; entries already released stay listed under `released` | T170, T171 | Not yet; cli.md, `wtenv gc`, once confirmed |
+| R6 | FR-041, for anonymous volumes that `compose down --volumes` removes without a project label (review LOW-4) | **Accepted.** `down` and `gc` stop passing `--volumes` to `docker compose down`. wtenv lists volumes labelled `com.docker.compose.project=<recorded project name>`, removes each by name, and reports each as its own item in `removed` and in `--dry-run`. A volume without the label is never removed and is reported under `kept` with reason `unlabelled` | T162, T163 | cli.md, `wtenv down` |
+| R7 | FR-073 and FR-074, for a `--release` entry whose worktree appears after step 1 (review LOW-7) | **Accepted.** `gc --release` re-checks that the worktree is still gone immediately before each delete. If it has reappeared, it stops that entry with `worktree_exists`, exit 18 | T170, T171 | cli.md, `wtenv gc` |
 
 ---
 
