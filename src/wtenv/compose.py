@@ -8,14 +8,16 @@ module is imported only when `[compose]` is configured (research.md §8).
 import json
 import os
 import posixpath
+import re
 import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import urlsplit
 
 from wtenv.config import COMPOSE_FILE_NAMES
-from wtenv.errors import ErrorCode, WtenvError
+from wtenv.errors import ErrorCode, JsonValue, WtenvError
 from wtenv.identity import short_id, slug
 from wtenv.output import WarningCode, WarningInfo
 
@@ -36,7 +38,10 @@ class Runner(Protocol):
     def __call__(
         self, command: Sequence[str], environ: Mapping[str, str], cwd: Path | None
     ) -> "subprocess.CompletedProcess[str]":
-        """Run `command`; never raise for a non-zero exit status."""
+        """Run `command`; a non-zero exit status is not an error.
+
+        Raises `FileNotFoundError` when the program is not installed.
+        """
         ...
 
 
@@ -270,3 +275,143 @@ def _mapping_line(mapping: PortMapping, port: int) -> str:
     }
     present = {key: value for key, value in fields.items() if value is not None}
     return f"      - {json.dumps(present)}"
+
+
+# --- the limit checks (research.md §4, "v1 limits", and §11) -----------------------------------
+
+MINIMUM_COMPOSE_VERSION = (2, 24, 4)  # `!override` needs it (research.md §4)
+_LOCAL_DOCKER_HOSTS = ("localhost", "127.0.0.1", "::1")  # `urlsplit` gives IPv6 without brackets
+_ENV_OVERRIDES = ("COMPOSE_PROJECT_NAME", "COMPOSE_FILE")  # both outrank the override file
+_ENV_ASSIGNMENT = re.compile(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)")
+_VERSION = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
+
+
+def check_docker(*, run: Runner = run_command, environ: Mapping[str, str] | None = None) -> None:
+    """Raise `dependency_unavailable` unless a local Docker with Compose 2.24.4+ is running.
+
+    The endpoint is judged first (`DOCKER_HOST`, else the current context) and must be local
+    (FR-035); no command that contacts the engine runs before that. Then the Compose version,
+    then the engine. `details.reason` is `not_local`, `not_installed`, `too_old` (with `required`
+    and `found`), or `not_running`.
+    """
+    base = os.environ if environ is None else environ
+    host = base.get("DOCKER_HOST") or _context_endpoint(run, base)
+    if not _is_local_endpoint(host):
+        raise _docker_unavailable("not_local", "the Docker engine is not on this machine")
+    found = _compose_version(run, base)
+    if _version_tuple(found) < MINIMUM_COMPOSE_VERSION:
+        raise _docker_unavailable(
+            "too_old",
+            f"Docker Compose {found} is older than 2.24.4, which `!override` needs",
+            required="2.24.4",
+            found=found,
+        )
+    if _command(run, ["docker", "info", "--format", "{{.ServerVersion}}"], base).returncode != 0:
+        raise _docker_unavailable("not_running", "the Docker engine does not answer")
+
+
+def _command(
+    run: Runner, command: Sequence[str], environ: Mapping[str, str]
+) -> "subprocess.CompletedProcess[str]":
+    """Run `command`; a missing program is `dependency_unavailable` (`not_installed`)."""
+    try:
+        return run(command, environ, None)
+    except FileNotFoundError as error:
+        raise _docker_unavailable("not_installed", f"{command[0]} is not installed") from error
+
+
+def _context_endpoint(run: Runner, environ: Mapping[str, str]) -> str:
+    """Return the endpoint of the current Docker context."""
+    command = ["docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}"]
+    process = _command(run, command, environ)
+    if process.returncode != 0:
+        raise _docker_unavailable("not_running", "the current Docker context cannot be read")
+    return process.stdout.strip()
+
+
+def _is_local_endpoint(host: str) -> bool:
+    """Return whether `host` is a `unix://` socket or a `tcp://` address on this machine."""
+    parts = urlsplit(host)
+    if parts.scheme == "unix":
+        return True
+    return parts.scheme == "tcp" and parts.hostname in _LOCAL_DOCKER_HOSTS
+
+
+def _compose_version(run: Runner, environ: Mapping[str, str]) -> str:
+    """Return the Compose version without a leading `v`, e.g. `2.24.4`."""
+    process = _command(run, ["docker", "compose", "version", "--short"], environ)
+    found = process.stdout.strip().removeprefix("v")
+    if process.returncode != 0 or _VERSION.match(found) is None:
+        raise _docker_unavailable("not_installed", "Docker Compose is not installed")
+    return found
+
+
+def _version_tuple(version: str) -> tuple[int, int, int]:
+    """Return the first three numbers of `version`, e.g. `2.24.4-desktop.1` -> (2, 24, 4)."""
+    match = _VERSION.match(version)
+    assert match is not None  # `_compose_version` only returns versions that match
+    major, minor, patch = match.groups()
+    return int(major), int(minor), int(patch)
+
+
+def _docker_unavailable(reason: str, message: str, **extra: str) -> WtenvError:
+    return WtenvError(
+        ErrorCode.DEPENDENCY_UNAVAILABLE,
+        message,
+        hint="Compose isolation needs a local Docker engine and Docker Compose 2.24.4 or later.",
+        details={"dependency": "docker", "reason": reason, **extra},
+    )
+
+
+def check_override_files(root: Path, compose_file: str, recorded_override: str | None) -> None:
+    """Raise `ownership_conflict` for an override file beside the compose file that is not wtenv's.
+
+    Any of the four override names counts, because Compose loads one of them and wtenv never
+    modifies or replaces a developer's. `recorded_override` is the registry's override path
+    (relative to `root`); that file passes. The file is left as it is (research.md §4).
+    """
+    directory = posixpath.dirname(compose_file)
+    for name in OVERRIDE_FILE_NAMES:
+        relative = posixpath.join(directory, name)
+        path = root / relative
+        if os.path.lexists(path) and relative != recorded_override:
+            raise WtenvError(
+                ErrorCode.OWNERSHIP_CONFLICT,
+                f"{path} exists and wtenv did not create it; Compose loads only one override",
+                hint="Move your override into the compose file, or remove it, then run "
+                "`wtenv up` again. Nothing was changed.",
+                details={"kind": "compose_override", "name": str(path)},
+            )
+
+
+def check_environment(root: Path, compose_file: str, environ: Mapping[str, str]) -> None:
+    """Raise `unsupported` when `COMPOSE_PROJECT_NAME` or `COMPOSE_FILE` would beat the override.
+
+    Both are looked for in `environ` and in `.env` beside the compose file (`details.file` names
+    it). An empty value does not count: Compose ignores it. The values are never printed.
+    """
+    for variable in _ENV_OVERRIDES:
+        if environ.get(variable):
+            raise _env_override(variable, "the environment", None)
+    dot_env = root / posixpath.join(posixpath.dirname(compose_file), ".env")
+    try:
+        text = dot_env.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    for line in text.splitlines():
+        match = _ENV_ASSIGNMENT.fullmatch(line)
+        if match is not None and match.group(1) in _ENV_OVERRIDES and match.group(2).strip():
+            raise _env_override(match.group(1), str(dot_env), str(dot_env))
+
+
+def _env_override(variable: str, where: str, file: str | None) -> WtenvError:
+    details: dict[str, JsonValue] = {"reason": "compose_env_override", "variable": variable}
+    if file is not None:
+        details["file"] = file
+    return WtenvError(
+        ErrorCode.UNSUPPORTED,
+        f"{variable} is set in {where}; it outranks the override file, so the worktree would "
+        "not be isolated",
+        hint=f"Unset {variable}, then run `wtenv up` again. Nothing was changed.",
+        details=details,
+    )

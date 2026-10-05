@@ -688,7 +688,7 @@ T079–T080.
 
 ### 5E. Compose limit checks (`compose.py`)
 
-- [ ] T077 [P] [US3] Write failing tests for the compose limit checks in `tests/unit/test_compose_checks.py`
+- [X] T077 [P] [US3] Write failing tests for the compose limit checks in `tests/unit/test_compose_checks.py`
   - Docker endpoint (FR-035; research.md §11): `DOCKER_HOST` if set, otherwise
     `docker context inspect --format '{{.Endpoints.docker.Host}}'`; `unix://`, and `tcp://`
     to `localhost`, `127.0.0.1`, or `[::1]`, pass; anything else → `dependency_unavailable`,
@@ -703,7 +703,7 @@ T079–T080.
     compose file → `unsupported`, reason `compose_env_override`, with `details.file` for
     `.env` (research.md §4, v1 limits).
   - The checks take the command runner and the environment as parameters; no Docker needed.
-- [ ] T078 [US3] Implement the Docker, Compose-version, override-file, and environment checks in `src/wtenv/compose.py`
+- [X] T078 [US3] Implement the Docker, Compose-version, override-file, and environment checks in `src/wtenv/compose.py`
 
 ### 5F. The compose step of `up` (`compose.py`, `provision.py`, `output.py`)
 
