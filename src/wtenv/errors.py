@@ -13,7 +13,9 @@ JsonValue = str | int | float | bool | None | list["JsonValue"] | dict[str, "Jso
 
 
 class ErrorCode(StrEnum):
-    """Stable error codes. Each has exactly one exit status (see `EXIT_STATUS`)."""
+    # This docstring is the contract's, word for word: pydantic copies it into the JSON schema
+    # of every model that uses the enum, and a contract test compares those schemas.
+    """Stable error codes. Each has exactly one exit status (see EXIT_STATUS)."""
 
     INTERNAL_ERROR = "internal_error"
     USAGE_ERROR = "usage_error"

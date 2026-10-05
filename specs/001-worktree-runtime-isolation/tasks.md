@@ -134,22 +134,22 @@ identity, the registry and its locks, and the CLI shell with a lazy-import `--ve
 
 ### 2B. The `--json` models and output (`output.py`)
 
-- [ ] T009 [P] Write failing contract tests in `tests/contract/conftest.py` and `tests/contract/test_models_match_contract.py`
+- [X] T009 [P] Write failing contract tests in `tests/contract/conftest.py` and `tests/contract/test_models_match_contract.py`
   - Fixture `contract`: loads `contracts/json_models.py` from its path.
   - For every model in the contract, `wtenv.output` has a model of the same name with an
     equal `model_json_schema()`; every enum has the same members and values;
     `SCHEMA_VERSION` is 1.
-- [ ] T010 [P] Write failing tests for printing results, errors, and warnings in `tests/unit/test_output.py`
+- [X] T010 [P] Write failing tests for printing results, errors, and warnings in `tests/unit/test_output.py`
   - With `--json`, standard output gets exactly one document, the result model serialised
     with `model_dump_json()`; everything else goes to standard error (FR-058).
   - Standard error lines: `wtenv: error [<code>]: <message>`, then `hint: …` when there is
     one; `wtenv: warning [<code>]: <message>` (cli.md, Rules for every command).
   - A failed command still prints its own result model: `ok` false, `error` set with
     `exit_status` equal to the code's status, other fields at their defaults.
-- [ ] T011 Port every model and enum of `json_models.py` to `src/wtenv/output.py`
+- [X] T011 Port every model and enum of `json_models.py` to `src/wtenv/output.py`
   - `ErrorCode`, `EXIT_STATUS`, and the `exec` statuses are imported from `wtenv.errors`, not
     defined twice. `output.py` imports no other wtenv module. Base model: `extra="forbid"`.
-- [ ] T012 Implement the functions that print a result, an error, and warnings in `src/wtenv/output.py`
+- [X] T012 Implement the functions that print a result, an error, and warnings in `src/wtenv/output.py`
 
 ### 2C. Git helpers and worktree identity (`gitutil.py`, `identity.py`) — core area 3
 
