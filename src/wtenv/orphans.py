@@ -169,12 +169,15 @@ def _release(result: GcResult, entry: WorktreeEntry, *, only_if_orphaned: bool) 
 
 
 def _refuse_if_it_exists(entry: WorktreeEntry) -> None:
-    """Raise `worktree_exists` when the entry's worktree still exists, at its path or moved.
+    """Raise `worktree_exists` when a worktree still exists at the entry's path, or it moved.
 
-    A directory whose `.git` file names a git directory that no longer exists is not a worktree
-    (cli.md, `gc --release`), so the git directory itself must exist too.
+    A directory whose `.git` names a git directory that exists is a worktree, even when that git
+    directory is not the entry's: the repository was moved and repaired, or another worktree took
+    the path (reading R5). One whose `.git` names a git directory that no longer exists is not a
+    worktree (reading R3), so its entry can be released.
     """
-    if os.path.isdir(entry.git_dir) and points_to(entry.path) == entry.git_dir:
+    live = points_to(entry.path)
+    if live is not None and os.path.isdir(live):
         raise WtenvError(
             ErrorCode.WORKTREE_EXISTS,
             f"the worktree at {entry.path} still exists",

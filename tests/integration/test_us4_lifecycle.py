@@ -1594,6 +1594,51 @@ def test_gc_release_lists_and_removes_each_sqlite_side_file_of_a_worktree_left_b
     assert not copy.exists() and not any(path.exists() for path in sides)
 
 
+# --- gc --release and a live worktree at the path (T149; reading R5) ----------------------------
+
+
+def test_gc_release_refuses_a_worktree_repaired_after_its_repository_moved(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, outside: Path
+) -> None:
+    worktree = add_worktree(repo, "feature-x", "feature-x")
+    up(run_wtenv, worktree)
+    moved_repo = repo.parent / "app-moved"
+    repo.rename(moved_repo)
+    git(moved_repo, "worktree", "repair")  # the worktree works again, with a new git directory
+    assert current_worktree(worktree).repository == str(moved_repo / ".git")
+    env_file = worktree / ".env.local"
+    before = (registry_path().read_bytes(), env_file.read_bytes())
+
+    status, result = gc(run_wtenv, outside, "--release", str(worktree))
+
+    assert status == 18
+    assert result.error is not None and result.error.code is ErrorCode.WORKTREE_EXISTS
+    assert result.error.details["path"] == str(worktree)
+    assert (registry_path().read_bytes(), env_file.read_bytes()) == before
+
+
+def test_gc_release_refuses_a_path_taken_by_a_worktree_of_another_repository(
+    run_wtenv: Run,
+    repo: Path,
+    make_repo: Callable[[str], Path],
+    add_worktree: AddWorktree,
+    outside: Path,
+) -> None:
+    worktree = add_worktree(repo, "feature-x", "feature-x")
+    up(run_wtenv, worktree)
+    remove_with_git(repo, worktree)
+    other = make_repo("other")
+    git(other, "worktree", "add", "-b", "taken", str(worktree))  # the same path, not provisioned
+    before = registry_path().read_bytes()
+
+    status, result = gc(run_wtenv, outside, "--release", str(worktree))
+
+    assert status == 18
+    assert result.error is not None and result.error.code is ErrorCode.WORKTREE_EXISTS
+    assert result.error.details["path"] == str(worktree)
+    assert registry_path().read_bytes() == before
+
+
 # --- Docker: Postgres and compose (T107; SC-003; cli.md, `wtenv gc`, Credentials) ---------------
 
 

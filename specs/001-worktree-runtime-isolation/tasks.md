@@ -947,6 +947,13 @@ T104–T108, and T112.
     `no_entry`. Then release each named entry with the plain `gc` lock rule (cli.md).
 - [X] T111 [US4] Add `wtenv gc [--dry-run] [--release PATH]... [--json]` to `src/wtenv/cli.py` and its text output to `src/wtenv/output.py`
   - `GcResult`; exit statuses 0, 13, 14, 16, 18.
+- [X] T149 [US4] Add failing tests for `gc --release` refusing a path where a live worktree is, to `tests/integration/test_us4_lifecycle.py`
+  - Reading R5: the repository is moved and `git worktree repair` points the worktree at its new
+    git directory; `gc --release <path>` for the old entry → exit 18 `worktree_exists` with
+    `details.path`; the registry and the env file are byte-identical.
+  - A worktree of another repository at a removed worktree's recorded path → the same.
+- [X] T150 [US4] Refuse in `gc --release` a path whose `.git` names an existing git directory, in `src/wtenv/orphans.py`
+  - Reading R5 (cli.md, `gc --release`, step 1); found by the review of the destructive paths.
 
 ### 6F. `wtenv ls` (`listing.py`, `cli.py`, `output.py`)
 
@@ -1335,7 +1342,8 @@ gates pass.
 
 ## Readings taken where the design leaves a choice
 
-The maintainer decided R1 and accepted R2–R4 as written. Each is recorded in the contract
+The maintainer decided R1 and accepted R2–R4 as written. R5 came from the review of the
+destructive paths (2026-10-05). Each is recorded in the contract
 named in the last column.
 
 | # | Open point | Reading taken | Tasks | Recorded in |
@@ -1344,6 +1352,7 @@ named in the last column.
 | R2 | A recorded SQLite copy already deleted by hand, with its side files still there | Report the copy as already absent and leave the side files (FR-039: "never on their own"). A later `up` then copies next to them | T087, T088 | cli.md, `wtenv down` |
 | R3 | FR-073 refuses `gc --release` "at which a worktree still exists" | A directory whose `.git` file points to a git directory that no longer exists is not a worktree, so `--release` can release it | T106, T110 | cli.md, `wtenv gc` |
 | R4 | files.md: install into an existing "POSIX shell" hook | A shebang naming `sh`, `bash`, `dash`, or `ksh` counts; anything else, or no shebang, is `hook_not_shell` | T116, T117 | files.md, Git hook block |
+| R5 | FR-073, for a worktree at the path whose git directory is not the entry's (the repository was moved and repaired, or another worktree took the path) | The converse of R3: a directory whose `.git` names a git directory that exists is a worktree, whatever the entry records, so `--release` refuses it | T149, T150 | cli.md, `wtenv gc` |
 
 ---
 

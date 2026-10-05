@@ -230,6 +230,8 @@ the exit status.
    path or (reason `moved`) at another, the command fails with `worktree_exists` and changes
    nothing. A directory whose `.git` file points to a git directory that no longer exists
    is not a worktree, so its entry can be released.
+   A directory whose `.git` names a git directory that exists is a worktree, even when that
+   git directory is not the one the entry records, so such a `PATH` fails too.
 2. A `PATH` with no entry is reported under `no_entry`. That is not an error, so the command
    can be repeated safely.
 3. Each remaining entry is released as `down` would, with the same lock rule as plain `gc`.
