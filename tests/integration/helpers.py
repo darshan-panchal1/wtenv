@@ -10,7 +10,7 @@ from pathlib import Path
 
 import psycopg
 
-from wtenv.output import DownResult, Item, LsResult, UpResult
+from wtenv.output import DownResult, GcResult, Item, LsResult, UpResult
 
 TEMPLATE_DATABASE = "wtenv_test_template"
 TEMPLATE_ROWS = [(1, "first"), (2, "second")]
@@ -41,6 +41,12 @@ def parse_down(process: subprocess.CompletedProcess[str]) -> DownResult:
     """Return the `DownResult` that `wtenv down --json` printed; standard output is one document."""
     assert len(process.stdout.splitlines()) == 1, process.stdout
     return DownResult.model_validate_json(process.stdout)
+
+
+def parse_gc(process: subprocess.CompletedProcess[str]) -> GcResult:
+    """Return the `GcResult` that `wtenv gc --json` printed; standard output is one document."""
+    assert len(process.stdout.splitlines()) == 1, process.stdout
+    return GcResult.model_validate_json(process.stdout)
 
 
 def parse_ls(process: subprocess.CompletedProcess[str]) -> LsResult:

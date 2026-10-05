@@ -1,5 +1,5 @@
 """User story 4: lifecycle and cleanup, on real git worktrees (spec.md, User Story 4; T092 to T095,
-T097, T112).
+T097, T104 to T107, T112).
 
 Every test works in a temporary repository with a temporary state directory (the `state_home`
 fixture), so no test reads or writes the developer's registry. Tests that need Docker request a
@@ -13,7 +13,7 @@ import shutil
 import subprocess
 import sys
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 
 import pytest
@@ -32,20 +32,26 @@ from helpers import (
     keys,
     make_sqlite_template,
     parse_down,
+    parse_gc,
     parse_ls,
     parse_up,
     project_resources,
     sqlite_rows,
 )
 
+from wtenv import orphans
 from wtenv.database import postgres_database_name
 from wtenv.errors import ErrorCode
+from wtenv.gitutil import WorktreeRecord
 from wtenv.identity import current_worktree
+from wtenv.orphans import Classification
 from wtenv.output import (
     BlockView,
     DatabaseView,
     DownResult,
+    GcResult,
     ItemKind,
+    KeptEntry,
     LsResult,
     PortView,
     ResourceState,
@@ -1129,3 +1135,530 @@ def test_ls_shows_a_postgres_database_and_a_compose_project_and_never_a_credenti
     for process in (as_json, as_text):
         assert postgres_server.password not in process.stdout + process.stderr  # FR-019
     assert f"postgres {database_name(worktree)}" in as_text.stdout and project in as_text.stdout
+
+
+# --- `wtenv gc` (T104 to T107; FR-045 to FR-047, FR-072 to FR-075, FR-077, FR-085) --------------
+
+
+def gc(
+    run_wtenv: Run, cwd: Path, *flags: str, env: dict[str, str] | None = None
+) -> tuple[int, GcResult]:
+    """Run `wtenv gc --json` with `flags` in `cwd`; return the exit status and the one document."""
+    process = run_wtenv(["gc", *flags, "--json"], cwd, env)
+    return process.returncode, parse_gc(process)
+
+
+@pytest.fixture
+def outside(tmp_path: Path) -> Path:
+    """A directory outside any repository: `gc` runs anywhere (FR-003)."""
+    path = tmp_path / "outside"
+    path.mkdir()
+    return path
+
+
+def git_dir_of(worktree: Path) -> str:
+    return current_worktree(worktree).git_dir
+
+
+def remove_with_git(repo: Path, worktree: Path) -> str:
+    """Remove `worktree` with `git worktree remove --force`; return the git directory it had."""
+    git_dir = git_dir_of(worktree)
+    git(repo, "worktree", "remove", "--force", str(worktree))
+    return git_dir
+
+
+def stray_of_a_deleted_repository(
+    run_wtenv: Run, make_repo: Callable[[str], Path], add_worktree: AddWorktree
+) -> tuple[Path, str]:
+    """Provision a worktree of a new repository, then delete the repository.
+
+    The worktree's directory is left; its `.git` file now names a git directory that is gone.
+    Return the worktree's path and the git directory it had.
+    """
+    doomed = make_repo("doomed")
+    stray = add_worktree(doomed, "stray", "stray")
+    up(run_wtenv, stray)
+    git_dir = git_dir_of(stray)
+    shutil.rmtree(doomed)
+    return stray, git_dir
+
+
+def state_files(repo: Path) -> dict[str, bytes | None]:
+    """Return the bytes of the registry and of the repository's exclude file."""
+    paths = [registry_path(), exclude_file(repo)]
+    return {str(path): path.read_bytes() if path.exists() else None for path in paths}
+
+
+# --- plain gc releases orphans (T104; scenarios 3 to 5) ------------------------------------------
+
+
+def test_gc_releases_worktrees_removed_with_git_worktree_remove_and_lists_each_item(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, outside: Path
+) -> None:
+    first = add_worktree(repo, "one", "one")
+    second = add_worktree(repo, "two", "two")
+    kept = add_worktree(repo, "three", "three")
+    for worktree in (first, second, kept):
+        up(run_wtenv, worktree)
+    first_dir = remove_with_git(repo, first)
+    second_dir = remove_with_git(repo, second)
+
+    status, result = gc(run_wtenv, outside)
+
+    assert status == 0
+    assert result.ok and result.error is None and not result.dry_run
+    assert result.released == [str(first), str(second)]
+    assert keys(result.removed) == [
+        ("port_block", "20000-20009"),
+        ("registry_entry", first_dir),
+        ("port_block", "20010-20019"),
+        ("registry_entry", second_dir),
+    ]
+    assert [item.worktree for item in result.removed] == [str(first)] * 2 + [str(second)] * 2
+    # The worktree directories went with `git worktree remove`, and their env files with them.
+    assert keys(result.already_absent) == [
+        ("env_section", str(first / ".env.local")),
+        ("env_section", str(second / ".env.local")),
+    ]
+    assert result.would_release == [] and result.would_remove == [] and result.failed == []
+    assert result.kept == [] and result.skipped_busy == [] and result.no_entry == []
+    assert set(load().worktrees) == {git_dir_of(kept)}
+
+
+def test_gc_dry_run_changes_nothing_and_lists_exactly_what_gc_then_removes(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, outside: Path
+) -> None:
+    orphan = add_worktree(repo, "one", "one")
+    neighbour = add_worktree(repo, "two", "two")
+    up(run_wtenv, orphan)
+    up(run_wtenv, neighbour)
+    remove_with_git(repo, orphan)
+    before = state_files(repo)
+
+    status, planned = gc(run_wtenv, outside, "--dry-run")
+
+    assert status == 0 and planned.ok and planned.dry_run
+    assert state_files(repo) == before  # byte-identical
+    assert planned.would_release == [str(orphan)] and planned.released == []
+    assert planned.removed == [] and planned.failed == []
+    assert [item.kind for item in planned.would_remove] == [
+        ItemKind.PORT_BLOCK,
+        ItemKind.REGISTRY_ENTRY,
+    ]
+
+    _, actual = gc(run_wtenv, outside)
+
+    assert actual.removed == planned.would_remove  # the very same items, in the same order
+    assert actual.released == planned.would_release
+    assert actual.already_absent == planned.already_absent
+
+
+def test_only_orphaned_entries_are_released_and_existing_worktrees_are_not_listed(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, outside: Path
+) -> None:
+    existing = add_worktree(repo, "existing", "existing")
+    orphan = add_worktree(repo, "orphan", "orphan")
+    deleted = add_worktree(repo, "deleted", "deleted")
+    for worktree in (existing, orphan, deleted):
+        up(run_wtenv, worktree)
+    existing_entry = entry_of(existing).model_dump_json()
+    existing_env = (existing / ".env.local").read_bytes()
+    deleted_dir = git_dir_of(deleted)
+    remove_with_git(repo, orphan)
+    shutil.rmtree(deleted)  # deleted by hand: git still lists it
+
+    status, result = gc(run_wtenv, outside)
+
+    assert status == 0 and result.ok
+    assert result.released == [str(orphan)]
+    assert result.kept == [
+        KeptEntry(path=str(deleted), git_dir=deleted_dir, reason=UnverifiableReason.GIT_STILL_LISTS)
+    ]
+    assert str(existing) not in result.model_dump_json()  # existing worktrees are not listed
+    assert entry_of(existing).model_dump_json() == existing_entry
+    assert (existing / ".env.local").read_bytes() == existing_env
+    assert deleted_dir in load().worktrees  # FR-047: kept, with all its resources
+
+
+def test_gc_removes_the_exclude_block_only_with_the_repositorys_last_entry(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, outside: Path
+) -> None:
+    first = add_worktree(repo, "one", "one")
+    second = add_worktree(repo, "two", "two")
+    path = exclude_file(repo)
+    developer = path.read_text(encoding="utf-8") + "# developer\n*.swp\n"
+    path.write_text(developer, encoding="utf-8")
+    up(run_wtenv, first)
+    up(run_wtenv, second)
+
+    remove_with_git(repo, first)
+    _, first_result = gc(run_wtenv, outside)
+
+    assert block_lines(path) == ["/.env.local"]  # kept: another entry of the repository remains
+    assert ItemKind.EXCLUDE_ENTRIES not in {item.kind for item in first_result.removed}
+
+    remove_with_git(repo, second)
+    _, second_result = gc(run_wtenv, outside)
+
+    assert path.read_text(encoding="utf-8") == developer  # markers gone, developer's lines kept
+    assert ("exclude_entries", str(path)) in keys(second_result.removed)
+
+
+def test_gc_runs_outside_any_repository_and_a_second_run_behaves_the_same(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, outside: Path
+) -> None:
+    status, empty = gc(run_wtenv, outside)
+
+    assert status == 0 and empty == GcResult(ok=True)
+    assert not registry_path().exists()  # nothing to do creates no registry
+
+    worktree = add_worktree(repo, "one", "one")
+    up(run_wtenv, worktree)
+    remove_with_git(repo, worktree)
+    status, first = gc(run_wtenv, outside)
+    assert status == 0 and first.released == [str(worktree)]
+    after_first = registry_path().read_bytes()
+
+    status, second = gc(run_wtenv, outside)
+
+    assert status == 0 and second == GcResult(ok=True)  # FR-075: the same as a first run
+    assert registry_path().read_bytes() == after_first
+
+
+def test_the_gc_text_output_names_what_was_released_and_what_was_kept(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, outside: Path
+) -> None:
+    orphan = add_worktree(repo, "orphan", "orphan")
+    deleted = add_worktree(repo, "deleted", "deleted")
+    up(run_wtenv, orphan)
+    up(run_wtenv, deleted)
+    remove_with_git(repo, orphan)
+    shutil.rmtree(deleted)
+
+    dry = run_wtenv(["gc", "--dry-run"], outside)
+    real = run_wtenv(["gc"], outside)
+
+    assert dry.returncode == 0 and real.returncode == 0
+    assert "would remove" in dry.stdout and "port_block 20000-20009" in dry.stdout
+    assert "removed" in real.stdout and "port_block 20000-20009" in real.stdout
+    assert f"kept {deleted} (git_still_lists)" in " ".join(real.stdout.split())
+    assert not real.stdout.lstrip().startswith("{")
+
+
+# --- plain gc keeps and skips entries (T105; scenario 8; FR-072, FR-074, FR-075, FR-077) --------
+
+
+def test_gc_keeps_every_unverifiable_entry_with_its_reason_and_removes_nothing(
+    run_wtenv: Run,
+    repo: Path,
+    make_repo: Callable[[str], Path],
+    add_worktree: AddWorktree,
+    outside: Path,
+) -> None:
+    deleted = add_worktree(repo, "deleted", "deleted")
+    moving = add_worktree(repo, "moving", "moving")
+    occupied = add_worktree(repo, "occupied", "occupied")
+    for worktree in (deleted, moving, occupied):
+        up(run_wtenv, worktree)
+    dirs = {worktree: git_dir_of(worktree) for worktree in (deleted, moving, occupied)}
+    stray, stray_dir = stray_of_a_deleted_repository(run_wtenv, make_repo, add_worktree)
+    shutil.rmtree(deleted)  # by hand: git still lists it
+    new_place = moving.parent / "moved-away"
+    git(repo, "worktree", "move", str(moving), str(new_place))
+    remove_with_git(repo, occupied)
+    occupied.mkdir()  # something is at the removed worktree's path again
+    before = registry_path().read_bytes()
+
+    status, result = gc(run_wtenv, outside)
+
+    assert status == 0 and result.ok
+    assert result.released == [] and result.removed == [] and result.already_absent == []
+    assert result.kept == [
+        KeptEntry(
+            path=str(deleted), git_dir=dirs[deleted], reason=UnverifiableReason.GIT_STILL_LISTS
+        ),
+        KeptEntry(
+            path=str(moving),
+            git_dir=dirs[moving],
+            reason=UnverifiableReason.MOVED,
+            current_path=str(new_place.resolve()),
+        ),
+        KeptEntry(
+            path=str(occupied), git_dir=dirs[occupied], reason=UnverifiableReason.PATH_EXISTS
+        ),
+        KeptEntry(
+            path=str(stray), git_dir=stray_dir, reason=UnverifiableReason.REPOSITORY_NOT_FOUND
+        ),
+    ]
+    assert registry_path().read_bytes() == before
+
+
+def test_a_hand_deleted_worktree_is_released_after_git_worktree_prune_and_gc_never_prunes(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, outside: Path
+) -> None:
+    worktree = add_worktree(repo, "one", "one")
+    up(run_wtenv, worktree)
+    shutil.rmtree(worktree)
+
+    status, first = gc(run_wtenv, outside)
+
+    assert status == 0
+    assert [entry.reason for entry in first.kept] == [UnverifiableReason.GIT_STILL_LISTS]
+    listing = git(repo, "worktree", "list", "--porcelain")
+    assert f"worktree {worktree}\n" in listing and "prunable" in listing  # FR-075: not pruned
+
+    git(repo, "worktree", "prune")  # the developer's own statement that it is gone
+    status, second = gc(run_wtenv, outside)
+
+    assert status == 0 and second.released == [str(worktree)]
+
+
+def test_an_orphan_whose_worktree_lock_is_held_is_skipped_busy_without_failing(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, outside: Path
+) -> None:
+    worktree = add_worktree(repo, "one", "one")
+    up(run_wtenv, worktree)
+    git_dir = remove_with_git(repo, worktree)
+    holder = subprocess.Popen(
+        [sys.executable, "-c", LOCK_HOLDER, git_dir], stdout=subprocess.PIPE, text=True
+    )
+    try:
+        assert holder.stdout is not None and holder.stdout.readline().strip() == "locked"
+
+        status, result = gc(run_wtenv, outside)
+
+        assert status == 0 and result.ok  # FR-077: not waited for, not a failure
+        assert result.skipped_busy == [str(worktree)]
+        assert result.released == [] and result.removed == []
+        assert git_dir in load().worktrees
+    finally:
+        holder.kill()
+        holder.wait()
+
+    status, later = gc(run_wtenv, outside)
+
+    assert status == 0 and later.released == [str(worktree)]
+
+
+def test_an_orphan_that_is_no_longer_orphaned_once_locked_is_skipped(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worktree = add_worktree(repo, "one", "one")
+    up(run_wtenv, worktree)
+    git_dir = remove_with_git(repo, worktree)
+    real_classify = orphans.classify
+    seen: list[str] = []
+
+    def reappears(entry: WorktreeEntry, listing: Sequence[WorktreeRecord] | None) -> Classification:
+        """The real answer the first time; then the worktree is back."""
+        seen.append(entry.git_dir)
+        if len(seen) == 1:
+            return real_classify(entry, listing)
+        return Classification(Status.PROVISIONED)
+
+    monkeypatch.setattr(orphans, "classify", reappears)
+
+    result = orphans.gc()
+
+    assert seen == [git_dir, git_dir]  # FR-074: classified again, with the lock held
+    assert result.ok and result.released == [] and result.removed == [] and result.kept == []
+    assert git_dir in load().worktrees
+
+
+# --- gc --release (T106; scenario 9; FR-073) -----------------------------------------------------
+
+
+def test_gc_release_releases_an_entry_whose_repository_was_deleted_and_can_be_repeated(
+    run_wtenv: Run, make_repo: Callable[[str], Path], add_worktree: AddWorktree, outside: Path
+) -> None:
+    stray, stray_dir = stray_of_a_deleted_repository(run_wtenv, make_repo, add_worktree)
+    env_file = stray / ".env.local"
+
+    status, result = gc(run_wtenv, outside, "--release", str(stray))
+
+    assert status == 0 and result.ok and not result.dry_run
+    assert result.released == [str(stray)]
+    assert keys(result.removed) == [
+        ("env_section", str(env_file)),
+        ("env_file", str(env_file)),
+        ("port_block", "20000-20009"),
+        ("registry_entry", stray_dir),
+    ]
+    assert all(item.worktree == str(stray) for item in result.removed)
+    assert stray_dir not in load().worktrees and not env_file.exists()
+
+    status, again = gc(run_wtenv, outside, "--release", str(stray))
+
+    assert status == 0 and again.ok
+    assert again.no_entry == [str(stray)]
+    assert again.released == [] and again.removed == [] and again.failed == []
+
+
+def test_gc_release_acts_only_on_the_named_entries(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, outside: Path
+) -> None:
+    first = add_worktree(repo, "one", "one")
+    second = add_worktree(repo, "two", "two")
+    up(run_wtenv, first)
+    up(run_wtenv, second)
+    first_dir = remove_with_git(repo, first)
+    second_dir = remove_with_git(repo, second)
+
+    status, result = gc(run_wtenv, outside, "--release", str(first))
+
+    assert status == 0 and result.released == [str(first)]
+    assert result.kept == []  # with --release, gc does not sweep
+    assert first_dir not in load().worktrees
+    assert second_dir in load().worktrees  # an unnamed orphan stays
+
+
+def test_gc_release_refuses_a_path_whose_worktree_still_exists_and_changes_nothing(
+    run_wtenv: Run,
+    repo: Path,
+    make_repo: Callable[[str], Path],
+    add_worktree: AddWorktree,
+    outside: Path,
+) -> None:
+    existing = add_worktree(repo, "existing", "existing")
+    up(run_wtenv, existing)
+    stray, _ = stray_of_a_deleted_repository(run_wtenv, make_repo, add_worktree)
+    before = registry_path().read_bytes()
+
+    process = run_wtenv(
+        ["gc", "--release", str(stray), "--release", str(existing), "--json"], outside
+    )
+
+    assert process.returncode == 18
+    result = parse_gc(process)
+    assert not result.ok and result.error is not None
+    assert result.error.code is ErrorCode.WORKTREE_EXISTS and result.error.exit_status == 18
+    assert result.error.details["path"] == str(existing)
+    assert "error [worktree_exists]" in process.stderr
+    assert registry_path().read_bytes() == before  # not even the stray entry was released
+
+
+def test_gc_release_refuses_a_moved_worktree_that_exists_elsewhere(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, outside: Path
+) -> None:
+    worktree = add_worktree(repo, "one", "one")
+    up(run_wtenv, worktree)
+    new_place = worktree.parent / "moved-away"
+    git(repo, "worktree", "move", str(worktree), str(new_place))
+    before = registry_path().read_bytes()
+
+    status, result = gc(run_wtenv, outside, "--release", str(worktree))
+
+    assert status == 18
+    assert result.error is not None and result.error.code is ErrorCode.WORKTREE_EXISTS
+    assert result.error.details["path"] == str(worktree)
+    assert result.error.details["current_path"] == str(new_place.resolve())
+    assert registry_path().read_bytes() == before
+
+
+def test_gc_release_dry_run_lists_and_changes_nothing(
+    run_wtenv: Run, make_repo: Callable[[str], Path], add_worktree: AddWorktree, outside: Path
+) -> None:
+    stray, stray_dir = stray_of_a_deleted_repository(run_wtenv, make_repo, add_worktree)
+    env_file = stray / ".env.local"
+    before = (registry_path().read_bytes(), env_file.read_bytes())
+
+    status, planned = gc(run_wtenv, outside, "--release", str(stray), "--dry-run")
+
+    assert status == 0 and planned.ok and planned.dry_run
+    assert planned.would_release == [str(stray)] and planned.released == []
+    assert ("registry_entry", stray_dir) in keys(planned.would_remove)
+    assert planned.removed == []
+    assert (registry_path().read_bytes(), env_file.read_bytes()) == before
+
+
+def test_gc_release_lists_and_removes_each_sqlite_side_file_of_a_worktree_left_behind(
+    run_wtenv: Run, sqlite_repo: Path, add_worktree: AddWorktree, outside: Path
+) -> None:
+    worktree = add_worktree(sqlite_repo, "feature-x", "feature-x")
+    up(run_wtenv, worktree)
+    copy = worktree / ".wtenv" / "dev.sqlite3"
+    sides = add_side_files(copy)
+    expected = [("sqlite_file", str(path)) for path in [copy, *sides]]
+    shutil.rmtree(sqlite_repo)  # the repository; the worktree's directory is left
+
+    _, planned = gc(run_wtenv, outside, "--release", str(worktree), "--dry-run")
+
+    assert [pair for pair in keys(planned.would_remove) if pair[0] == "sqlite_file"] == expected
+    assert copy.exists() and all(path.exists() for path in sides)  # nothing was deleted
+
+    status, actual = gc(run_wtenv, outside, "--release", str(worktree))
+
+    assert status == 0
+    assert [pair for pair in keys(actual.removed) if pair[0] == "sqlite_file"] == expected
+    assert actual.removed == planned.would_remove
+    assert not copy.exists() and not any(path.exists() for path in sides)
+
+
+# --- Docker: Postgres and compose (T107; SC-003; cli.md, `wtenv gc`, Credentials) ---------------
+
+
+def test_gc_without_a_password_fails_the_orphans_database_until_pgpassword_is_given(
+    run_wtenv: Run,
+    postgres_repo: Path,
+    add_worktree: AddWorktree,
+    postgres_server: PostgresServer,
+    pg_env: dict[str, str],
+    database_cleanup: list[str],
+    no_password: None,
+    outside: Path,
+) -> None:
+    worktree = add_worktree(postgres_repo, "feature-x", "feature-x")
+    name = database_name(worktree)
+    database_cleanup.append(name)
+    up(run_wtenv, worktree, pg_env)
+    git_dir = remove_with_git(postgres_repo, worktree)
+
+    status, result = gc(run_wtenv, outside)  # gc reads no wtenv.toml, and libpq has nothing
+
+    assert status == 13
+    assert result.error is not None and result.error.code is ErrorCode.PARTIAL_FAILURE
+    assert keys(result.failed) == [("postgres_database", name)]
+    assert result.released == []
+    assert postgres_server.password not in result.model_dump_json()
+    assert postgres_server.database_exists(name)
+    assert git_dir in load().worktrees  # still recorded
+
+    status, finished = gc(run_wtenv, outside, env={"PGPASSWORD": postgres_server.password})
+
+    assert status == 0 and finished.failed == []
+    assert ("postgres_database", name) in keys(finished.removed)
+    assert finished.released == [str(worktree)]
+    assert not postgres_server.database_exists(name)
+    assert git_dir not in load().worktrees
+
+
+def test_one_gc_after_git_worktree_remove_leaves_no_database_container_volume_or_entry(
+    run_wtenv: Run,
+    postgres_server: PostgresServer,
+    repo: Path,
+    add_worktree: AddWorktree,
+    compose_image: str,
+    compose_projects: ComposeProjects,
+    external_volume: str,
+    pg_env: dict[str, str],
+    database_cleanup: list[str],
+    outside: Path,
+) -> None:
+    toml = COMPOSE_TOML + "\n" + postgres_toml(postgres_server)
+    worktree = compose_worktree(repo, add_worktree, external_volume, toml)
+    name = database_name(worktree)
+    database_cleanup.append(name)
+    up(run_wtenv, worktree, pg_env)
+    project = compose_projects.track(project_of(worktree))
+    start_stack(worktree)
+    assert any(project_resources(project).values())
+    git_dir = remove_with_git(repo, worktree)
+
+    status, result = gc(run_wtenv, outside, env={"PGPASSWORD": postgres_server.password})
+
+    assert status == 0 and result.failed == [], result
+    assert result.released == [str(worktree)]
+    assert not postgres_server.database_exists(name)
+    assert all(not ids for ids in project_resources(project).values())
+    assert volume_exists(external_volume)  # declared external: never removed (FR-039)
+    assert git_dir not in load().worktrees

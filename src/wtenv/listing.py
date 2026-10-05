@@ -12,7 +12,7 @@ from pathlib import Path
 
 from wtenv import registry
 from wtenv.errors import ErrorCode, WtenvError
-from wtenv.gitutil import WorktreeRecord, parse_worktree_list, run_git
+from wtenv.gitutil import WorktreeRecord, git_listing
 from wtenv.identity import current_worktree, points_to
 from wtenv.locks import registry_lock
 from wtenv.orphans import Classification, classify
@@ -88,18 +88,6 @@ def worktree_view(entry: WorktreeEntry, classification: Classification) -> Workt
         compose_project=None if entry.compose is None else entry.compose.project,
         env_file=None if entry.env_file is None else entry.env_file.path,
     )
-
-
-def git_listing(repository: str) -> list[WorktreeRecord] | None:
-    """Return the worktrees git lists for `repository` (its common git directory), or None.
-
-    None when git cannot answer: the repository is gone, or is not a repository. One call per
-    repository, and a command that changes nothing (FR-075).
-    """
-    result = run_git([f"--git-dir={repository}", "worktree", "list", "--porcelain"])
-    if result.returncode != 0:
-        return None
-    return parse_worktree_list(result.stdout)
 
 
 def list_worktrees(cwd: str | Path | None = None) -> LsResult:

@@ -104,6 +104,43 @@ def down(
 
 
 @app.command()
+def gc(
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Change nothing; list what `gc` would remove."
+    ),
+    release: list[str] | None = typer.Option(  # noqa: B008 - Typer reads options from defaults
+        None,
+        "--release",
+        metavar="PATH",
+        help=(
+            "Release the entry recorded at PATH even though it is unverifiable. "
+            "May be given several times; then only the named entries are acted on."
+        ),
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Print one JSON document."),
+) -> None:
+    """Release the entries of worktrees that git confirms are gone, in every repository."""
+    from wtenv import orphans
+    from wtenv.output import GcResult, failed_result, print_error, print_result, render_gc_text
+
+    try:
+        if release:
+            result = orphans.gc_release(release, dry_run=dry_run)
+        else:
+            result = orphans.gc(dry_run=dry_run)
+    except WtenvError as error:
+        print_error(error)
+        print_result(failed_result(GcResult, error), json_mode=json_output)
+        raise typer.Exit(EXIT_STATUS[error.code]) from error
+    if result.error is not None:
+        # Some items could not be removed: the document still lists everything that happened.
+        print_error(WtenvError(result.error.code, result.error.message, hint=result.error.hint))
+    print_result(result, json_mode=json_output, text=render_gc_text(result))
+    if result.error is not None:
+        raise typer.Exit(result.error.exit_status)
+
+
+@app.command()
 def ls(
     json_output: bool = typer.Option(False, "--json", help="Print one JSON document."),
 ) -> None:

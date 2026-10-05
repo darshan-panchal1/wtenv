@@ -149,6 +149,18 @@ def parse_worktree_list(text: str) -> list[WorktreeRecord]:
     return records
 
 
+def git_listing(repository: str) -> list[WorktreeRecord] | None:
+    """Return the worktrees git lists for `repository` (its common git directory), or None.
+
+    None when git cannot answer: the repository is gone, or is not a repository. One call per
+    repository, and a command that changes nothing (FR-075).
+    """
+    result = run_git([f"--git-dir={repository}", "worktree", "list", "--porcelain"])
+    if result.returncode != 0:
+        return None
+    return parse_worktree_list(result.stdout)
+
+
 def git_path(worktree: str | Path, name: str) -> Path:
     """Return the absolute path git uses for `name` (such as `info/exclude`) in `worktree`."""
     result = run_git(

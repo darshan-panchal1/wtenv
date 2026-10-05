@@ -893,7 +893,7 @@ T104–T108, and T112.
 
 ### 6E. `wtenv gc` (`orphans.py`, `cli.py`, `output.py`)
 
-- [ ] T104 [US4] Add failing tests for plain `gc` releasing orphans (scenarios 3–5) to `tests/integration/test_us4_lifecycle.py`
+- [X] T104 [US4] Add failing tests for plain `gc` releasing orphans (scenarios 3–5) to `tests/integration/test_us4_lifecycle.py`
   - Scenario 3 (FR-045): entries of worktrees removed with `git worktree remove` are
     released; items under `removed`, paths under `released`.
   - Scenario 4 (FR-075): `gc --dry-run` changes nothing and fills `would_release` and
@@ -904,7 +904,7 @@ T104–T108, and T112.
     markers included, keeping the developer's lines; while another entry of that repository
     remains, the block is kept.
   - Works outside any repository (FR-003); a second run behaves the same (FR-075).
-- [ ] T105 [US4] Add failing tests for plain `gc` keeping and skipping entries (scenario 8) to `tests/integration/test_us4_lifecycle.py`
+- [X] T105 [US4] Add failing tests for plain `gc` keeping and skipping entries (scenario 8) to `tests/integration/test_us4_lifecycle.py`
   - Scenario 8 (FR-072): under `kept` with reason, nothing removed, exit 0: directory deleted
     by hand (`git_still_lists`); repository deleted (`repository_not_found`); moved
     (`moved`, `current_path`); something at a removed worktree's path (`path_exists`).
@@ -913,7 +913,7 @@ T104–T108, and T112.
   - An entry whose worktree lock is held → `skipped_busy`, exit 0 (FR-077).
   - FR-074: a worktree that reappears between the first classification and the release is
     skipped (in-process, second classification patched).
-- [ ] T106 [US4] Add failing tests for `gc --release` to `tests/integration/test_us4_lifecycle.py`
+- [X] T106 [US4] Add failing tests for `gc --release` to `tests/integration/test_us4_lifecycle.py`
   - Scenario 9 (FR-073): after the repository is deleted, `gc --release <path>` releases
     the entry and lists each item; a second run reports the path under `no_entry`, exit 0.
   - Only the named entries are acted on; an unnamed orphan stays.
@@ -925,14 +925,14 @@ T104–T108, and T112.
     files; its repository deleted, the worktree directory left. `gc --release <path>
     --dry-run --json` lists the copy and each existing side file as separate `would_remove`
     items; without `--dry-run` they are under `removed` and gone.
-- [ ] T107 [US4] Add failing Docker-backed `gc` tests to `tests/integration/test_us4_lifecycle.py`
+- [X] T107 [US4] Add failing Docker-backed `gc` tests to `tests/integration/test_us4_lifecycle.py`
   - Request `docker`. An orphan's Postgres database without a password → `failed`, still
     recorded, exit 13; with `PGPASSWORD`, the next `gc` removes it (cli.md, Credentials).
   - SC-003: with Postgres and a started compose stack, `git worktree remove --force` then one
     `gc` leaves no database, container, volume, or entry of it.
-- [ ] T108 [US4] Add `gc` decoy tests to `tests/integration/test_safety_decoys.py`
+- [X] T108 [US4] Add `gc` decoy tests to `tests/integration/test_safety_decoys.py`
   - The decoys of T096 survive plain `gc` and `gc --release` of a neighbouring entry (SC-007).
-- [ ] T109 [US4] Implement plain `gc` in `src/wtenv/orphans.py`
+- [X] T109 [US4] Implement plain `gc` in `src/wtenv/orphans.py`
   - Read the registry once; one `git --git-dir=<repository> worktree list --porcelain` per
     repository; classify every entry.
   - Each `orphaned` entry: try its worktree lock without waiting (held → `skipped_busy`);
@@ -941,11 +941,11 @@ T104–T108, and T112.
   - `unverifiable` → `kept`. `kept` and `skipped_busy` never change the exit status; a
     failed item gives 13. `--dry-run`: classify and list through the release plan, no lock.
   - Never run a git command that changes a repository (FR-075).
-- [ ] T110 [US4] Implement `gc --release PATH` in `src/wtenv/orphans.py`
+- [X] T110 [US4] Implement `gc --release PATH` in `src/wtenv/orphans.py`
   - Check every `PATH` first: an entry whose worktree still exists there, or (reason
     `moved`) elsewhere → `worktree_exists`, nothing changed. A `PATH` with no entry →
     `no_entry`. Then release each named entry with the plain `gc` lock rule (cli.md).
-- [ ] T111 [US4] Add `wtenv gc [--dry-run] [--release PATH]... [--json]` to `src/wtenv/cli.py` and its text output to `src/wtenv/output.py`
+- [X] T111 [US4] Add `wtenv gc [--dry-run] [--release PATH]... [--json]` to `src/wtenv/cli.py` and its text output to `src/wtenv/output.py`
   - `GcResult`; exit statuses 0, 13, 14, 16, 18.
 
 ### 6F. `wtenv ls` (`listing.py`, `cli.py`, `output.py`)

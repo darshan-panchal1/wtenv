@@ -1,18 +1,29 @@
-"""Telling an entry's worktree apart from a missing one: `classify` (data-model.md, "Status and
-the orphan checks"; FR-045, FR-072).
+"""Telling an entry's worktree apart from a missing one: `classify` (data-model.md, "Status and the
+orphan checks"; FR-045, FR-072). And `wtenv gc`, which releases the entries whose worktrees git
+confirms are gone (FR-045 to FR-047, FR-072 to FR-075, FR-077).
 
-`ls`, `exec`, and `doctor` use this one function, so they can never disagree about a worktree.
-It only reads: it changes nothing on disk and nothing in the entry.
+`ls`, `exec`, `doctor`, and `gc` use the one function `classify`, so they can never disagree about
+a worktree. `classify` only reads: it changes nothing on disk and nothing in the entry.
+
+`gc` releases an entry through `teardown`, exactly as `down` would. `teardown` is imported inside
+the functions that use it, because `ls` imports this module and has to start fast (NFR-001).
 """
 
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from wtenv.gitutil import WorktreeRecord
+from wtenv import registry
+from wtenv.errors import EXIT_STATUS, ErrorCode, WtenvError
+from wtenv.gitutil import WorktreeRecord, git_listing
 from wtenv.identity import points_to
-from wtenv.output import Status, UnverifiableReason
+from wtenv.locks import registry_lock, try_worktree_lock
+from wtenv.output import ErrorInfo, GcResult, KeptEntry, Status, UnverifiableReason
 from wtenv.registry import WorktreeEntry
+
+if TYPE_CHECKING:
+    from wtenv.teardown import Release
 
 
 @dataclass(frozen=True)
@@ -51,3 +62,172 @@ def classify(entry: WorktreeEntry, listing: Sequence[WorktreeRecord] | None) -> 
     if entry.path in listed:
         return Classification(Status.UNVERIFIABLE, UnverifiableReason.GIT_STILL_LISTS)
     return Classification(Status.ORPHANED)
+
+
+# --- `wtenv gc` ------------------------------------------------------------------------------------
+
+
+def gc(*, dry_run: bool = False) -> GcResult:
+    """Release every entry whose worktree git confirms is gone, in every repository (FR-045).
+
+    The registry is read once, and each repository is asked once for its worktrees. An `orphaned`
+    entry is released as `down` would release it: its worktree lock is taken without waiting
+    (held: `skipped_busy`, FR-077), and it is classified again with a fresh listing, holding the
+    lock, and left alone unless it is still orphaned (FR-074). An `unverifiable` entry is `kept`
+    with its reason (FR-072). Entries of existing worktrees are not touched and not listed
+    (FR-046). A dry run takes no worktree lock, changes nothing, and lists what a real run would
+    remove (FR-075).
+
+    `gc` reads no `wtenv.toml`: a Postgres drop takes its password from the libpq sources (cli.md,
+    `wtenv gc`, Credentials). No git command that changes a repository is run (FR-075).
+    """
+    from wtenv import teardown  # only now; see the module docstring
+
+    result = GcResult(ok=True, dry_run=dry_run)
+    listings: dict[str, list[WorktreeRecord] | None] = {}
+    for entry in _entries():
+        if entry.repository not in listings:
+            listings[entry.repository] = git_listing(entry.repository)
+        found = classify(entry, listings[entry.repository])
+        if found.status is Status.UNVERIFIABLE:
+            result.kept.append(_kept(entry, found))
+        elif found.status is Status.ORPHANED:
+            if dry_run:
+                _add(result, entry, teardown.plan_release(entry))
+            else:
+                _release(result, entry, only_if_orphaned=True)
+    return _finished(result)
+
+
+def gc_release(paths: Sequence[str], *, dry_run: bool = False) -> GcResult:
+    """Release the entries recorded at `paths`, even though they are unverifiable (FR-073).
+
+    Every path is checked before anything changes: an entry whose worktree still exists, at the
+    path or, moved, at another, stops the command with `worktree_exists`. A path with no entry is
+    reported under `no_entry`, so the command can be repeated. Each named entry is then released
+    as `down` would release it, with the lock rule of plain `gc` (`skipped_busy`). Nothing else is
+    swept. A dry run takes no worktree lock and changes nothing.
+    """
+    from wtenv import teardown  # only now; see the module docstring
+
+    recorded: dict[str, list[WorktreeEntry]] = {}
+    for entry in _entries():
+        recorded.setdefault(entry.path, []).append(entry)
+    result = GcResult(ok=True, dry_run=dry_run)
+    named: dict[str, WorktreeEntry] = {}  # by git directory: each entry once
+    for path in paths:
+        entries = recorded.get(os.path.realpath(path), [])
+        if not entries and path not in result.no_entry:
+            result.no_entry.append(path)
+        for entry in entries:
+            _refuse_if_it_exists(entry)
+            named[entry.git_dir] = entry
+    for entry in named.values():
+        if dry_run:
+            _add(result, entry, teardown.plan_release(entry))
+        else:
+            _release(result, entry, only_if_orphaned=False)
+    return _finished(result)
+
+
+def _entries() -> list[WorktreeEntry]:
+    """Read the registry once, under its lock; return its entries in the order of their blocks."""
+    with registry_lock():
+        entries = list(registry.load().worktrees.values())
+    return sorted(entries, key=lambda entry: entry.block.start)
+
+
+def _entry(git_dir: str) -> WorktreeEntry | None:
+    """Read one entry under the registry lock; None when the registry no longer holds it."""
+    with registry_lock():
+        return registry.load().worktrees.get(git_dir)
+
+
+def _release(result: GcResult, entry: WorktreeEntry, *, only_if_orphaned: bool) -> None:
+    """Release `entry` while holding its worktree lock, taken without waiting (FR-077).
+
+    The entry is read again with the lock held, because another process may have changed it.
+    With `only_if_orphaned` (plain `gc`) it is also classified again with a fresh listing, and
+    released only if it is still orphaned (FR-074); if it is now unverifiable, it is `kept`.
+    """
+    from wtenv import teardown  # only now; see the module docstring
+
+    with try_worktree_lock(entry.git_dir) as locked:
+        if not locked:
+            result.skipped_busy.append(entry.path)
+            return
+        current = _entry(entry.git_dir)
+        if current is None:
+            return  # another process released it in the meantime
+        if only_if_orphaned:
+            again = classify(current, git_listing(current.repository))
+            if again.status is Status.UNVERIFIABLE:
+                result.kept.append(_kept(current, again))
+            if again.status is not Status.ORPHANED:
+                return
+        _add(result, current, teardown.release_entry(current))
+
+
+def _refuse_if_it_exists(entry: WorktreeEntry) -> None:
+    """Raise `worktree_exists` when the entry's worktree still exists, at its path or moved.
+
+    A directory whose `.git` file names a git directory that no longer exists is not a worktree
+    (cli.md, `gc --release`), so the git directory itself must exist too.
+    """
+    if os.path.isdir(entry.git_dir) and points_to(entry.path) == entry.git_dir:
+        raise WtenvError(
+            ErrorCode.WORKTREE_EXISTS,
+            f"the worktree at {entry.path} still exists",
+            hint="Run `wtenv down` in that worktree instead.",
+            details={"path": entry.path},
+        )
+    found = classify(entry, git_listing(entry.repository))
+    if found.reason is UnverifiableReason.MOVED and found.current_path is not None:
+        raise WtenvError(
+            ErrorCode.WORKTREE_EXISTS,
+            f"the worktree recorded at {entry.path} still exists at {found.current_path}",
+            hint="Run `wtenv down` in that worktree instead.",
+            details={"path": entry.path, "current_path": found.current_path},
+        )
+
+
+def _kept(entry: WorktreeEntry, found: Classification) -> KeptEntry:
+    """Describe an unverifiable entry that `gc` leaves alone (FR-072)."""
+    assert found.reason is not None
+    return KeptEntry(
+        path=entry.path,
+        git_dir=entry.git_dir,
+        reason=found.reason,
+        current_path=found.current_path,
+    )
+
+
+def _add(result: GcResult, entry: WorktreeEntry, release: "Release") -> None:
+    """Add what releasing `entry` did, or for a dry run would do, to `result`."""
+    if result.dry_run:
+        result.would_remove += release.removed
+        if not release.failed:
+            result.would_release.append(entry.path)
+    else:
+        result.removed += release.removed
+        if release.released:
+            result.released.append(entry.path)
+    result.already_absent += release.already_absent
+    result.failed += release.failed
+
+
+def _finished(result: GcResult) -> GcResult:
+    """Make a real run that could not remove an item fail with `partial_failure` (exit 13).
+
+    The failed items stay recorded; running `gc` again finishes the job (FR-042). A dry run
+    reports them under `failed`, but is still `ok`, as for `down`.
+    """
+    if result.failed and not result.dry_run:
+        result.ok = False
+        result.error = ErrorInfo(
+            code=ErrorCode.PARTIAL_FAILURE,
+            exit_status=EXIT_STATUS[ErrorCode.PARTIAL_FAILURE],
+            message=f"{len(result.failed)} item(s) could not be removed and stay recorded",
+            hint="Fix the cause in `failed[].reason`, then run the same `wtenv gc` again.",
+        )
+    return result

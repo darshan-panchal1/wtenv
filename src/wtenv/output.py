@@ -413,6 +413,43 @@ def render_down_text(result: DownResult) -> str:
     return "\n".join(lines)
 
 
+def render_gc_text(result: GcResult) -> str:
+    """Return the text `wtenv gc` prints for people (cli.md, `wtenv gc`; not a stable interface).
+
+    A header, then, for each worktree acted on, its path and one line per item as `down` shows
+    them; then one line per entry kept with its reason, per entry skipped because its worktree
+    lock was held, and per `--release` path with no entry. Nothing to report prints one line
+    saying so. No line holds a credential (FR-019).
+    """
+    items = result.would_remove if result.dry_run else result.removed
+    label = "would remove" if result.dry_run else "removed"
+    rows = [(label, item, "") for item in items]
+    rows += [("already gone", item, "") for item in result.already_absent]
+    rows += [("FAILED", item, f": {item.reason}") for item in result.failed]
+    if not (rows or result.kept or result.skipped_busy or result.no_entry):
+        return "wtenv: nothing to release"
+    released = result.would_release if result.dry_run else result.released
+    header = (
+        f"dry run, nothing changed; would release {len(released)} worktree(s)"
+        if result.dry_run
+        else f"released {len(released)} worktree(s)"
+    )
+    lines = [f"wtenv: {header}"]
+    for worktree in dict.fromkeys(item.worktree for _, item, _ in rows):
+        lines.append(f"  {worktree}")
+        lines += [
+            f"    {row_label:<13}{item.kind.value} {item.name}{reason}"
+            for row_label, item, reason in rows
+            if item.worktree == worktree
+        ]
+    for entry in result.kept:
+        where = f": {entry.current_path}" if entry.current_path else ""
+        lines.append(f"  {'kept':<13}{entry.path} ({entry.reason.value}{where})")
+    lines += [f"  {'busy':<13}{path}" for path in result.skipped_busy]
+    lines += [f"  {'no entry':<13}{path}" for path in result.no_entry]
+    return "\n".join(lines)
+
+
 _LS_HEADER = ("STATUS", "PORTS", "VARIABLES", "DATABASE", "COMPOSE", "PATH")
 
 
