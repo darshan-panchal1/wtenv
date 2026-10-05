@@ -643,7 +643,7 @@ T079–T080.
 
 ### 5B. Reading the compose model (`compose.py`)
 
-- [ ] T071 [P] [US3] Write failing tests for parsing the resolved compose model in `tests/unit/test_compose_model.py`
+- [X] T071 [P] [US3] Write failing tests for parsing the resolved compose model in `tests/unit/test_compose_model.py`
   - Input: documents shaped like `docker compose config --format json` output (research.md §4,
     Observed). Output: one record per mapping with `service`, `target`, `protocol`,
     `host_ip`, the published value, and the other fields Compose reported (`mode`, `name`,
@@ -654,7 +654,7 @@ T079–T080.
   - A service with `container_name` → warning `compose_fixed_container_name` naming it.
   - The resolution command: `docker compose -f <file> --profile "*" config --format json`,
     with variable `i` set to the marker value `i + 1` (data-model.md, Port allocation).
-- [ ] T072 [US3] Implement resolving and parsing the compose model in `src/wtenv/compose.py`
+- [X] T072 [US3] Implement resolving and parsing the compose model in `src/wtenv/compose.py`
   - Compose runs as a subprocess; no YAML library, no Docker SDK (research.md §4, §7).
 
 ### 5C. Ports for published ports (`ports.py`) — core area 2
