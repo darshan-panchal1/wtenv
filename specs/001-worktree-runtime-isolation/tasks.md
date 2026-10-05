@@ -1304,26 +1304,45 @@ after groups 3F and 6G, and before T146–T148. Each pair is a failing test, the
   - Port them from `json_models.py` as T011 did; `KeptEntry` and `kept` are unchanged.
     T172 passes. Comes before T162 and T163.
 - [ ] T162 Add a failing Docker-backed test for volumes to `tests/integration/test_us4_lifecycle.py`
-  - LOW-4, FR-039, FR-041, reading R6: the test's own compose project has a service with an
-    anonymous volume (`volumes: ["/data"]`), started with `docker compose up -d`, so a real
-    anonymous volume is attached to a container of that project. It also creates an
-    unlabelled decoy volume with `docker volume create`.
-  - `down --dry-run --json`: each volume labelled `com.docker.compose.project=<recorded
-    project name>` is its own `compose_volume` item in `would_remove`; the decoy is in
-    `kept_volumes` with `reason` `unlabelled`; nothing is removed.
-  - `down --json`: the same items are in `removed`, and the volumes are gone together with
-    the project. The decoy is still there and is in `kept_volumes` with `name` the decoy's
-    name, `project` the recorded project name, and `reason` `unlabelled`. The same cases
-    through `gc --release` after the repository is deleted, in `GcResult.kept_volumes`.
-  - `docker compose down` is run without `--volumes` (assert on the command, in
-    `tests/unit/test_compose_teardown.py`).
+  - LOW-4, FR-039, FR-040, FR-041, reading R6: the test's own compose project has three
+    volumes: one named volume (`named:/named`; Compose labels it
+    `com.docker.compose.project=<project>`), one anonymous volume (a service with a `/data`
+    mount; Docker labels it only `com.docker.volume.anonymous`), and one external decoy
+    (created with `docker volume create`, declared `external: true`, mounted by a service;
+    no label). The project is started with `docker compose up -d`, so all three are
+    attached to a container of that project.
+  - `down --dry-run --json`: the named volume is its own `compose_volume` item in
+    `would_remove`; the anonymous volume and the decoy are in `kept_volumes`, each with
+    `name` the volume's name, `project` the recorded project name, and `reason`
+    `unlabelled`; all three volumes are still there afterwards.
+  - `down --json`: the named volume is in `removed` and gone together with the project. The
+    anonymous volume and the decoy are in `kept_volumes` as above and still exist, with
+    their contents unchanged (a file written into each before `down` is read back after it).
+    The same cases through `gc` (after the worktree is deleted) and `gc --release` (after the
+    repository is deleted), in `GcResult.kept_volumes`, with and without `--dry-run`.
+  - `docker compose down` is run without `--volumes`, and no `docker volume rm` names an
+    unlabelled volume (assert on the commands, in `tests/unit/test_compose_teardown.py`,
+    with a fake engine that holds labelled, anonymous, and external volumes).
+  - The test removes every container, network, and volume it created, including the kept
+    ones; it touches nothing else.
 - [ ] T163 Remove labelled volumes by name instead of `--volumes`, in `src/wtenv/compose.py`
-  - Reading R6 (accepted): drop `--volumes` from `docker compose down`; list the volumes
-    labelled `com.docker.compose.project=<recorded project name>`, remove each by name, and
-    report each as its own item. A volume without the label is never removed and is reported
-    in `kept_volumes` (`DownResult`, and `GcResult` through `gc`) as a `KeptVolume` with
-    `reason` `unlabelled`, with or without `--dry-run`. External volumes are never removed
-    (FR-039).
+  - Reading R6 (accepted, amended 2026-10-05 after a probe on Docker 29.5.3 and Compose
+    5.1.4: only named volumes carry `com.docker.compose.project`; anonymous and external
+    volumes do not). Drop `--volumes` from `docker compose down`.
+  - Removal: list the volumes labelled `com.docker.compose.project=<recorded project name>`
+    and remove each by name, as its own `compose_volume` item in `removed` (or
+    `would_remove` with `--dry-run`). A volume without that label never reaches a removal
+    command. External volumes are never removed (FR-039).
+  - Reporting: before `docker compose down`, run `docker inspect` on the project's
+    containers (found by the label) and collect the volumes they mount. Every mounted
+    volume that does not carry the project label (anonymous or external) is reported in
+    `kept_volumes` (`DownResult`, and `GcResult` through `gc`) as a `KeptVolume` with
+    `name`, `project` the recorded project name, and `reason` `unlabelled`, once per volume
+    and in name order. The same inspection runs for `--dry-run`. If Docker cannot be asked,
+    the item is `failed` as for the other listings.
+  - Known limit (cli.md, `wtenv down`): an anonymous volume of a removed project stays on
+    disk. docs/roadmap.md has an entry for an opt-in cleanup.
+
 - [ ] T164 Add a failing Docker-backed test for a compose project that already exists to `tests/integration/test_us3_compose.py`
   - LOW-4, FR-024, FR-039: containers started with `docker compose -p <generated name>
     up -d` before the first `up` → `up` exits 11, `ownership_conflict`, `details.kind`
@@ -1501,7 +1520,7 @@ accepted both on 2026-10-05.
 | R3 | FR-073 refuses `gc --release` "at which a worktree still exists" | A directory whose `.git` file points to a git directory that no longer exists is not a worktree, so `--release` can release it | T106, T110 | cli.md, `wtenv gc` |
 | R4 | files.md: install into an existing "POSIX shell" hook | A shebang naming `sh`, `bash`, `dash`, or `ksh` counts; anything else, or no shebang, is `hook_not_shell` | T116, T117 | files.md, Git hook block |
 | R5 | FR-073, for a worktree at the path whose git directory is not the entry's (the repository was moved and repaired, or another worktree took the path) | The converse of R3: a directory whose `.git` names a git directory that exists is a worktree, whatever the entry records, so `--release` refuses it | T149, T150 | cli.md, `wtenv gc` |
-| R6 | FR-041, for anonymous volumes that `compose down --volumes` removes without a project label (review LOW-4) | **Accepted.** `down` and `gc` stop passing `--volumes` to `docker compose down`. wtenv lists volumes labelled `com.docker.compose.project=<recorded project name>`, removes each by name, and reports each as its own item in `removed` and in `--dry-run`. A volume without the label is never removed and is reported in `kept_volumes` (a `KeptVolume` with reason `unlabelled`) on `DownResult` and `GcResult`; `kept` is unchanged | T172, T173, T162, T163 | cli.md, `wtenv down` |
+| R6 | FR-041, for anonymous volumes that `compose down --volumes` removes without a project label (review LOW-4) | **Accepted; amended 2026-10-05 after a probe (Docker 29.5.3, Compose 5.1.4): only named volumes carry `com.docker.compose.project`, anonymous and external volumes do not.** `down` and `gc` stop passing `--volumes` to `docker compose down`. wtenv lists volumes labelled `com.docker.compose.project=<recorded project name>`, removes each by name, and reports each as its own item in `removed` and in `--dry-run`. A volume without the label is never removed. Before `docker compose down` (and for `--dry-run`), wtenv inspects the project's containers' mounts; every mounted volume lacking the project label, anonymous or external, is reported in `kept_volumes` (a `KeptVolume` with `project` the recorded name and reason `unlabelled`) on `DownResult` and `GcResult`; `kept` is unchanged. Known limit: anonymous volumes of removed projects stay on disk (docs/roadmap.md) | T172, T173, T162, T163 | cli.md, `wtenv down` |
 | R7 | FR-073 and FR-074, for a `--release` entry whose worktree appears after step 1 (review LOW-7) | **Accepted.** `gc --release` re-checks that the worktree is still gone immediately before each delete. If it has reappeared, it stops that entry with `worktree_exists`, exit 18 | T170, T171 | cli.md, `wtenv gc` |
 
 ---

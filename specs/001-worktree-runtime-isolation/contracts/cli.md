@@ -180,12 +180,26 @@ Releases everything the registry records for the current worktree (FR-038).
 |--------|--------|
 | `--dry-run` | Changes nothing, takes no worktree lock, and lists what `down` would remove (FR-040). An item that cannot be checked because Postgres or Docker cannot be reached is listed under `failed`, with a `reason` naming the dependency, not under `would_remove`; the exit status stays 0 |
 
-**Order of work**: compose project (containers, networks, volumes, then the override file;
-`docker compose down` is run without `--volumes`, and wtenv removes each volume labelled
-`com.docker.compose.project=<recorded project name>` by name, as its own item in `removed`
-or, with `--dry-run`, `would_remove`; a volume without that label is never removed and is
-reported in `kept_volumes` with `reason` `unlabelled`, with or without `--dry-run`);
-databases; wtenv's section of the env file (and the file itself when wtenv created it and
+**Order of work**: compose project (containers, networks, volumes, then the override file).
+`docker compose down` is run without `--volumes`. Docker gives the project label
+`com.docker.compose.project` only to named volumes; an anonymous volume and an external
+volume carry none. So, before `docker compose down`, wtenv runs `docker inspect` on the
+project's containers (found by the label) and collects the volumes they mount. Then:
+
+- each volume labelled `com.docker.compose.project=<recorded project name>` is removed by
+  name, as its own item in `removed` or, with `--dry-run`, `would_remove`;
+- each mounted volume without that label, anonymous or external, is never removed and
+  never named in a removal command. It is reported in `kept_volumes` with `name`, `project`
+  (the recorded project name), and `reason` `unlabelled`, with or without `--dry-run`. The
+  inspection runs for `--dry-run` too, and changes nothing. A project with no container
+  left has nothing to inspect, so no volume is reported for it.
+
+**Known limit**: an anonymous volume of a removed project stays on disk, listed in
+`kept_volumes`, because nothing but the container's mount ties it to the project. Remove it
+yourself with `docker volume rm NAME` once you are sure it holds nothing you need. An opt-in
+cleanup is on the roadmap (docs/roadmap.md).
+
+After that: databases; wtenv's section of the env file (and the file itself when wtenv created it and
 nothing else is in it); registry entry and port block; and, when this was the last
 registered worktree of the repository, wtenv's entries in `.git/info/exclude` (FR-085).
 

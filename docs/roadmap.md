@@ -70,3 +70,12 @@ Its findings that could remove something unrecorded or hide an error became task
 | Idea | Why it is not in v1 |
 |------|---------------------|
 | **`gc --dry-run` showing which entries a real run would skip as busy** (review LOW-3). Today a dry run lists an entry under `would_release` even when its worktree lock is held, and the real run then reports it under `skipped_busy`. At least, say so in cli.md. | A dry run may not take a worktree lock (FR-076). The difference only ever makes the real run release less than the dry run listed, never more, and `skipped_busy` is not a failure (FR-077). |
+
+## From reading R6 (2026-10-05)
+
+Source: the probe behind the R6 amendment (`specs/001-worktree-runtime-isolation/tasks.md`,
+Readings table; T162, T163).
+
+| Idea | Why it is not in v1 |
+|------|---------------------|
+| **Opt-in cleanup of anonymous volumes of removed projects** (R6, 2026-10-05), for example `down --anonymous-volumes`. Anonymous volumes carry no compose label (probe on Docker 29.5.3, Compose 5.1.4), so `down` and `gc` keep them and list them in `kept_volumes`. The option would remove those that only the removed project's containers mounted, and only with `--dry-run` available. | Nothing but the container's mount ties an anonymous volume to a project, and a volume can hold data the developer wants (Principle II), so v1 never removes one. |
