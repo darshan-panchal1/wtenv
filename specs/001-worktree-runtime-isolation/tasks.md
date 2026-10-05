@@ -64,7 +64,7 @@ worktrees or needs Docker carries `pytestmark = pytest.mark.integration`),
 
 **Purpose**: an installable, empty `wtenv` package on which all five gates pass.
 
-- [ ] T001 Create `pyproject.toml` (build, metadata, dependencies, console script) and `.python-version`
+- [X] T001 Create `pyproject.toml` (build, metadata, dependencies, console script) and `.python-version`
   - `[build-system]` hatchling. `[project]`: `name = "wtenv"`, `requires-python = ">=3.11"`,
     `dynamic = ["version"]` with `[tool.hatch.version] path = "src/wtenv/__init__.py"`.
   - Runtime dependencies, exactly these five (plan.md, Build): `typer>=0.27,<1`,
@@ -73,7 +73,7 @@ worktrees or needs Docker carries `pytestmark = pytest.mark.integration`),
   - `[dependency-groups] dev`: `pytest`, `pytest-cov`, `ruff`, `mypy`, `testcontainers`.
   - `[project.scripts] wtenv = "wtenv.cli:main"`. `.python-version` holds `3.12`.
   - No `readme` key yet; T145 adds it with the README.
-- [ ] T002 Add tool settings to `pyproject.toml`: mypy, ruff, pytest, coverage
+- [X] T002 Add tool settings to `pyproject.toml`: mypy, ruff, pytest, coverage
   - `[tool.mypy]`: `strict = true`, `python_version = "3.11"`, `plugins = ["pydantic.mypy"]`.
   - `[tool.ruff]`: `line-length = 100`, `target-version = "py311"`.
   - `[tool.pytest.ini_options]`: `testpaths = ["tests"]`, `addopts = "--strict-markers"`,
@@ -81,8 +81,8 @@ worktrees or needs Docker carries `pytestmark = pytest.mark.integration`),
   - `[tool.coverage.run]`: `source = ["wtenv"]`, `patch = ["subprocess", "execv"]`, so that
     `wtenv` processes started by tests are measured (pytest-cov 7 no longer does this; the
     `subprocess` patch turns on `parallel`).
-- [ ] T003 [P] Create `src/wtenv/__init__.py` with a module docstring and `__version__ = "0.1.0"`, the single source of the version
-- [ ] T004 [P] Create shared test fixtures in `tests/conftest.py`
+- [X] T003 [P] Create `src/wtenv/__init__.py` with a module docstring and `__version__ = "0.1.0"`, the single source of the version
+- [X] T004 [P] Create shared test fixtures in `tests/conftest.py`
   - `state_home` (autouse): `XDG_STATE_HOME` points at a temporary directory for the test
     and every process it starts, so no test touches the developer's registry (research.md §7).
   - Git setup for every test: fixed author and committer identity; `GIT_CONFIG_GLOBAL` and
@@ -96,12 +96,12 @@ worktrees or needs Docker carries `pytestmark = pytest.mark.integration`),
     the test (FR-004).
   - `docker` (session): runs `docker info` once; a test that requests it is skipped with the
     message `Docker is not available` when that fails (constitution, Technical Constraints).
-- [ ] T005 Add one smoke test per pytest gate in `tests/unit/test_package.py` and `tests/integration/test_git_worktrees.py`
+- [X] T005 Add one smoke test per pytest gate in `tests/unit/test_package.py` and `tests/integration/test_git_worktrees.py`
   - Unit: `wtenv.__version__` is a non-empty string.
   - Integration (`pytestmark = pytest.mark.integration`): `make_repo` and `add_worktree`
     give a main and a linked worktree that `git worktree list --porcelain` reports.
   - Each pytest gate needs at least one test: with none collected, pytest exits 5.
-- [ ] T006 Run `uv sync` and make all five gates exit 0 on the empty package; keep `uv.lock` tracked
+- [X] T006 Run `uv sync` and make all five gates exit 0 on the empty package; keep `uv.lock` tracked
   - `ruff` also reads `contracts/json_models.py`; it passes as it is today. Do not edit it.
 
 **Checkpoint**: `uv sync` works and the five gates exit 0.
