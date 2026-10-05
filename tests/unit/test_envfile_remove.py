@@ -231,3 +231,49 @@ def test_duplicates_in_a_file_with_damaged_markers_fail(tmp_path: Path) -> None:
         find_duplicates(path, ["PORT"])
 
     assert caught.value.details["reason"] == "markers_damaged"
+
+
+# --- listing only (FR-040): the same answer, and nothing written ------------------------
+
+
+def test_listing_only_returns_what_a_removal_would_do_and_changes_nothing(tmp_path: Path) -> None:
+    path = tmp_path / ".env.local"
+    path.write_bytes(f"A=1\n{BEGIN}\nPORT=1\n{END}\nC=3\n".encode())
+    before = path.read_bytes()
+
+    planned = remove_section(path, dry_run=True)
+
+    assert path.read_bytes() == before
+    assert remove_section(path) == planned
+    assert (planned.removed, planned.deleted_file) == (True, False)
+
+
+def test_listing_only_says_that_a_file_wtenv_created_would_be_deleted(tmp_path: Path) -> None:
+    path = tmp_path / ".env.local"
+    write_section(path, PORTS)
+
+    planned = remove_section(path, created_file=True, dry_run=True)
+
+    assert path.exists()
+    assert (planned.removed, planned.deleted_file) == (True, True)
+
+
+def test_listing_only_for_a_missing_file_or_section_is_already_absent(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.env"
+    plain = tmp_path / ".env.local"
+    plain.write_bytes(b"A=1\n")
+
+    for path in (missing, plain):
+        planned = remove_section(path, dry_run=True)
+        assert (planned.removed, planned.deleted_file) == (False, False)
+
+
+def test_listing_only_still_refuses_damaged_markers(tmp_path: Path) -> None:
+    path = tmp_path / ".env.local"
+    path.write_bytes(f"A=1\n{BEGIN}\nPORT=1\n".encode())
+
+    with pytest.raises(WtenvError) as caught:
+        remove_section(path, dry_run=True)
+
+    assert caught.value.code is ErrorCode.ENV_FILE_UNUSABLE
+    assert caught.value.details["reason"] == "markers_damaged"

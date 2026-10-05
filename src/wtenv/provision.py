@@ -654,7 +654,10 @@ def _postgres_step(template: str, plan: _DatabasePlan, entry: WorktreeEntry) -> 
     state = database.inspect_postgres(target, template=template, name=name)
     if record is not None:
         if state.database_exists:
-            # An interrupted run made it: the record was written before the server was asked.
+            if record.state is ResourceState.REMOVING and state.database_invalid:
+                raise _interrupted_removal(name)
+            # An interrupted run made it (or an interrupted `down` left it whole): the record was
+            # written before the server was asked.
             _set_database_state(entry.git_dir, "postgres", ResourceState.CREATED)
             return [UpChange(item=item, action="created")]
     else:
@@ -679,6 +682,20 @@ def _postgres_step(template: str, plan: _DatabasePlan, entry: WorktreeEntry) -> 
         raise
     _set_database_state(entry.git_dir, "postgres", ResourceState.CREATED)
     return [UpChange(item=item, action="created")]
+
+
+def _interrupted_removal(name: str) -> WtenvError:
+    """Build `unsupported` (`interrupted_removal`) for a database an interrupted drop half removed.
+
+    The server marks such a database invalid and it cannot be used again; only `down` can finish
+    removing it (data-model.md, Resource states).
+    """
+    return WtenvError(
+        ErrorCode.UNSUPPORTED,
+        f"the database {name} was half removed by an interrupted `wtenv down`, and cannot be used",
+        hint="Run `wtenv down` to finish removing it, then run `wtenv up` again.",
+        details={"reason": "interrupted_removal", "name": name},
+    )
 
 
 def _save_database_record(git_dir: str, record: DatabaseRecord) -> None:

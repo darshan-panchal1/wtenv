@@ -263,3 +263,25 @@ def test_removing_with_damaged_markers_is_unsupported_and_changes_nothing(tmp_pa
     assert caught.value.code is ErrorCode.UNSUPPORTED
     assert caught.value.details["reason"] == "markers_damaged"
     assert path.read_text(encoding="utf-8") == f"*.log\n{BEGIN}\n/a\n"
+
+
+# --- listing only (FR-040) ---------------------------------------------------------------
+
+
+def test_listing_only_says_whether_a_block_is_there_and_changes_nothing(tmp_path: Path) -> None:
+    path = exclude_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(("# mine\n" + block("/.env.local")).encode())
+    before = path.read_bytes()
+
+    assert remove_block(path, dry_run=True) is True
+    assert path.read_bytes() == before
+    assert remove_block(path) is True
+
+
+def test_listing_only_without_a_block_or_a_file_is_false(tmp_path: Path) -> None:
+    path = exclude_path(tmp_path)
+    assert remove_block(path, dry_run=True) is False
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"# mine\n")
+    assert remove_block(path, dry_run=True) is False

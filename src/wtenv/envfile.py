@@ -129,7 +129,7 @@ def read_section(path: Path) -> list[tuple[str, str]]:
 
 
 def remove_section(
-    path: Path, *, created_file: bool = False, added_newline: bool = False
+    path: Path, *, created_file: bool = False, added_newline: bool = False, dry_run: bool = False
 ) -> SectionRemoval:
     """Remove wtenv's section, both markers included, and nothing else (FR-079).
 
@@ -137,7 +137,8 @@ def remove_section(
     again when the section is the last thing in the file. A file that wtenv created
     (`created_file`) and that holds nothing else afterwards is deleted (FR-038). A missing file
     or a file without a section is already absent, not an error (FR-042). Damaged markers raise
-    `env_file_unusable` and leave the file as it is (FR-081).
+    `env_file_unusable` and leave the file as it is (FR-081). With `dry_run` nothing is written or
+    deleted, and the answer is the one a real removal would give (FR-040).
     """
     content = _read(path)
     if content is None:
@@ -152,11 +153,13 @@ def remove_section(
     if added_newline and not after and before.endswith(b"\n"):
         before = before.removesuffix(b"\n")
     remaining = before + after
-    if created_file and not remaining.strip():
-        os.unlink(path)
-        return SectionRemoval(removed=True, deleted_file=True)
-    write_atomic(path, remaining, stat.S_IMODE(os.stat(path).st_mode))
-    return SectionRemoval(removed=True, deleted_file=False)
+    delete = created_file and not remaining.strip()
+    if not dry_run:
+        if delete:
+            os.unlink(path)
+        else:
+            write_atomic(path, remaining, stat.S_IMODE(os.stat(path).st_mode))
+    return SectionRemoval(removed=True, deleted_file=delete)
 
 
 def find_duplicates(path: Path, names: Sequence[str]) -> list[str]:

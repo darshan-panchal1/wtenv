@@ -388,6 +388,31 @@ def render_up_text(result: UpResult) -> str:
     return "\n".join(lines)
 
 
+def render_down_text(result: DownResult) -> str:
+    """Return the text `wtenv down` prints for people (cli.md, `wtenv down`; not a stable interface).
+
+    A header, then one line per item: what was removed (or, with `--dry-run`, would be), what was
+    already absent, and what could not be removed, with the reason. Nothing to release prints one
+    line saying so. No line holds a credential (FR-019).
+    """
+    if result.worktree_path is None:
+        return ""
+    items = result.would_remove if result.dry_run else result.removed
+    if not (items or result.already_absent or result.failed):
+        return f"wtenv: nothing to release for {result.worktree_path}"
+    header = "dry run, nothing changed" if result.dry_run else "released"
+    lines = [f"wtenv: {header} for {result.worktree_path}"]
+    label = "would remove" if result.dry_run else "removed"
+    lines += [f"  {label:<13}{item.kind.value} {item.name}" for item in items]
+    lines += [
+        f"  {'already gone':<13}{item.kind.value} {item.name}" for item in result.already_absent
+    ]
+    lines += [
+        f"  {'FAILED':<13}{item.kind.value} {item.name}: {item.reason}" for item in result.failed
+    ]
+    return "\n".join(lines)
+
+
 def _published_text(port: PortView) -> str:
     """Return `service:target -> port (VARIABLE)`; a port that is not tcp shows `/protocol`."""
     protocol = "" if port.protocol in (None, "tcp") else f"/{port.protocol}"

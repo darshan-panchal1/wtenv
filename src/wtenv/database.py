@@ -287,6 +287,8 @@ class PostgresState:
     template_exists: bool
     template_connections: int  # other sessions connected to the template now
     database_exists: bool  # a database with the target name
+    # The server marks it invalid: a `DROP DATABASE` that was interrupted (`datconnlimit = -2`).
+    database_invalid: bool = False
 
 
 def _unavailable(reason: str, message: str, **details: str) -> WtenvError:
@@ -453,6 +455,14 @@ def _exists(connection: "psycopg.Connection[tuple[object, ...]]", name: str) -> 
     return row.fetchone() is not None
 
 
+def _is_invalid(connection: "psycopg.Connection[tuple[object, ...]]", name: str) -> bool:
+    """Return whether the server marks database `name` invalid, as it does after an interrupted drop."""
+    row = connection.execute(
+        "SELECT datconnlimit = -2 FROM pg_database WHERE datname = %s", [name]
+    ).fetchone()
+    return row is not None and bool(row[0])
+
+
 def _raise_mapped(
     error: Exception, target: PostgresTarget, template: str, name: str, connections: int | None
 ) -> NoReturn:
@@ -478,12 +488,14 @@ def inspect_postgres(target: PostgresTarget, *, template: str, name: str) -> Pos
         with _connect(target) as connection:
             check_postgres_version(connection.info.server_version, target)
             template_exists = _exists(connection, template)
+            database_exists = _exists(connection, name)
             return PostgresState(
                 template_exists=template_exists,
                 template_connections=_count_sessions(connection, template)
                 if template_exists
                 else 0,
-                database_exists=_exists(connection, name),
+                database_exists=database_exists,
+                database_invalid=database_exists and _is_invalid(connection, name),
             )
     except psycopg.Error as error:
         _raise_mapped(error, target, template, name, None)

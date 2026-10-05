@@ -64,11 +64,12 @@ def add_patterns(path: Path, patterns: Iterable[str]) -> bool:
     return True
 
 
-def remove_block(path: Path) -> bool:
+def remove_block(path: Path, *, dry_run: bool = False) -> bool:
     """Remove the wtenv block, markers included, and nothing else; return whether one was there.
 
     A missing file or a file without a block is not an error (FR-085). Raises `unsupported`
-    (reason `markers_damaged`) when the markers are damaged; the file is left as it is.
+    (reason `markers_damaged`) when the markers are damaged; the file is left as it is. With
+    `dry_run` nothing is written, and the answer is the one a real removal would give (FR-040).
     """
     try:
         content = path.read_bytes()
@@ -79,9 +80,10 @@ def remove_block(path: Path) -> bool:
     if located is None:
         return False
     begin, end = located
-    write_atomic(
-        path, b"".join(lines[:begin] + lines[end + 1 :]), stat.S_IMODE(os.stat(path).st_mode)
-    )
+    if not dry_run:
+        write_atomic(
+            path, b"".join(lines[:begin] + lines[end + 1 :]), stat.S_IMODE(os.stat(path).st_mode)
+        )
     return True
 
 

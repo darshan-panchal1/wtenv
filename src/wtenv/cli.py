@@ -70,6 +70,39 @@ def up(
     print_result(result, json_mode=json_output, text=render_up_text(result))
 
 
+@app.command()
+def down(
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Change nothing; list what `down` would remove."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Print one JSON document."),
+) -> None:
+    """Release everything wtenv recorded for the current worktree."""
+    from wtenv.output import (
+        DownResult,
+        failed_result,
+        print_error,
+        print_result,
+        print_warnings,
+        render_down_text,
+    )
+    from wtenv.teardown import down as release_worktree
+
+    try:
+        result = release_worktree(dry_run=dry_run)
+    except WtenvError as error:
+        print_error(error)
+        print_result(failed_result(DownResult, error), json_mode=json_output)
+        raise typer.Exit(EXIT_STATUS[error.code]) from error
+    print_warnings(result.warnings)
+    if result.error is not None:
+        # Some items could not be removed: the document still lists everything that happened.
+        print_error(WtenvError(result.error.code, result.error.message, hint=result.error.hint))
+    print_result(result, json_mode=json_output, text=render_down_text(result))
+    if result.error is not None:
+        raise typer.Exit(result.error.exit_status)
+
+
 def _print_version(json_mode: bool) -> None:
     """Print `wtenv <version>`, or a `VersionResult` document with `--json`."""
     if json_mode:

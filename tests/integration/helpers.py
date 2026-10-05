@@ -10,7 +10,7 @@ from pathlib import Path
 
 import psycopg
 
-from wtenv.output import UpResult
+from wtenv.output import DownResult, Item, UpResult
 
 TEMPLATE_DATABASE = "wtenv_test_template"
 TEMPLATE_ROWS = [(1, "first"), (2, "second")]
@@ -35,6 +35,17 @@ def parse_up(process: subprocess.CompletedProcess[str]) -> UpResult:
     """Return the `UpResult` that `wtenv up --json` printed; standard output is one document."""
     assert len(process.stdout.splitlines()) == 1, process.stdout
     return UpResult.model_validate_json(process.stdout)
+
+
+def parse_down(process: subprocess.CompletedProcess[str]) -> DownResult:
+    """Return the `DownResult` that `wtenv down --json` printed; standard output is one document."""
+    assert len(process.stdout.splitlines()) == 1, process.stdout
+    return DownResult.model_validate_json(process.stdout)
+
+
+def keys(items: list[Item]) -> list[tuple[str, str]]:
+    """Return `(kind, name)` of each item, so a test can compare lists of items briefly."""
+    return [(item.kind.value, item.name) for item in items]
 
 
 def exclude_file(repository: Path) -> Path:

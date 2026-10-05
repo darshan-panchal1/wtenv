@@ -815,7 +815,7 @@ T104–T108, and T112.
 
 ### 6D. `wtenv down` (`teardown.py`, `provision.py`, `cli.py`, `output.py`)
 
-- [ ] T092 [P] [US4] Write failing integration tests for basic `down` and `--dry-run` in `tests/integration/test_us4_lifecycle.py`
+- [X] T092 [P] [US4] Write failing integration tests for basic `down` and `--dry-run` in `tests/integration/test_us4_lifecycle.py`
   - Scenario 1 (FR-038, FR-041): `down` removes wtenv's section (and the env file when wtenv
     created it and nothing else is in it), releases the block, removes the entry, and lists
     each item under `removed`.
@@ -825,29 +825,29 @@ T104–T108, and T112.
     `down` twice is harmless. From a subdirectory works; outside a worktree → exit 4 (FR-002).
   - FR-079: the line break wtenv added is removed; the developer's lines match the bytes
     before the first `up`. `DownResult` validates with `worktree_path` set.
-- [ ] T093 [US4] Add failing tests for `down` errors and partial failure to `tests/integration/test_us4_lifecycle.py`
+- [X] T093 [US4] Add failing tests for `down` errors and partial failure to `tests/integration/test_us4_lifecycle.py`
   - FR-044: `down` works with no `wtenv.toml`; an invalid one gives warning
     `config_ignored`; an env file deleted by hand is under `already_absent` (FR-042).
   - FR-081: damaged markers → section under `failed`, file unchanged, entry `incomplete`,
     exit 13; after repair, `down` finishes (FR-042).
-- [ ] T094 [US4] Add failing tests for `down` with the exclude block and a moved worktree to `tests/integration/test_us4_lifecycle.py`
+- [X] T094 [US4] Add failing tests for `down` with the exclude block and a moved worktree to `tests/integration/test_us4_lifecycle.py`
   - FR-085: with two worktrees of one repository, the first `down` keeps the exclude block,
     the second removes it, markers included, keeping the developer's lines.
   - FR-084: `down` after `git worktree move` releases, records the new location, and warns
     `worktree_moved` (cli.md, `wtenv down`, Warnings).
-- [ ] T095 [US4] Add failing tests for `down` with SQLite side files to `tests/integration/test_us4_lifecycle.py`
+- [X] T095 [US4] Add failing tests for `down` with SQLite side files to `tests/integration/test_us4_lifecycle.py`
   - FR-039: with `-wal`, `-shm`, and `-journal` beside the recorded copy,
     `down --dry-run --json` lists the copy and each side file as separate `would_remove`
     items (`kind` `sqlite_file`, `name` the absolute path) and deletes nothing; `down --json`
     lists the same items under `removed` and they are gone; a missing side file is not
     listed. US2 scenario 5 for SQLite: the template and another worktree's copy are unchanged.
-- [ ] T096 [P] [US4] Write failing decoy tests for `down` in `tests/integration/test_safety_decoys.py`
+- [X] T096 [P] [US4] Write failing decoy tests for `down` in `tests/integration/test_safety_decoys.py`
   - SC-007, FR-039: an unrecorded `<worktree>/.wtenv/decoy.sqlite3` with `-wal` and
     `-journal` files, and a wtenv-marked section in a file that is not the recorded env file,
     are still there after `down`.
   - With `docker`: database `wtenv_decoy_00000000`, a volume and a container labelled
     `com.docker.compose.project=wtenv-decoy-00000000` survive `down`.
-- [ ] T097 [US4] Add failing Docker-backed `down` tests to `tests/integration/test_us4_lifecycle.py`
+- [X] T097 [US4] Add failing Docker-backed `down` tests to `tests/integration/test_us4_lifecycle.py`
   - US2 scenario 5 (Postgres): `down` drops the worktree's database, also while a session is
     connected to it (spec Edge Cases), and leaves the template and other databases.
   - No password available (none in `wtenv.toml`, no `PGPASSWORD`) → database under `failed`,
@@ -855,7 +855,7 @@ T104–T108, and T112.
   - Compose: after `docker compose up -d`, `down` removes the project's containers, networks,
     named volumes, and the override, listing each; an `external` volume is kept.
   - Items come out in the order of cli.md, `wtenv down`.
-- [ ] T098 [US4] Add failing recovery tests for `down` to `tests/integration/test_recovery.py`
+- [X] T098 [US4] Add failing recovery tests for `down` to `tests/integration/test_recovery.py`
   - `down` interrupted (as in T041) after a resource is marked `removing` and before it is
     removed, and after it is removed and before its record is dropped: `down` again finishes
     and reports what was gone under `already_absent` (FR-069).
@@ -865,16 +865,16 @@ T104–T108, and T112.
   - With Postgres: a database the server marks invalid (simulate with
     `UPDATE pg_database SET datconnlimit = -2`, PostgreSQL's mark for an interrupted drop)
     → `up` exits 19, reason `interrupted_removal`, hint naming `wtenv down`.
-- [ ] T099 [US4] Add a failing test for `up` and `down` at once to `tests/integration/test_concurrency.py`
+- [X] T099 [US4] Add a failing test for `up` and `down` at once to `tests/integration/test_concurrency.py`
   - Both started together in one worktree run one after the other; the end state is that of
     the two in lock order (spec Edge Cases).
-- [ ] T100 [US4] Implement the release plan in `src/wtenv/teardown.py`
+- [X] T100 [US4] Implement the release plan in `src/wtenv/teardown.py`
   - From the entry alone (FR-044), the items a release would remove, in cli.md's order:
     compose containers, networks, volumes, the override; databases (a SQLite copy followed
     by its existing side files); the env section (and the file when it would be deleted);
     the port block; the registry entry; the exclude entries when this is the repository's
     last entry (FR-085). This is the `--dry-run` output; no worktree lock, no change.
-- [ ] T101 [US4] Implement releasing one entry in `src/wtenv/teardown.py`
+- [X] T101 [US4] Implement releasing one entry in `src/wtenv/teardown.py`
   - Per resource: mark it `removing`, remove it, drop its record; the registry lock only for
     those short updates (FR-068).
   - Each item ends `removed`, `already_absent`, or `failed` with a reason (FR-041). Failed
@@ -882,11 +882,11 @@ T104–T108, and T112.
   - When nothing is left: delete the entry and its block in one transaction, and remove the
     exclude block if no other entry of that repository remains (FR-085). Shared by `down`
     and `gc`; removes only what the entry records (FR-039).
-- [ ] T102 [US4] Handle resources recorded as `removing` in `up` in `src/wtenv/provision.py`
+- [X] T102 [US4] Handle resources recorded as `removing` in `up` in `src/wtenv/provision.py`
   - data-model.md, Resource states, column "Next `up`": still there and usable → keep, mark
     `created`; gone → create again; an invalid Postgres database → `unsupported`, reason
     `interrupted_removal`.
-- [ ] T103 [US4] Add `wtenv down [--dry-run] [--json]` to `src/wtenv/cli.py` and its text output to `src/wtenv/output.py`
+- [X] T103 [US4] Add `wtenv down [--dry-run] [--json]` to `src/wtenv/cli.py` and its text output to `src/wtenv/output.py`
   - Identify the worktree; without `--dry-run` take the worktree lock (60 s); record a new
     location and warn `worktree_moved` if it moved (FR-084); release. No entry → exit 0,
     nothing removed (FR-043). Exit statuses 0, 4, 13, 14, 15, 16.
