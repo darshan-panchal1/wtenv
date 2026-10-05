@@ -117,7 +117,7 @@ identity, the registry and its locks, and the CLI shell with a lazy-import `--ve
 
 ### 2A. Error codes and exit statuses (`errors.py`)
 
-- [ ] T007 [P] Write failing tests for the error-code table in `tests/unit/test_errors.py`
+- [X] T007 [P] Write failing tests for the error-code table in `tests/unit/test_errors.py`
   - The 19 codes and their statuses exactly as cli.md, "Error codes and exit statuses":
     1 `internal_error`, 2 `usage_error`, 3 `config_invalid`, 4 `not_in_worktree`,
     5 `not_provisioned`, 6 `no_free_block`, 7 `env_file_unusable`, 8 `dependency_unavailable`,
@@ -129,7 +129,7 @@ identity, the registry and its locks, and the CLI shell with a lazy-import `--ve
   - `WtenvError` carries `code`, `message`, `hint`, and `details`.
   - A fresh interpreter that imports `wtenv.errors` has imported nothing outside the standard
     library.
-- [ ] T008 Implement `ErrorCode`, `EXIT_STATUS`, `EXIT_SUCCESS`, the three `exec` statuses, and `WtenvError` in `src/wtenv/errors.py`
+- [X] T008 Implement `ErrorCode`, `EXIT_STATUS`, `EXIT_SUCCESS`, the three `exec` statuses, and `WtenvError` in `src/wtenv/errors.py`
   - Standard library only (plan.md, Project Structure); names and values as in `json_models.py`.
 
 ### 2B. The `--json` models and output (`output.py`)
