@@ -294,7 +294,7 @@ byte-identical. Automated by T039–T043; manual by quickstart.md sections 1 and
 
 ### 3A. Configuration: `ports`, `block_size`, `env_file` (`config.py`) — core area 4
 
-- [ ] T027 [P] [US1] Write failing tests for configuration loading in `tests/unit/test_config.py`
+- [X] T027 [P] [US1] Write failing tests for configuration loading in `tests/unit/test_config.py`
   - No `wtenv.toml`: `ports = ["PORT"]`, `block_size = 10`, `env_file = ".env.local"` (FR-005, FR-063).
   - `ports` (config.md): "At least one name. Names are unique and match
     `[A-Za-z_][A-Za-z0-9_]*`. `DATABASE_URL` is not allowed."
@@ -302,7 +302,7 @@ byte-identical. Automated by T039–T043; manual by quickstart.md sections 1 and
   - `env_file`: "A relative path inside the worktree; `..` may not leave the worktree."
   - An unknown key, a wrong type, or invalid TOML → `config_invalid` with `details.file`
     and `details.setting` (dotted name); nothing is read further (FR-064).
-- [ ] T028 [US1] Implement `Config` and loading of `ports`, `block_size`, and `env_file` in `src/wtenv/config.py`
+- [X] T028 [US1] Implement `Config` and loading of `ports`, `block_size`, and `env_file` in `src/wtenv/config.py`
   - `tomllib` and a pydantic model with `extra="forbid"`; validation errors become
     `config_invalid` naming the setting. The file is read from the worktree root (FR-062).
 
