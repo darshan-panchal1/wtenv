@@ -533,11 +533,11 @@ T059–T060, T062, T063, and T067. US2 scenario 5 (`down` removes only this data
 
 ### 4D. Creating Postgres databases (`database.py`) — core area 5
 
-- [ ] T057 [P] [US2] Add the `postgres_server` fixture to `tests/integration/conftest.py`
+- [X] T057 [P] [US2] Add the `postgres_server` fixture to `tests/integration/conftest.py`
   - Session scope; requests `docker`; starts `postgres:17` with testcontainers, published on
     `127.0.0.1`; creates a template database with one small table; yields host, port, user,
     and password.
-- [ ] T058 [P] [US2] Write failing tests for Postgres error mapping in `tests/unit/test_database_postgres_errors.py`
+- [X] T058 [P] [US2] Write failing tests for Postgres error mapping in `tests/unit/test_database_postgres_errors.py`
   - research.md §3 table: `55006` → `template_in_use`; `3D000` → `template_missing`;
     `42P04` → `ownership_conflict`; cannot connect, authentication failure, `42501`, or a
     server older than 13 → `dependency_unavailable`, `details.dependency` `postgres`,
@@ -560,7 +560,7 @@ T059–T060, T062, T063, and T067. US2 scenario 5 (`down` removes only this data
     closes, `up` completes.
   - A host other than `localhost`, `127.0.0.1`, or `[::1]` → exit 3 before any connection
     (FR-025).
-- [ ] T061 [US2] Implement the Postgres connection and `CREATE DATABASE … TEMPLATE` in `src/wtenv/database.py`
+- [X] T061 [US2] Implement the Postgres connection and `CREATE DATABASE … TEMPLATE` in `src/wtenv/database.py`
   - One autocommit connection to the `postgres` maintenance database, never to the template
     (research.md §3). `psycopg` imported inside the functions.
   - Before `CREATE DATABASE <name> TEMPLATE <template>` (no `STRATEGY`): count other sessions

@@ -13,11 +13,15 @@ import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, NoReturn
 from urllib.parse import unquote, urlsplit
 
 from wtenv.config import ENV_PLACEHOLDER, LOCAL_HOSTS, PLACEHOLDER
 from wtenv.errors import ErrorCode, JsonValue, WtenvError
 from wtenv.identity import short_id, slug
+
+if TYPE_CHECKING:
+    import psycopg
 
 SQLITE_DIR = ".wtenv"  # in the worktree root; the copies live here (files.md, Names)
 POSTGRES_DEFAULT_PORT = 5432
@@ -210,3 +214,233 @@ def create_sqlite_copy(template: Path, target: Path) -> None:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(temporary)
         raise
+
+
+# --- Postgres (FR-020, FR-025, FR-082; research.md section 3) ----------------------------------
+
+MIN_POSTGRES_VERSION = 13  # `DROP DATABASE … WITH (FORCE)` needs it (research.md section 3)
+_CONNECT_TIMEOUT_SECONDS = 5
+
+
+@dataclass(frozen=True)
+class PostgresState:
+    """What the server holds that matters to creating a worktree's database."""
+
+    template_exists: bool
+    template_connections: int  # other sessions connected to the template now
+    database_exists: bool  # a database with the target name
+
+
+def _unavailable(reason: str, message: str, **details: str) -> WtenvError:
+    """Build `dependency_unavailable` for the Postgres server."""
+    return WtenvError(
+        ErrorCode.DEPENDENCY_UNAVAILABLE,
+        message,
+        hint="Start or fix the Postgres server, then run `wtenv up` again.",
+        details={"dependency": "postgres", "reason": reason, **details},
+    )
+
+
+def _server_text(target: PostgresTarget) -> str:
+    """Name the server in a message: host, port, and user, never the password."""
+    user = "" if target.user is None else f" as {target.user}"
+    return f"{target.host}:{target.port}{user}"
+
+
+def check_postgres_version(version: int, target: PostgresTarget) -> None:
+    """Raise `dependency_unavailable` (`too_old`) unless the server is version 13 or later.
+
+    `version` is the number the server reports, for example `170011` for 17.11 and `120004`
+    for 12.4.
+    """
+    major, minor = divmod(version, 10000)
+    if major < MIN_POSTGRES_VERSION:
+        raise _unavailable(
+            "too_old",
+            f"the Postgres server at {_server_text(target)} is version {major}.{minor}; "
+            f"wtenv needs {MIN_POSTGRES_VERSION} or later",
+            required=str(MIN_POSTGRES_VERSION),
+            found=f"{major}.{minor}",
+        )
+
+
+def map_postgres_error(
+    error: Exception,
+    *,
+    target: PostgresTarget,
+    template: str,
+    name: str,
+    connections: int | None = None,
+) -> WtenvError | None:
+    """Return the wtenv error for something the server or driver raised, or None when unknown.
+
+    The table is in research.md section 3. `connections` is the number of other sessions on
+    the template, when the caller knows it. The text of `error` is never copied into the
+    result, so a password in it cannot reach a message or a detail (FR-019).
+    """
+    from psycopg import OperationalError, errors
+
+    if isinstance(error, errors.ObjectInUse):
+        details: dict[str, JsonValue] = {"kind": "postgres", "template": template}
+        count = ""
+        if connections is not None:
+            details["connections"] = connections
+            count = f" ({connections} open)"
+        return WtenvError(
+            ErrorCode.TEMPLATE_IN_USE,
+            f"the template database {template} has other sessions connected{count}, "
+            "and cannot be copied while they are",
+            hint="Close the connections to the template, then run `wtenv up` again.",
+            details=details,
+        )
+    if isinstance(error, errors.InvalidCatalogName):
+        return WtenvError(
+            ErrorCode.TEMPLATE_MISSING,
+            f"the template database {template} does not exist",
+            hint="Create the template database, or fix database.template in wtenv.toml.",
+            details={"kind": "postgres", "template": template},
+        )
+    if isinstance(error, errors.DuplicateDatabase):
+        return _database_conflict(name)
+    if isinstance(error, errors.InsufficientPrivilege):
+        return _unavailable(
+            "permission_denied",
+            f"permission denied: the role {target.user or '(default)'} may not copy the template "
+            f"database {template}; the template needs IS_TEMPLATE set, or ownership by this role "
+            "(wtenv does not change the template)",
+        )
+    if isinstance(error, errors.Error) and (error.sqlstate or "").startswith("28"):
+        return _authentication_failed(target)
+    if isinstance(error, OperationalError):
+        text = str(error).lower()
+        if "authentication failed" in text or "no password supplied" in text:
+            return _authentication_failed(target)
+        return _unavailable(
+            "cannot_connect", f"cannot connect to the Postgres server at {_server_text(target)}"
+        )
+    return None
+
+
+def _authentication_failed(target: PostgresTarget) -> WtenvError:
+    return _unavailable(
+        "authentication_failed",
+        f"the Postgres server at {_server_text(target)} refused the login; "
+        "check the user and password in database.url",
+    )
+
+
+def _database_conflict(name: str) -> WtenvError:
+    """Build `ownership_conflict` for a Postgres database wtenv has no record of creating."""
+    return WtenvError(
+        ErrorCode.OWNERSHIP_CONFLICT,
+        f"a database called {name} exists, and wtenv has no record of creating it",
+        hint="Rename or drop it by hand; wtenv will not touch it.",
+        details={"kind": "postgres_database", "name": name},
+    )
+
+
+def database_conflict(name: str) -> WtenvError:
+    """Return the error for a Postgres database `name` that exists and is not recorded (FR-024)."""
+    return _database_conflict(name)
+
+
+def _connect(target: PostgresTarget) -> "psycopg.Connection[tuple[object, ...]]":
+    """Open an autocommit connection to the maintenance database, never to the template."""
+    import psycopg
+
+    return psycopg.connect(
+        host=target.host,
+        port=target.port,
+        user=target.user,
+        password=target.password,
+        dbname=target.dbname,
+        autocommit=True,
+        connect_timeout=_CONNECT_TIMEOUT_SECONDS,
+    )
+
+
+def _count_sessions(connection: "psycopg.Connection[tuple[object, ...]]", template: str) -> int:
+    """Count the client sessions other than this one that are connected to `template`."""
+    row = connection.execute(
+        "SELECT count(*) FROM pg_stat_activity "
+        "WHERE datname = %s AND pid <> pg_backend_pid() AND backend_type = 'client backend'",
+        [template],
+    ).fetchone()
+    assert row is not None
+    return int(str(row[0]))
+
+
+def _exists(connection: "psycopg.Connection[tuple[object, ...]]", name: str) -> bool:
+    row = connection.execute("SELECT 1 FROM pg_database WHERE datname = %s", [name])
+    return row.fetchone() is not None
+
+
+def _raise_mapped(
+    error: Exception, target: PostgresTarget, template: str, name: str, connections: int | None
+) -> NoReturn:
+    """Raise the wtenv error for `error`, or let it propagate when wtenv has none for it."""
+    mapped = map_postgres_error(
+        error, target=target, template=template, name=name, connections=connections
+    )
+    if mapped is None:
+        raise error
+    raise mapped from None
+
+
+def inspect_postgres(target: PostgresTarget, *, template: str, name: str) -> PostgresState:
+    """Look at the server without changing it: the template, its sessions, and the target name.
+
+    Raises `dependency_unavailable` when the server cannot be reached, refuses the login, or is
+    older than 13. The caller raises `template_missing`, `template_in_use`, or
+    `ownership_conflict` from the answer, because what to do depends on the registry.
+    """
+    import psycopg
+
+    try:
+        with _connect(target) as connection:
+            check_postgres_version(connection.info.server_version, target)
+            template_exists = _exists(connection, template)
+            return PostgresState(
+                template_exists=template_exists,
+                template_connections=_count_sessions(connection, template)
+                if template_exists
+                else 0,
+                database_exists=_exists(connection, name),
+            )
+    except psycopg.Error as error:
+        _raise_mapped(error, target, template, name, None)
+
+
+def create_postgres_database(target: PostgresTarget, *, template: str, name: str) -> None:
+    """Run `CREATE DATABASE <name> TEMPLATE <template>` on one autocommit connection.
+
+    Other sessions on the template are counted first; above zero, it raises `template_in_use`
+    at once and issues nothing (FR-082). A template that is not on the server is
+    `template_missing`. If the server still answers that the template is in use, or that the
+    name exists, the same codes are raised (`ownership_conflict` for a name). The template is
+    never altered (FR-027), and sessions are never terminated.
+    """
+    import psycopg
+    from psycopg import sql
+
+    connections: int | None = None
+    try:
+        with _connect(target) as connection:
+            check_postgres_version(connection.info.server_version, target)
+            if not _exists(connection, template):
+                raise psycopg.errors.InvalidCatalogName(template)
+            connections = _count_sessions(connection, template)
+            if connections > 0:
+                raise psycopg.errors.ObjectInUse(template)
+            try:
+                connection.execute(
+                    sql.SQL("CREATE DATABASE {} TEMPLATE {}").format(
+                        sql.Identifier(name), sql.Identifier(template)
+                    )
+                )
+            except psycopg.errors.ObjectInUse:
+                # A session arrived after the count: report how many are there now.
+                connections = _count_sessions(connection, template)
+                raise
+    except psycopg.Error as error:
+        _raise_mapped(error, target, template, name, connections)
