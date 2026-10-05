@@ -1057,7 +1057,7 @@ provisioned. `wtenv exec -- env` shows the worktree's variables. Automated by T1
 
 ### 7A. The hook block (`hooks.py`)
 
-- [ ] T116 [P] [US5] Write failing tests for the hook block in `tests/unit/test_hooks_block.py`
+- [X] T116 [P] [US5] Write failing tests for the hook block in `tests/unit/test_hooks_block.py`
   - The block is the text in files.md, "Git hook block", byte for byte; its `wtenv up` line
     ends in `|| true`, so the hook's exit status is never changed (FR-052).
   - Insert directly after the shebang of an existing POSIX shell hook (reading R4); a new
@@ -1066,7 +1066,7 @@ provisioned. `wtenv exec -- env` shows the worktree's variables. Automated by T1
   - Remove takes out exactly the block; every other byte stays.
   - A hook that is not a POSIX shell script → `unsupported`, reason `hook_not_shell`, with
     the block in the hint. Damaged markers → reason `markers_damaged`.
-- [ ] T117 [US5] Implement the block text, insertion, and removal in `src/wtenv/hooks.py`
+- [X] T117 [US5] Implement the block text, insertion, and removal in `src/wtenv/hooks.py`
 
 ### 7B. `wtenv hook install` and `wtenv hook uninstall`
 
