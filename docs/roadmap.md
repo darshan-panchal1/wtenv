@@ -60,3 +60,13 @@ takes them in.
 | **Agent brief: `wtenv context [--json]`.** A read-only command that tells an agent which worktree it is in, its port variables and block, its database name, and the blocks other worktrees hold. Delivered to Claude Code sessions through the `SessionStart` hook above. | Not in spec 001 (Principle X). The hook's output format for adding context still has to be checked against Claude Code's documentation. |
 | **Database checkpoints: `wtenv db snapshot NAME`, `wtenv db restore NAME`, `wtenv db snapshots`.** A snapshot is a copy of the worktree's own database (`CREATE DATABASE … TEMPLATE`, or a file copy for SQLite), recorded in the registry so `down` and `gc` remove it with the worktree (Principle II). `restore` replaces the worktree's database with the snapshot and supports `--dry-run`. | Not in spec 001 (Principle X). Postgres cannot copy a database that has open connections, so the app server has to be stopped first; v1's `template_in_use` error already reports this. |
 | **`up --db-from WORKTREE`**: start a worktree from another provisioned worktree's database instead of the template. | Not in spec 001 (Principle X). Same open-connection limit as checkpoints. |
+
+## From the review of the destructive paths (2026-10-05)
+
+Source: the read-only review of everything `down` and `gc` can delete, run on 2026-10-05.
+Its findings that could remove something unrecorded or hide an error became tasks
+(`specs/001-worktree-runtime-isolation/tasks.md`, T151–T171); this one did not.
+
+| Idea | Why it is not in v1 |
+|------|---------------------|
+| **`gc --dry-run` showing which entries a real run would skip as busy** (review LOW-3). Today a dry run lists an entry under `would_release` even when its worktree lock is held, and the real run then reports it under `skipped_busy`. At least, say so in cli.md. | A dry run may not take a worktree lock (FR-076). The difference only ever makes the real run release less than the dry run listed, never more, and `skipped_busy` is not a failure (FR-077). |

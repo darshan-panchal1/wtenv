@@ -18,7 +18,7 @@ creation and never recomputed, so they survive a move (FR-022, FR-084).
 |------|------|---------|
 | Postgres database | `wtenv_<slug>_<id8>` | `wtenv_feature_x_3f9a1c2b` |
 | Compose project | `wtenv-<slug>-<id8>` | `wtenv-feature-x-3f9a1c2b` |
-| SQLite copy | `<worktree>/.wtenv/<template file name>` | `/code/feature-x/.wtenv/dev.sqlite3` |
+| SQLite copy | `<worktree>/.wtenv/<template file name>`; `.wtenv/` and the copy are never symbolic links (FR-086) | `/code/feature-x/.wtenv/dev.sqlite3` |
 | Compose override | Beside the compose file: `compose.override.yaml` for `compose.yaml`, `compose.override.yml` for `compose.yml`, `docker-compose.override.yaml` for `docker-compose.yaml`, `docker-compose.override.yml` for `docker-compose.yml` | `/code/feature-x/compose.override.yaml` |
 
 All names start with `wtenv`, so they are recognisable (FR-022). Recognising a name is never
@@ -52,8 +52,11 @@ DATABASE_URL=postgresql://myapp:s3cr%3Ft@localhost:5432/wtenv_feature_x_3f9a1c2b
   `exec` fail with `env_file_unusable`, reason `markers_damaged`; `down` reports the section
   under `failed` (FR-081).
 - A file wtenv creates gets mode `0600` (FR-019). An existing file keeps its mode. Writes go
-  through a temporary file and an atomic rename of the real path, so a symbolic link stays a
-  link.
+  through a temporary file and an atomic rename.
+- Symbolic links (FR-086): wtenv never writes or deletes through one. An env file that is a
+  symbolic link, or that sits in a directory inside the worktree that is one, makes `up`
+  fail with `env_file_unusable`, reason `symlink`; `down` and `gc` report the section under
+  `failed` with reason `symlink` and leave the link and its target as they are.
 - Marker lines are recognised with trailing whitespace or a trailing carriage return.
 
 ## `.git/info/exclude` block
@@ -123,6 +126,9 @@ services:
       - {"target": 5432, "published": "20011", "protocol": "tcp", "mode": "ingress"}
 ```
 
+- The file is never written or deleted through a symbolic link (FR-086): `up` fails with
+  `env_file_unusable`, reason `symlink`, and `down` and `gc` report the override under
+  `failed` with reason `symlink`.
 - `name`: the worktree's compose project name.
 - One entry per service that publishes ports, in service-name order. Services without
   published ports are left out.

@@ -471,6 +471,39 @@ byte-identical. Automated by T039–T043; manual by quickstart.md sections 1 and
 
 **Checkpoint**: the MVP. US1 works on its own; the five gates pass.
 
+### 3F. Symbolic links in `up` (`identity.py`, `provision.py`) — FR-086
+
+Added after the review of the destructive paths (2026-10-05, finding MEDIUM-1). Run this
+group after Phase 7, then group 6G.
+
+- [ ] T151 [P] [US1] Add failing tests for the symbolic-link check to `tests/unit/test_identity.py`
+  - FR-086: `symlinked_part(root, relative)` returns the first of the worktree root, each
+    directory below it, and the path itself that is a symbolic link, or None. A dangling
+    link counts. A path that does not exist, with no link on the way, gives None.
+  - A link above the root does not count: a root reached through a link is resolved first
+    (FR-006).
+- [ ] T152 [US1] Add failing tests for `up` refusing symbolic links to `tests/integration/test_us1_ports_env.py`
+  - FR-086: `.env.local` a symbolic link to a file outside the worktree → exit 7,
+    `details.reason` `symlink`, `details.path` the link; the target byte-identical; no
+    registry entry created.
+  - `env_file = "config/.env.local"` with `config` a link to a directory → the same.
+  - SQLite configured, `.wtenv` a link to another worktree's `.wtenv/` → exit 7; the other
+    worktree's copy byte-identical.
+  - A provisioned worktree whose `.env.local` is then replaced by a link: a repeat `up` →
+    exit 7; the target and the registry byte-identical.
+  - A changed `env_file` (FR-065) whose old recorded file is now a link → exit 7, nothing
+    removed from it.
+  - With `docker`: the override path a link → exit 7, before anything is changed for compose.
+- [ ] T153 [US1] Implement `symlinked_part` in `src/wtenv/identity.py`
+  - Walk from the root down with `os.lstat`, no `realpath`.
+- [ ] T154 [US1] Refuse symbolic links in the checks of `up` in `src/wtenv/provision.py`
+  - cli.md, `wtenv up`, steps 4, 5, and 7: the env file, the override path, `.wtenv/` and
+    the SQLite copy, and a recorded env file or override that a configuration change would
+    remove → `env_file_unusable`, reason `symlink`, `details.path` the link. Nothing changes
+    unless all checks pass.
+  - Remove the symbolic-link case of T033 from `tests/unit/test_envfile_write.py`: files.md
+    no longer promises that a link stays a link.
+
 ---
 
 ## Phase 4: User Story 2 - Database isolation (Priority: P2)
@@ -981,6 +1014,36 @@ T104–T108, and T112.
 
 **Checkpoint**: US1–US4 work; the five gates pass.
 
+### 6G. Symbolic links in `down` and `gc` (`teardown.py`) — FR-086
+
+Added after the review of the destructive paths (2026-10-05, finding MEDIUM-1). Run this
+group after Phase 7 and group 3F (it uses T153's `symlinked_part`).
+
+- [ ] T155 [US4] Add failing tests for `down` and symbolic links to `tests/integration/test_us4_lifecycle.py`
+  - FR-086: after `up`, `.env.local` replaced by a link to a file that holds a wtenv
+    section → `down` lists the section under `failed` with `reason` `symlink`; the link and
+    its target byte-identical; the entry `incomplete`, its block still recorded; exit 13.
+    After the link is replaced by a regular file, `down` finishes (FR-042).
+  - SQLite: `.wtenv` replaced by a link to another worktree's `.wtenv/` holding a copy and
+    a `-wal` file → the copy under `failed`, `reason` `symlink`; no side-file item; the other
+    worktree's files byte-identical; exit 13.
+  - `down --dry-run`: the same items under `failed`, not under `would_remove`; nothing
+    changes; exit 0.
+  - With `docker`: the override replaced by a link → the override under `failed`, `reason`
+    `symlink`, the target unchanged, exit 13.
+- [ ] T156 [US4] Add failing tests for `gc --release` and symbolic links to `tests/integration/test_us4_lifecycle.py`
+  - FR-086: a linked worktree's repository deleted, the worktree directory left, its
+    `.env.local` a link to a shared file → `gc --release <path>`: the section under
+    `failed` with `reason` `symlink`, the path not under `released`, the entry still
+    recorded, the shared file byte-identical, exit 13. With `--dry-run`: under `failed`, not
+    under `would_release`, exit 0.
+  - A plain `gc` needs no case: an orphan's path does not exist (FR-045, check 3).
+- [ ] T157 [US4] Leave symbolic links alone when releasing an entry in `src/wtenv/teardown.py`
+  - FR-086: before the override, the SQLite copy, or the env section is touched (before it
+    is marked `removing`), check its path with `identity.symlinked_part`. A link →
+    `FailedItem` with `reason` `symlink`; for the SQLite copy, side files are not looked
+    for. Shared by `down`, `gc`, and `gc --release`, so a dry run lists the same items.
+
 ---
 
 ## Phase 7: User Story 5 - Auto-provisioning and exec (Priority: P5)
@@ -1209,6 +1272,64 @@ nothing. Automated by T124–T125 and T130–T134.
   - Done when the script prints `ACCEPTANCE PASSED`.
 - [ ] T148 Run the five gates one last time and confirm `CLAUDE.md` still matches the constitution
 
+### Findings of the review of the destructive paths (2026-10-05)
+
+Findings LOW-1, LOW-2, and LOW-4 to LOW-7 of that review: each could remove or overwrite
+something wtenv did not record, or hide an error. LOW-3 is on `docs/roadmap.md`. Run these
+after groups 3F and 6G, and before T146–T148. Each pair is a failing test, then the code.
+
+- [ ] T158 Add failing tests for `gc --release` naming a path that is now a symbolic link to `tests/integration/test_us4_lifecycle.py`
+  - LOW-1, FR-073, FR-086: an entry whose repository was deleted and whose recorded path was
+    then replaced by a link to another directory → `gc --release <path>` finds the entry
+    (not `no_entry`); its files are under `failed` with `reason` `symlink`; nothing in the
+    link's target changes; exit 13. A link to a live worktree → exit 18 (reading R5).
+- [ ] T159 Match `--release PATH` as given before resolving it, in `src/wtenv/orphans.py`
+  - cli.md, `gc --release`, step 1: the entry recorded at `os.path.abspath(PATH)`, else the
+    one at `os.path.realpath(PATH)`.
+- [ ] T160 Add failing tests for a dry run that cannot reach Postgres or Docker to `tests/unit/test_database_remove.py` and `tests/unit/test_compose_teardown.py`
+  - LOW-2, FR-040: with the server or the engine unreachable, the dry-run removal returns
+    the item as failed, with a reason naming the dependency, and not as would-be removed.
+  - Integration, in `tests/integration/test_us4_lifecycle.py`: an entry whose recorded
+    Postgres port has nothing listening → `down --dry-run --json` lists the database under
+    `failed` and leaves the port block and the entry out of `would_remove`; exit 0; and
+    `gc --release <path> --dry-run` leaves the path out of `would_release`.
+- [ ] T161 List unreachable items as failed in dry runs, in `src/wtenv/database.py` and `src/wtenv/compose.py`
+  - cli.md, `wtenv down` and `wtenv gc`, `--dry-run`. `teardown` already leaves the block and
+    the entry out when an item failed.
+- [ ] T162 Add a failing Docker-backed test for anonymous volumes to `tests/integration/test_us4_lifecycle.py`
+  - LOW-4, FR-039, FR-041: a service with an anonymous volume (`volumes: ["/data"]`),
+    started with `docker compose up -d`; `down --json`: every volume gone afterwards is
+    listed under `removed`, and an unlabelled volume of another project is still there.
+    If `down` already reports it, record that on the task and skip T163.
+- [ ] T163 Report the anonymous volumes `down` removes, in `src/wtenv/compose.py`
+  - Reading R6 (proposed; confirm with the maintainer before starting).
+- [ ] T164 Add a failing Docker-backed test for a compose project that already exists to `tests/integration/test_us3_compose.py`
+  - LOW-4, FR-024, FR-039: containers started with `docker compose -p <generated name>
+    up -d` before the first `up` → `up` exits 11, `ownership_conflict`, `details.kind`
+    `compose_project`; nothing recorded for compose; a later `down` leaves those containers.
+- [ ] T165 Refuse an existing, unrecorded compose project in the compose check of `up`, in `src/wtenv/compose.py` and `src/wtenv/provision.py`
+  - data-model.md, Resource states: before recording `creating`, nothing may exist at the
+    name. Resources with the label `com.docker.compose.project=<name>` and no compose record
+    → `ownership_conflict`. A record in state `creating` is an interrupted run and adopts
+    them (FR-067).
+- [ ] T166 Add a failing test for `gc --release` on a moved entry with no known location to `tests/integration/test_us4_lifecycle.py`
+  - LOW-5, FR-073: an entry classified `moved` with `current_path` None, whose
+    `<git_dir>/gitdir` names a `.git` file that exists → exit 18, `details.current_path`
+    that file's directory; nothing changed. If real git commands cannot produce this state,
+    patch the classification in-process, as T105 does.
+- [ ] T167 Refuse such an entry in `_refuse_if_it_exists` in `src/wtenv/orphans.py`
+- [ ] T168 Add failing tests for the Postgres drop guard to `tests/unit/test_database_remove.py`
+  - LOW-6, FR-025, FR-039: a recorded name that does not match
+    `^wtenv_[a-z0-9_]{1,40}_[0-9a-f]{8}$` (files.md, Names), or a recorded host that is not
+    local → failed item, no connection made, nothing dropped.
+- [ ] T169 Check the recorded name and host before a drop, in `src/wtenv/database.py`
+- [ ] T170 Add a failing test for a worktree that appears at a `--release` path during `gc` to `tests/integration/test_us4_lifecycle.py`
+  - LOW-7, FR-073, FR-074: in-process, with a worktree created at the named path after the
+    step-1 check and before the release (patched as in T105) → the entry is not released;
+    it is reported as reading R7 says.
+- [ ] T171 Repeat the `--release` refusal under the worktree lock, in `src/wtenv/orphans.py`
+  - Reading R7 (proposed; confirm with the maintainer before starting).
+
 ---
 
 ## Dependencies & Execution Order
@@ -1227,6 +1348,8 @@ nothing. Automated by T124–T125 and T130–T134.
 - **US5 (Phase 7)**: after US4 (`exec` uses `classify`).
 - **US6 (Phase 8)**: after US4 (`doctor` uses `classify`); its contract suite covers every
   command delivered so far.
+- **Review follow-ups (2026-10-05)**: groups 3F and 6G (FR-086) run after Phase 7, 3F
+  first. The review tasks T158–T171 in Phase 9 follow them and come before T146–T148.
 - **Polish (Phase 9)**: after the stories that will ship. T141, T144, and T145 depend only
   on Setup and can be pulled forward, for example to release the MVP early. T141 must be
   done before anything merges to `main` (Working rules).
@@ -1344,7 +1467,8 @@ gates pass.
 
 The maintainer decided R1 and accepted R2–R4 as written. R5 came from the review of the
 destructive paths (2026-10-05). Each is recorded in the contract
-named in the last column.
+named in the last column. R6 and R7 are proposals from the same review and are not
+confirmed: T163 and T171 wait for the maintainer.
 
 | # | Open point | Reading taken | Tasks | Recorded in |
 |---|------------|---------------|-------|-------------|
@@ -1353,6 +1477,8 @@ named in the last column.
 | R3 | FR-073 refuses `gc --release` "at which a worktree still exists" | A directory whose `.git` file points to a git directory that no longer exists is not a worktree, so `--release` can release it | T106, T110 | cli.md, `wtenv gc` |
 | R4 | files.md: install into an existing "POSIX shell" hook | A shebang naming `sh`, `bash`, `dash`, or `ksh` counts; anything else, or no shebang, is `hook_not_shell` | T116, T117 | files.md, Git hook block |
 | R5 | FR-073, for a worktree at the path whose git directory is not the entry's (the repository was moved and repaired, or another worktree took the path) | The converse of R3: a directory whose `.git` names a git directory that exists is a worktree, whatever the entry records, so `--release` refuses it | T149, T150 | cli.md, `wtenv gc` |
+| R6 | FR-041, for anonymous volumes that `compose down --volumes` removes without a project label (review LOW-4) | **Proposed.** Before `compose down`, list the volumes mounted by the project's labelled containers and report each removed one as a `compose_volume` item. The alternative is to drop `--volumes` and remove only labelled volumes | T162, T163 | Not yet; cli.md, `wtenv down`, once confirmed |
+| R7 | FR-073 and FR-074, for a `--release` entry whose worktree appears after step 1 (review LOW-7) | **Proposed.** Under the worktree lock, repeat the step-1 check on the re-read entry. If it now refuses, leave the entry alone and end the command with `worktree_exists` (exit 18), naming the path; entries already released stay listed under `released` | T170, T171 | Not yet; cli.md, `wtenv gc`, once confirmed |
 
 ---
 

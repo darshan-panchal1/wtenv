@@ -73,7 +73,7 @@ Stable from the first release (Principle IV). One code, one exit status.
 | `not_in_worktree` | `cwd` |
 | `not_provisioned` | `path`; `status` (`unprovisioned`, `incomplete`, or `unverifiable`) |
 | `no_free_block` | `block_size`; `range` |
-| `env_file_unusable` | `path`; `reason`: `is_directory`, `parent_missing`, `not_writable`, `tracked_by_git`, `markers_damaged`, `missing` (`exec` only), or `no_section` (`exec` only) |
+| `env_file_unusable` | `path`; `reason`: `is_directory`, `parent_missing`, `not_writable`, `tracked_by_git`, `markers_damaged`, `symlink` (FR-086; `path` is the link), `missing` (`exec` only), or `no_section` (`exec` only) |
 | `dependency_unavailable` | `dependency`: `git`, `docker`, or `postgres`; `reason`: `not_installed`, `too_old`, `not_running`, `not_local`, `cannot_connect`, `authentication_failed`, or `permission_denied`; `required` and `found` for `too_old` |
 | `template_missing` | `kind` (`postgres` or `sqlite`); `template` |
 | `template_in_use` | `kind`; `template`; `connections` (Postgres only) |
@@ -118,13 +118,19 @@ resource. Nothing is changed unless all of them pass.
 2. Take the worktree lock (wait up to 60 s, then `worktree_busy`).
 3. Load `wtenv.toml`, or the defaults when there is none. Invalid: `config_invalid`.
 4. Check the env file path: inside the worktree, parent directory present, not a directory,
-   not tracked by git, writable, markers intact. Otherwise `env_file_unusable`.
+   not tracked by git, writable, markers intact. Otherwise `env_file_unusable`. Neither the
+   path nor any directory between the worktree root and it may be a symbolic link;
+   otherwise `env_file_unusable`, reason `symlink` (FR-086). The same rule applies to the
+   override path in step 5, to `.wtenv/` and the SQLite copy in step 7, and to a recorded
+   env file or override that a configuration change makes `up` remove.
 5. If compose is configured: check Docker and the Compose version, the compose file's name,
    that no override file of the developer's exists, and that `COMPOSE_PROJECT_NAME` and
    `COMPOSE_FILE` are not set. Resolve the compose file and count the ports it publishes.
+   The override path must not be a symbolic link or sit under one (step 4).
 6. Check that the block holds all port variables and published ports. Otherwise
    `config_invalid` with `details.min_block_size` (FR-014, FR-032).
 7. If a database is configured: check that the URL pattern resolves and names a local host.
+   For SQLite, `.wtenv/` and the copy's path must not be symbolic links (step 4).
 
    *From here on, `up` changes things, in this order:*
 8. Registry: create the entry, or record a new location (FR-084); allocate a block when the
@@ -172,7 +178,7 @@ Releases everything the registry records for the current worktree (FR-038).
 
 | Option | Effect |
 |--------|--------|
-| `--dry-run` | Changes nothing, takes no worktree lock, and lists what `down` would remove (FR-040) |
+| `--dry-run` | Changes nothing, takes no worktree lock, and lists what `down` would remove (FR-040). An item that cannot be checked because Postgres or Docker cannot be reached is listed under `failed`, with a `reason` naming the dependency, not under `would_remove`; the exit status stays 0 |
 
 **Order of work**: compose project (containers, networks, volumes, then the override file);
 databases; wtenv's section of the env file (and the file itself when wtenv created it and
@@ -190,6 +196,13 @@ registered worktree of the repository, wtenv's entries in `.git/info/exclude` (F
   error (FR-042).
 - An item that cannot be removed stays recorded and is reported under `failed`. The entry
   stays, as `incomplete`, and the exit status is 13. Running `down` again finishes the job.
+- Symbolic links (FR-086): when the recorded env file, the override file, `.wtenv/`, or the
+  SQLite copy is a symbolic link, or any directory from the worktree root down to it is one
+  (the root included, which only `gc --release` can meet), `down` does not follow or delete
+  it. The item is reported under `failed` with `reason`
+  `symlink`, stays recorded, and the exit status is 13, as for damaged markers. For the
+  SQLite copy, its side files are neither listed nor touched. With `--dry-run`, the item is
+  listed under `failed` instead of `would_remove`, and the exit status stays 0.
 - `down` uses only the registry. A missing or invalid `wtenv.toml` does not stop it; an
   invalid one produces the warning `config_ignored`.
 - The Postgres password for the drop comes from `wtenv.toml` when it resolves, otherwise from
@@ -207,7 +220,7 @@ Releases registry entries whose worktrees git confirms are gone, across all repo
 
 | Option | Effect |
 |--------|--------|
-| `--dry-run` | Changes nothing and lists what would be removed |
+| `--dry-run` | Changes nothing and lists what would be removed. As for `down --dry-run`, an item that cannot be checked is listed under `failed`, and its entry is not listed under `would_release` |
 | `--release PATH` | Release the entry whose recorded worktree path is `PATH`, even though it is unverifiable. May be given several times. With this option, `gc` acts **only** on the named entries; it does not sweep (FR-073) |
 
 **Plain `gc`**
@@ -218,7 +231,10 @@ Releases registry entries whose worktrees git confirms are gone, across all repo
 3. Holding the lock, classify the entry again. If it is no longer `orphaned`, skip it
    (FR-074).
 4. Release it as `down` would. This includes the SQLite side-file items, which are listed
-   under `removed` and, with `--dry-run`, under `would_remove`, as for `down`.
+   under `removed` and, with `--dry-run`, under `would_remove`, as for `down`. It also
+   includes the symbolic-link rule of `down` (FR-086): such an item goes under `failed`
+   with `reason` `symlink`, the entry stays recorded and is not listed under `released`,
+   and the exit status is 13.
 
 Entries that are `unverifiable` are reported under `kept` with their reason. Entries of
 existing worktrees are not touched and not listed. Neither `kept` nor `skipped_busy` changes
@@ -232,6 +248,9 @@ the exit status.
    is not a worktree, so its entry can be released.
    A directory whose `.git` names a git directory that exists is a worktree, even when that
    git directory is not the one the entry records, so such a `PATH` fails too.
+   `PATH` matches the entry recorded at `PATH` made absolute, or else the one recorded at
+   its resolved path, so an entry whose recorded path is now a symbolic link is still found;
+   its files are then left alone under the symbolic-link rule of `down` (FR-086).
 2. A `PATH` with no entry is reported under `no_entry`. That is not an error, so the command
    can be repeated safely.
 3. Each remaining entry is released as `down` would, with the same lock rule as plain `gc`.

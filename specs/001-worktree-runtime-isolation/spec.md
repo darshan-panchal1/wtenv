@@ -99,6 +99,17 @@ Decided during planning (evidence in `research.md`, values in `plan.md` and `con
 - Q: Does `down` remove wtenv's lines from `.git/info/exclude`? → A: Only when the last
   registered worktree of that repository is torn down.
 
+### Session 2026-10-05
+
+Decided by the maintainer after the review of the destructive paths (finding MEDIUM-1):
+
+- Q: What do `up`, `down`, and `gc` do when the env file, the compose override file, or
+  `.wtenv/` is a symbolic link, for example an env file linked to a file several worktrees
+  share? → A: wtenv never writes, rewrites, or deletes through a symbolic link. `up` refuses
+  with `env_file_unusable`, reason `symlink`. `down` and `gc` report the item as not
+  removed, with reason `symlink`, exit with the partial-failure status, and keep it
+  recorded (FR-086).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Port and env isolation (Priority: P1)
@@ -366,6 +377,12 @@ reported with its own code and that `doctor` changed nothing.
   it is. wtenv does not guess where its section ends.
 - **The env file path is a directory, or is not writable**: `up` fails with the stable
   env-file error.
+- **The env file, the override file, or `.wtenv/` is a symbolic link**, or sits in a
+  directory inside the worktree that is one (for example an env file linked to a file that
+  several worktrees share): `up` fails with the stable env-file error. `down` and `gc` do
+  not follow the link: they report that item as not removed and exit with the
+  partial-failure status, and the item stays recorded. The link and its target are left as
+  they are (FR-086).
 - **The template database or template file is missing**: `up` fails with the
   `template_missing` error; nothing is created for the database step.
 - **The Postgres template database has active connections**: `up` fails at once with the
@@ -509,6 +526,15 @@ reported with its own code and that `doctor` changed nothing.
   writable, `up` MUST fail with the stable env-file error before it creates anything, and
   MUST leave the file unchanged. `down` MUST leave the file unchanged and MUST report the
   section as not removed, as FR-042 describes.
+- **FR-086**: wtenv MUST NOT write, rewrite, or delete any file through a symbolic link.
+  This covers the env file, the compose override file, and `.wtenv/` with the SQLite copy
+  and its side files: the path itself and every directory from the worktree root down to
+  it, the root included.
+  When `up` would write or remove such a path and it, or one of those directories, is a
+  symbolic link, `up` MUST fail with the stable env-file error, reason `symlink`, before it
+  creates anything. `down` and `gc` MUST NOT follow or delete the link: they MUST report
+  that item as not removed with reason `symlink`, MUST keep it recorded, and MUST exit with
+  the partial-failure status, as for damaged markers (FR-042, FR-081).
 - **FR-017**: Running `up` again with unchanged configuration MUST produce a byte-identical
   env file.
 - **FR-018**: Files that wtenv generates inside a worktree MUST NOT show up as untracked

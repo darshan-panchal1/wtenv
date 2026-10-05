@@ -199,6 +199,13 @@ itself generated and recorded, such as the old env section or a moved override, 
 `up` and `down` and is reported in their results. It does not make `up` a destructive
 command that needs `--dry-run`.
 
+Symbolic links (FR-086): a recorded path (the env file, the override file, the SQLite copy)
+is used only when neither it nor any directory from the worktree root down to it, the root
+included, is a symbolic link. Otherwise `up` fails with `env_file_unusable`, reason `symlink`, and changes
+nothing. `down` and `gc` report the item under `failed` with reason `symlink`: its record
+stays, the entry stays `incomplete`, and a later run removes the item once the link is
+gone.
+
 ## Write order of `up`
 
 Principle II: nothing is created that is not already recorded. `up` therefore writes in this
