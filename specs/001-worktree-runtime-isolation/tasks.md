@@ -634,12 +634,12 @@ T079–T080.
 
 ### 5A. Configuration: `[compose]` (`config.py`) — core area 4
 
-- [ ] T069 [P] [US3] Write failing tests for the compose table in `tests/unit/test_config_compose.py`
+- [X] T069 [P] [US3] Write failing tests for the compose table in `tests/unit/test_config_compose.py`
   - `compose.file` is required: "Relative path of the compose file inside the worktree. Its
     file name must be `compose.yaml`, `compose.yml`, `docker-compose.yaml`, or
     `docker-compose.yml`" (config.md); any other name → `config_invalid` naming
     `compose.file` (research.md §4, v1 limits).
-- [ ] T070 [US3] Add the `compose` table to `src/wtenv/config.py`
+- [X] T070 [US3] Add the `compose` table to `src/wtenv/config.py`
 
 ### 5B. Reading the compose model (`compose.py`)
 

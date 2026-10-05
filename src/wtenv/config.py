@@ -36,6 +36,9 @@ _FORBIDDEN_QUERY_KEYS = ("host", "hostaddr", "service")
 # What a placeholder is replaced with while the pattern is only being checked.
 _STAND_IN = "x"
 
+# Plain `docker compose` finds a compose file only under these names (research.md §4).
+COMPOSE_FILE_NAMES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
+
 
 class DatabaseConfig(BaseModel):
     """The `[database]` table: which kind of database, its template, and the `DATABASE_URL`."""
@@ -68,6 +71,25 @@ class DatabaseConfig(BaseModel):
         return url
 
 
+class ComposeConfig(BaseModel):
+    """The `[compose]` table: where the compose file is."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    file: str
+
+    @field_validator("file")
+    @classmethod
+    def _file_is_a_default_compose_file_inside_the_worktree(cls, path: str) -> str:
+        """Return the path in its plain form; only the four default file names are allowed."""
+        plain = posixpath.normpath(path) if path else ""
+        if not plain or plain == ".." or plain.startswith(("/", "../")):
+            raise ValueError("must be a relative path inside the worktree")
+        if posixpath.basename(plain) not in COMPOSE_FILE_NAMES:
+            raise ValueError(f"its file name must be one of {', '.join(COMPOSE_FILE_NAMES)}")
+        return plain
+
+
 class Config(BaseModel):
     """The settings of `wtenv.toml`, with the defaults that apply when the file is absent."""
 
@@ -79,6 +101,7 @@ class Config(BaseModel):
     env_file: str = DEFAULT_ENV_FILE
     post_up: list[str] = Field(default_factory=list)
     database: DatabaseConfig | None = None
+    compose: ComposeConfig | None = None
 
     @field_validator("ports")
     @classmethod
