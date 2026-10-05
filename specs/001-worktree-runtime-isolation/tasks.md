@@ -766,7 +766,7 @@ T104–T108, and T112.
 
 ### 6A. Classification (`orphans.py`) — core area 7
 
-- [ ] T085 [P] [US4] Write failing tests for `classify` in `tests/unit/test_classify.py`
+- [X] T085 [P] [US4] Write failing tests for `classify` in `tests/unit/test_classify.py`
   - Every row of data-model.md, "Status and the orphan checks", with hand-made directories
     and canned listings: no listing → `unverifiable`, `repository_not_found`;
     `points_to(entry.path)` is `entry.git_dir` → `provisioned` or `incomplete` by
@@ -776,7 +776,7 @@ T104–T108, and T112.
     `path_exists`; git dir gone and the path listed → `git_still_lists`; otherwise
     `orphaned` (FR-045, FR-072).
   - `classify` changes nothing.
-- [ ] T086 [US4] Implement `classify(entry, listing)` in `src/wtenv/orphans.py`
+- [X] T086 [US4] Implement `classify(entry, listing)` in `src/wtenv/orphans.py`
 
 ### 6B. Removing databases (`database.py`) — core area 5
 
