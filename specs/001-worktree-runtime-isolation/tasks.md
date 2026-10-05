@@ -327,7 +327,7 @@ byte-identical. Automated by T039–T043; manual by quickstart.md sections 1 and
 
 ### 3C. Env file section (`envfile.py`) — core area 8
 
-- [ ] T033 [P] [US1] Write failing tests for writing and reading wtenv's section in `tests/unit/test_envfile_write.py`
+- [X] T033 [P] [US1] Write failing tests for writing and reading wtenv's section in `tests/unit/test_envfile_write.py`
   - No file → created with mode `0600`, holding only the section: the two marker lines of
     FR-016 and one `NAME=value` line per variable, each ending in `\n` (FR-019).
   - Existing developer lines are kept byte for byte and the section is appended at the end;
@@ -350,7 +350,7 @@ byte-identical. Automated by T039–T043; manual by quickstart.md sections 1 and
   - Reading a file with damaged markers → `env_file_unusable`, reason `markers_damaged`; a
     missing file → `env_file_unusable`, reason `missing`; a file with neither marker line →
     `env_file_unusable`, reason `no_section` (cli.md, `wtenv exec`).
-- [ ] T034 [P] [US1] Write failing tests for removing the section and finding duplicates in `tests/unit/test_envfile_remove.py`
+- [X] T034 [P] [US1] Write failing tests for removing the section and finding duplicates in `tests/unit/test_envfile_remove.py`
   - Removing takes out the section, both markers included, and nothing else; a recorded
     `added_newline` is removed again (FR-079).
   - A file that wtenv created and that holds nothing else afterwards is deleted (FR-038).
@@ -358,10 +358,10 @@ byte-identical. Automated by T039–T043; manual by quickstart.md sections 1 and
     unchanged and the failure returned to the caller (FR-081).
   - A managed variable also defined outside the section is reported by name; that line is
     left unchanged (FR-080).
-- [ ] T035 [US1] Implement `write_section` and `read_section` in `src/wtenv/envfile.py`
+- [X] T035 [US1] Implement `write_section` and `read_section` in `src/wtenv/envfile.py`
   - `read_section(path)` returns the section's `(name, value)` pairs with quoting removed;
     `exec` uses it (reading R1).
-- [ ] T036 [US1] Implement removing the section and the duplicate check in `src/wtenv/envfile.py`
+- [X] T036 [US1] Implement removing the section and the duplicate check in `src/wtenv/envfile.py`
 
 ### 3D. `.git/info/exclude` block (`exclude.py`)
 
