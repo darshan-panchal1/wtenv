@@ -196,7 +196,7 @@ identity, the registry and its locks, and the CLI shell with a lazy-import `--ve
 
 ### 2D. Registry and locks (`locks.py`, `registry.py`) — core area 1
 
-- [ ] T018 [P] Write failing tests for the state directory and locks in `tests/unit/test_locks.py`
+- [X] T018 [P] Write failing tests for the state directory and locks in `tests/unit/test_locks.py`
   - State directory: `platformdirs.user_state_path("wtenv", appauthor=False)`, moved by
     `XDG_STATE_HOME`; created with mode `0700`; `registry.lock` and `locks/<id16>.lock` get
     mode `0600` (files.md, State directory).
@@ -208,7 +208,7 @@ identity, the registry and its locks, and the CLI shell with a lazy-import `--ve
     are never deleted.
   - Locks use `fallback_to_soft=False`; a filesystem without `flock` gives
     `registry_unreadable`, reason `lock_unsupported`.
-- [ ] T019 [P] Write failing tests for the registry models in `tests/unit/test_registry_models.py`
+- [X] T019 [P] Write failing tests for the registry models in `tests/unit/test_registry_models.py`
   - The example in data-model.md, "Registry file", loads and dumps back to equal JSON.
   - Unknown fields are rejected (`extra="forbid"`). A field named like a password does not
     exist (FR-019).
@@ -218,7 +218,7 @@ identity, the registry and its locks, and the CLI shell with a lazy-import `--ve
     `start + size - 1 ≤ 29999`; `published[].protocol` is `tcp` or `udp`; `databases` holds
     at most one record per kind; database `kind` is `postgres` or `sqlite`; every resource
     `state` is `creating`, `created`, or `removing`.
-- [ ] T020 [P] Write failing tests for loading and saving the registry in `tests/unit/test_registry_store.py`
+- [X] T020 [P] Write failing tests for loading and saving the registry in `tests/unit/test_registry_store.py`
   - No file → an empty registry with `version` 1, in the per-user state directory (FR-066).
   - Save writes a temporary file, `fsync`s it, and `os.replace`s it; the file has mode `0600`.
   - Not valid JSON, not matching the schema, an unknown `version`, or unreadable → stop with
@@ -226,8 +226,8 @@ identity, the registry and its locks, and the CLI shell with a lazy-import `--ve
     `invalid_schema`, `unknown_version`, `not_readable`); the file is never rewritten (FR-070).
   - A transaction runs read-check-write under the registry lock; an exception inside it
     saves nothing (FR-068).
-- [ ] T021 Implement the state directory, the registry lock, and the worktree lock in `src/wtenv/locks.py`
-- [ ] T022 Implement the registry models in `src/wtenv/registry.py`
+- [X] T021 Implement the state directory, the registry lock, and the worktree lock in `src/wtenv/locks.py`
+- [X] T022 Implement the registry models in `src/wtenv/registry.py`
   - `Registry`: `version` (1), `worktrees` keyed by `git_dir`, `hooks` keyed by repository.
   - `WorktreeEntry`: `git_dir` "Equals the key"; `path` "Location at the last `up` or `down`
     in the worktree. Updated when the worktree moved (FR-084)"; `repository` "Common git
@@ -251,7 +251,7 @@ identity, the registry and its locks, and the CLI shell with a lazy-import `--ve
     `override_state`. `HookRecord`: `hook_file` (absolute path), `created_file`.
   - Resource states `creating`, `created`, `removing` use `ResourceState` from
     `wtenv.output`. No password field anywhere (FR-019).
-- [ ] T023 Implement registry `load`, atomic `save`, and the transaction in `src/wtenv/registry.py`
+- [X] T023 Implement registry `load`, atomic `save`, and the transaction in `src/wtenv/registry.py`
 
 ### 2E. CLI shell and `--version` (`cli.py`, `__main__.py`)
 
