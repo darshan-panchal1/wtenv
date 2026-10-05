@@ -1,9 +1,11 @@
-"""Removing a recorded compose project (T090; research.md §4; FR-039, FR-042).
+"""Removing a recorded compose project (T090, T162; research.md §4; FR-039, FR-041, FR-042).
 
 A fake Docker engine holds containers, networks, and volumes with their labels and answers the
 commands `wtenv` runs, so no Docker is needed. Resources of another project and resources with no
 compose label (an `external` volume or network) are in it too, and must never be named in a
-removal command.
+removal command. Like the real engine, the fake labels only named volumes: an anonymous volume and
+an external volume carry no `com.docker.compose.project`, and are tied to a project only by the
+mounts of its containers (reading R6).
 """
 
 import subprocess
@@ -12,12 +14,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from wtenv import compose
-from wtenv.output import Item, ItemKind
+from wtenv.output import Item, ItemKind, KeptVolume
 
 PROJECT = "wtenv-app-91c2d0aa"
 OTHER = "wtenv-other-12345678"
 LABEL = "com.docker.compose.project"
-DOWN = ["docker", "compose", "-p", PROJECT, "down", "--volumes", "--remove-orphans"]
+DOWN = ["docker", "compose", "-p", PROJECT, "down", "--remove-orphans"]
+INSPECT = ["docker", "container", "inspect"]
 
 
 @dataclass
@@ -34,6 +37,8 @@ class FakeDocker:
     containers: list[Resource] = field(default_factory=list)
     networks: list[Resource] = field(default_factory=list)
     volumes: list[Resource] = field(default_factory=list)
+    # The volumes each container mounts, by container id.
+    mounts: dict[str, list[str]] = field(default_factory=dict)
     # What `docker compose down` leaves behind, and what no command can remove, by name.
     down_leaves: set[str] = field(default_factory=set)
     undeletable: set[str] = field(default_factory=set)
@@ -50,9 +55,12 @@ class FakeDocker:
             return _listing(self._labelled(self.networks, words), ids=True)
         if words[:3] == ["docker", "volume", "ls"]:
             return _listing(self._labelled(self.volumes, words), ids=False)
+        if words[:3] == INSPECT:
+            return self._inspect(words[words.index("--format") + 2 :])
         if words == DOWN:
             assert cwd is not None and cwd.is_dir() and not any(cwd.iterdir())
-            for pool in (self.containers, self.networks, self.volumes):
+            # Without `--volumes`, `docker compose down` leaves every volume, labelled or not.
+            for pool in (self.containers, self.networks):
                 pool[:] = [r for r in pool if r.project != PROJECT or r.name in self.down_leaves]
             return _done("")
         if words[:2] == ["docker", "rm"]:
@@ -69,6 +77,14 @@ class FakeDocker:
         project = wanted.removeprefix(f"label={LABEL}=")
         return [r for r in pool if r.project == project]
 
+    def _inspect(self, ids: list[str]) -> "subprocess.CompletedProcess[str]":
+        """Print the name of each volume the given containers mount, as the format asks."""
+        known = {r.id for r in self.containers}
+        missing = [i for i in ids if i not in known]
+        if missing:
+            return _done("", returncode=1, stderr=f"Error: No such container: {missing[0]}")
+        return _done("".join(f"{name}\n" for i in ids for name in self.mounts.get(i, [])))
+
     def _remove(self, pool: list[Resource], key: str) -> "subprocess.CompletedProcess[str]":
         found = next((r for r in pool if key in (r.id, r.name)), None)
         if found is None:
@@ -80,7 +96,12 @@ class FakeDocker:
 
     def removals(self) -> list[list[str]]:
         """Return the commands that remove something: everything except the listings."""
-        listings = (["docker", "ps"], ["docker", "network", "ls"], ["docker", "volume", "ls"])
+        listings = (
+            ["docker", "ps"],
+            ["docker", "network", "ls"],
+            ["docker", "volume", "ls"],
+            INSPECT,
+        )
         return [
             words for words, _, _ in self.calls if not any(words[: len(p)] == p for p in listings)
         ]
@@ -96,13 +117,22 @@ def _listing(found: list[Resource], *, ids: bool) -> "subprocess.CompletedProces
 
 
 def stack() -> FakeDocker:
-    """A project with a container, a network, and two volumes, beside things that are not its."""
+    """A project with a container, a network, and three volumes, beside things that are not its.
+
+    Its container mounts a named volume (labelled), an anonymous volume, and an `external` one
+    (neither labelled). `stray-data` carries no label and no project's container mounts it.
+    """
     return FakeDocker(
         containers=[
             Resource("c1", "app-web-1", PROJECT),
             Resource("c9", "other-web-1", OTHER),
             Resource("c8", "postgres-local", None),
         ],
+        mounts={
+            "c1": ["app_data", "0123456789abcdef", "external-data"],
+            "c9": ["other_data"],
+            "c8": ["postgres-data"],
+        },
         networks=[
             Resource("n1", "app_default", PROJECT),
             Resource("n9", "other_default", OTHER),
@@ -110,9 +140,11 @@ def stack() -> FakeDocker:
         ],
         volumes=[
             Resource("v1", "app_data", PROJECT),
-            Resource("v2", "0123456789abcdef", PROJECT),  # an anonymous volume
+            Resource("v2", "0123456789abcdef", None),  # an anonymous volume: no compose label
             Resource("v9", "other_data", OTHER),
             Resource("v8", "external-data", None),  # declared `external`: no compose label
+            Resource("v7", "stray-data", None),
+            Resource("v6", "postgres-data", None),
         ],
     )
 
@@ -125,8 +157,13 @@ REMOVED = [
     item(ItemKind.COMPOSE_CONTAINER, "app-web-1"),
     item(ItemKind.COMPOSE_NETWORK, "app_default"),
     item(ItemKind.COMPOSE_VOLUME, "app_data"),
-    item(ItemKind.COMPOSE_VOLUME, "0123456789abcdef"),
 ]
+# Mounted by the project's container, and without its label: found, kept, never removed.
+KEPT = [
+    KeptVolume(name="0123456789abcdef", project=PROJECT, reason="unlabelled"),
+    KeptVolume(name="external-data", project=PROJECT, reason="unlabelled"),
+]
+UNLABELLED = {"0123456789abcdef", "v2", "external-data", "v8", "stray-data", "v7"}
 
 
 def names(pool: list[Resource]) -> list[str]:
@@ -145,7 +182,13 @@ def test_the_project_is_taken_down_and_each_removed_resource_is_an_item() -> Non
     assert result.already_absent == [] and result.failed == []
     assert names(docker.containers) == ["other-web-1", "postgres-local"]
     assert names(docker.networks) == ["other_default", "shared-external"]
-    assert names(docker.volumes) == ["other_data", "external-data"]
+    assert names(docker.volumes) == [
+        "0123456789abcdef",  # anonymous: kept
+        "other_data",
+        "external-data",
+        "stray-data",
+        "postgres-data",
+    ]
 
 
 def test_the_resources_are_listed_before_and_after_the_down_from_a_directory_with_no_compose_file(
@@ -198,7 +241,7 @@ def test_no_removal_command_names_a_resource_of_another_project_or_one_with_no_l
 
     compose.remove_project(PROJECT, run=docker, environ={})
 
-    mine = {"app-web-1", "c1", "app_default", "n1", "app_data", "v1", "0123456789abcdef", "v2"}
+    mine = {"app-web-1", "c1", "app_default", "n1", "app_data", "v1"}
     for words in docker.removals():
         if words == DOWN:
             continue
@@ -250,7 +293,7 @@ def test_what_cannot_be_removed_is_failed_with_a_reason_and_the_rest_is_removed(
 
     assert [(f.kind, f.name) for f in result.failed] == [(ItemKind.COMPOSE_NETWORK, "app_default")]
     assert "in use" in result.failed[0].reason
-    assert [i.name for i in result.removed] == ["app-web-1", "app_data", "0123456789abcdef"]
+    assert [i.name for i in result.removed] == ["app-web-1", "app_data"]
 
 
 # --- listing only ---------------------------------------------------------------------------------------
@@ -265,7 +308,7 @@ def test_listing_only_returns_the_items_a_removal_would_and_runs_no_removal() ->
 
     assert planned.removed == actual.removed == REMOVED
     assert listed.removals() == []
-    assert len(listed.containers) == 3 and len(listed.networks) == 3 and len(listed.volumes) == 4
+    assert len(listed.containers) == 3 and len(listed.networks) == 3 and len(listed.volumes) == 6
 
 
 def test_listing_only_for_a_project_with_nothing_left_is_already_absent() -> None:
@@ -275,6 +318,129 @@ def test_listing_only_for_a_project_with_nothing_left_is_already_absent() -> Non
 
     assert result.already_absent == [item(ItemKind.COMPOSE_PROJECT, PROJECT)]
     assert docker.removals() == []
+
+
+# --- volumes: only the labelled ones are removed, the others are kept (T162; reading R6) ------------
+
+
+def test_docker_compose_down_runs_without_volumes() -> None:
+    docker = stack()
+
+    compose.remove_project(PROJECT, run=docker, environ={})
+
+    downs = [words for words, _, _ in docker.calls if words[:3] == ["docker", "compose", "-p"]]
+    assert downs == [DOWN]
+    assert all("--volumes" not in words and "-v" not in words for words, _, _ in docker.calls)
+
+
+def test_a_labelled_volume_is_removed_by_name_as_its_own_item() -> None:
+    docker = stack()
+
+    result = compose.remove_project(PROJECT, run=docker, environ={})
+
+    assert item(ItemKind.COMPOSE_VOLUME, "app_data") in result.removed
+    assert ["docker", "volume", "rm", "app_data"] in docker.removals()
+    assert "app_data" not in names(docker.volumes)
+
+
+def test_a_mounted_volume_without_the_label_is_kept_reported_and_never_removed() -> None:
+    docker = stack()
+
+    result = compose.remove_project(PROJECT, run=docker, environ={})
+
+    assert result.kept_volumes == KEPT  # in name order, with the recorded project name
+    assert result.failed == []
+    assert not any(
+        i.kind is ItemKind.COMPOSE_VOLUME and i.name in UNLABELLED for i in result.removed
+    )
+    for words in docker.removals():
+        assert not UNLABELLED & set(words), words
+    assert {"0123456789abcdef", "external-data", "stray-data", "postgres-data"} <= set(
+        names(docker.volumes)
+    )
+
+
+def test_a_volume_that_no_container_of_the_project_mounts_is_not_reported() -> None:
+    docker = stack()
+
+    result = compose.remove_project(PROJECT, run=docker, environ={})
+
+    reported = {k.name for k in result.kept_volumes}
+    assert "stray-data" not in reported  # unlabelled, but nothing ties it to the project
+    assert (
+        "postgres-data" not in reported
+    )  # mounted by `postgres-local`, which is not the project's
+    assert "other_data" not in reported  # another project's
+    assert "app_data" not in reported  # labelled: removed, not kept
+
+
+def test_the_mounts_are_inspected_before_the_down_while_the_containers_exist() -> None:
+    docker = stack()
+
+    compose.remove_project(PROJECT, run=docker, environ={})
+
+    commands = [words for words, _, _ in docker.calls]
+    inspections = [i for i, words in enumerate(commands) if words[:3] == INSPECT]
+    assert len(inspections) == 1 and inspections[0] < commands.index(DOWN)
+    inspected = commands[inspections[0]]
+    assert inspected[-1] == "c1"  # only the project's container, named by id
+    assert "c8" not in inspected and "c9" not in inspected
+
+
+def test_listing_only_reports_the_same_kept_volumes_and_removes_nothing() -> None:
+    docker = stack()
+
+    planned = compose.remove_project(PROJECT, dry_run=True, run=docker, environ={})
+
+    assert planned.kept_volumes == KEPT
+    assert planned.removed == REMOVED
+    assert docker.removals() == []
+    assert any(words[:3] == INSPECT for words, _, _ in docker.calls)
+    assert len(docker.volumes) == 6 and len(docker.containers) == 3 and len(docker.networks) == 3
+
+
+def test_a_project_with_no_container_has_nothing_to_inspect() -> None:
+    docker = FakeDocker(
+        volumes=[Resource("v1", "app_data", PROJECT), Resource("v2", "0123456789abcdef", None)]
+    )
+
+    result = compose.remove_project(PROJECT, run=docker, environ={})
+
+    assert result.removed == [item(ItemKind.COMPOSE_VOLUME, "app_data")]
+    assert result.kept_volumes == []
+    assert not any(words[:3] == INSPECT for words, _, _ in docker.calls)
+    assert names(docker.volumes) == ["0123456789abcdef"]
+
+
+def test_a_volume_that_cannot_be_removed_is_failed_and_the_kept_ones_are_still_reported() -> None:
+    docker = stack()
+    docker.undeletable = {"app_data"}
+
+    result = compose.remove_project(PROJECT, run=docker, environ={})
+
+    assert [(f.kind, f.name) for f in result.failed] == [(ItemKind.COMPOSE_VOLUME, "app_data")]
+    assert result.kept_volumes == KEPT
+
+
+def test_when_the_mounts_cannot_be_inspected_the_project_is_failed_and_nothing_is_removed() -> None:
+    docker = stack()
+    docker.mounts = {}
+    docker.containers = [Resource("c1", "app-web-1", PROJECT)]
+    real = docker.__call__
+
+    def inspect_fails(
+        command: Sequence[str], environ: Mapping[str, str], cwd: Path | None
+    ) -> "subprocess.CompletedProcess[str]":
+        if list(command)[:3] == INSPECT:
+            return _done("", returncode=1, stderr="Error: cannot connect to the daemon")
+        return real(command, environ, cwd)
+
+    result = compose.remove_project(PROJECT, run=inspect_fails, environ={})
+
+    assert [(f.kind, f.name) for f in result.failed] == [(ItemKind.COMPOSE_PROJECT, PROJECT)]
+    assert "inspect" in result.failed[0].reason
+    assert docker.removals() == []  # the down did not run: nothing was removed unlisted
+    assert result.kept_volumes == []
 
 
 # --- no Docker ----------------------------------------------------------------------------------------

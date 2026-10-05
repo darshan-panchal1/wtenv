@@ -14,6 +14,7 @@ import subprocess
 import sys
 import uuid
 from collections.abc import Callable, Iterator, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -53,8 +54,10 @@ from wtenv.output import (
     DownResult,
     FailedItem,
     GcResult,
+    Item,
     ItemKind,
     KeptEntry,
+    KeptVolume,
     LsResult,
     PortView,
     ResourceState,
@@ -1710,6 +1713,239 @@ def test_one_gc_after_git_worktree_remove_leaves_no_database_container_volume_or
     assert all(not ids for ids in project_resources(project).values())
     assert volume_exists(external_volume)  # declared external: never removed (FR-039)
     assert git_dir not in load().worktrees
+
+
+# --- volumes: only the labelled ones are removed, the others are kept (T162; FR-039, FR-040, ------
+# --- FR-041; reading R6) --------------------------------------------------------------------------
+#
+# Docker labels only named volumes with `com.docker.compose.project`. The test's own project has
+# one of those, one anonymous volume (a `/data` mount), and one external decoy made with
+# `docker volume create`, all mounted by one container. `down`, `gc`, and `gc --release` remove
+# the named volume by its name, and report the other two in `kept_volumes` and leave them as they
+# were, with what is in them. The test creates all of it and removes all of it.
+
+VOLUMES_STACK = """\
+services:
+  cache:
+    image: {image}
+    pull_policy: never
+    ports:
+      - "${{CACHE_PORT:-6379}}:6379"
+    volumes:
+      - named-data:/named
+      - /data
+      - kept-data:/kept
+volumes:
+  named-data:
+  kept-data:
+    external: true
+    name: {decoy}
+"""
+
+
+@dataclass
+class VolumeStack:
+    """A started stack with the three kinds of volume, and what was written into each."""
+
+    worktree: Path
+    project: str
+    named: str
+    anonymous: str
+    decoy: str
+    contents: dict[str, str]  # volume name -> what the marker file in it holds
+    created: dict[str, str]  # volume name -> CreatedAt, as Docker reports it
+
+    @property
+    def kept(self) -> list[KeptVolume]:
+        """What `kept_volumes` must hold: the unlabelled ones, in name order."""
+        names = sorted([self.anonymous, self.decoy])
+        return [KeptVolume(name=n, project=self.project, reason="unlabelled") for n in names]
+
+
+@pytest.fixture
+def anonymous_volumes(compose_projects: ComposeProjects) -> Iterator[list[str]]:
+    """Collect the anonymous volumes a test finds mounted by its own project; remove only those.
+
+    wtenv leaves them (that is the point of the test), so they are removed here, by name, after
+    the tracked projects are taken down.
+    """
+    names: list[str] = []
+    yield names
+    compose_projects.remove_all()
+    for name in names:
+        subprocess.run(
+            ["docker", "volume", "rm", "--force", name], capture_output=True, check=False
+        )
+
+
+def volume_created_at(name: str) -> str:
+    inspect = subprocess.run(
+        ["docker", "volume", "inspect", "--format", "{{.CreatedAt}}", name],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return inspect.stdout.strip()
+
+
+def write_marker(container: str, directory: str, text: str) -> None:
+    """Write `text` to `<directory>/marker` inside the test's own container."""
+    subprocess.run(
+        [
+            "docker",
+            "exec",
+            "--user",
+            "root",
+            container,
+            "sh",
+            "-c",
+            f"printf '%s' {text} > {directory}/marker",
+        ],
+        capture_output=True,
+        check=True,
+    )
+
+
+def read_marker(volume: str) -> str | None:
+    """Return what the marker file in `volume` holds, or None when the volume is not there.
+
+    A throw-away container of the test's own mounts the volume; `--rm` removes it, and the
+    anonymous volume the image declares for it, when it ends.
+    """
+    if not volume_exists(volume):
+        return None
+    result = subprocess.run(
+        [
+            "docker", "run", "--rm", "--pull", "never", "--entrypoint", "cat",
+            "--volume", f"{volume}:/v", COMPOSE_IMAGE, "/v/marker",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )  # fmt: skip
+    return result.stdout
+
+
+def start_volume_stack(
+    run_wtenv: Run,
+    repo: Path,
+    add_worktree: AddWorktree,
+    compose_projects: ComposeProjects,
+    anonymous_volumes: list[str],
+    decoy: str,
+) -> VolumeStack:
+    """Provision a worktree of `repo` with the volume stack, start it, and write the markers."""
+    worktree = add_worktree(repo, "feature-x", "feature-x")
+    (worktree / "compose.yaml").write_text(
+        VOLUMES_STACK.format(image=COMPOSE_IMAGE, decoy=decoy), encoding="utf-8"
+    )
+    write_config(worktree, COMPOSE_TOML)
+    commit_all(worktree)
+    up(run_wtenv, worktree)
+    project = compose_projects.track(project_of(worktree))
+    start_stack(worktree)
+    (container,) = container_names(project)
+    mounted = subprocess.run(
+        [
+            "docker", "container", "inspect", "--format",
+            '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}', container,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )  # fmt: skip
+    anonymous = mounted.stdout.strip()
+    assert anonymous and anonymous not in anonymous_volumes
+    anonymous_volumes.append(anonymous)
+    named = f"{project}_named-data"
+    stack = VolumeStack(
+        worktree=worktree,
+        project=project,
+        named=named,
+        anonymous=anonymous,
+        decoy=decoy,
+        contents={},
+        created={},
+    )
+    for volume, directory in ((named, "/named"), (anonymous, "/data"), (decoy, "/kept")):
+        text = f"marker-{uuid.uuid4().hex}"
+        write_marker(container, directory, text)
+        stack.contents[volume] = text
+        stack.created[volume] = volume_created_at(volume)
+    assert project_resources(project)["volumes"] == [named]  # only the named one is labelled
+    return stack
+
+
+def assert_kept_untouched(stack: VolumeStack) -> None:
+    """The anonymous volume and the decoy are still there, as they were, with their contents."""
+    for volume in (stack.anonymous, stack.decoy):
+        assert volume_exists(volume), volume
+        assert volume_created_at(volume) == stack.created[volume], volume
+        assert read_marker(volume) == stack.contents[volume], volume
+
+
+def assert_only_the_named_volume_is_listed(
+    stack: VolumeStack, listed: Sequence[Item], others: Sequence[Sequence[Item]]
+) -> None:
+    """The named volume is its own `compose_volume` item; the kept ones are in no item list."""
+    assert ("compose_volume", stack.named) in keys(listed)
+    for items in [listed, *others]:
+        assert [n for k, n in keys(items) if k == "compose_volume"] in ([stack.named], [])
+        assert stack.anonymous not in [n for _, n in keys(items)]
+        assert stack.decoy not in [n for _, n in keys(items)]
+
+
+@pytest.mark.parametrize("mode", ["down", "gc", "gc_release"])
+def test_only_the_labelled_volume_is_removed_and_the_others_are_kept_and_reported(
+    mode: str,
+    run_wtenv: Run,
+    make_repo: Callable[[str], Path],
+    add_worktree: AddWorktree,
+    compose_image: str,
+    compose_projects: ComposeProjects,
+    external_volume: str,
+    anonymous_volumes: list[str],
+    outside: Path,
+) -> None:
+    repo = make_repo("doomed" if mode == "gc_release" else "app")
+    stack = start_volume_stack(
+        run_wtenv, repo, add_worktree, compose_projects, anonymous_volumes, external_volume
+    )
+    before = project_resources(stack.project)
+    if mode == "gc":
+        remove_with_git(repo, stack.worktree)
+    if mode == "gc_release":
+        shutil.rmtree(repo)  # the worktree is left, but its git directory is gone
+
+    def run(*flags: str) -> tuple[int, DownResult | GcResult]:
+        if mode == "down":
+            return down(run_wtenv, stack.worktree, *flags)
+        release = ["--release", str(stack.worktree)] if mode == "gc_release" else []
+        return gc(run_wtenv, outside, *release, *flags)
+
+    # `--dry-run`: the named volume is listed, the others are kept, and nothing is removed.
+    status, planned = run("--dry-run")
+
+    assert status == 0 and planned.dry_run and planned.failed == [], planned
+    assert planned.removed == []
+    assert_only_the_named_volume_is_listed(stack, planned.would_remove, [planned.already_absent])
+    assert planned.kept_volumes == stack.kept
+    assert project_resources(stack.project) == before
+    assert volume_exists(stack.named)
+    assert read_marker(stack.named) == stack.contents[stack.named]
+    assert_kept_untouched(stack)
+
+    # The real run removes the named volume with the project, by its name, and nothing else.
+    status, result = run()
+
+    assert status == 0 and result.ok and result.failed == [], result
+    assert_only_the_named_volume_is_listed(stack, result.removed, [result.already_absent])
+    assert result.would_remove == []
+    assert result.removed == planned.would_remove
+    assert result.kept_volumes == stack.kept
+    assert not volume_exists(stack.named)
+    assert all(not ids for ids in project_resources(stack.project).values())
+    assert_kept_untouched(stack)
 
 
 # --- symbolic links in `down` and `gc` (T155, T156; FR-086) --------------------------------------

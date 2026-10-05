@@ -19,7 +19,7 @@ from urllib.parse import unquote, urlsplit
 from wtenv.config import ENV_PLACEHOLDER, LOCAL_HOSTS, PLACEHOLDER
 from wtenv.errors import ErrorCode, JsonValue, WtenvError
 from wtenv.identity import short_id, slug
-from wtenv.output import FailedItem, Item, ItemKind
+from wtenv.output import FailedItem, Item, ItemKind, KeptVolume
 
 if TYPE_CHECKING:
     import psycopg
@@ -227,12 +227,14 @@ class Removal:
 
     `removed` holds the items deleted (or that would be); `already_absent` the recorded things
     that were not there (FR-042); `failed` the ones that could not be removed, each with a reason
-    that never holds a password (FR-019).
+    that never holds a password (FR-019). `kept_volumes` holds the Docker volumes of a compose
+    project that were found and left alone (reading R6).
     """
 
     removed: list[Item] = field(default_factory=list)
     already_absent: list[Item] = field(default_factory=list)
     failed: list[FailedItem] = field(default_factory=list)
+    kept_volumes: list[KeptVolume] = field(default_factory=list)
 
 
 def _sqlite_item(path: Path) -> Item:

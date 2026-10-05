@@ -1303,7 +1303,7 @@ after groups 3F and 6G, and before T146–T148. Each pair is a failing test, the
 - [X] T173 Add `KeptVolume` and the `kept_volumes` field of `DownResult` and `GcResult` to `src/wtenv/output.py`
   - Port them from `json_models.py` as T011 did; `KeptEntry` and `kept` are unchanged.
     T172 passes. Comes before T162 and T163.
-- [ ] T162 Add a failing Docker-backed test for volumes to `tests/integration/test_us4_lifecycle.py`
+- [X] T162 Add a failing Docker-backed test for volumes to `tests/integration/test_us4_lifecycle.py`
   - LOW-4, FR-039, FR-040, FR-041, reading R6: the test's own compose project has three
     volumes: one named volume (`named:/named`; Compose labels it
     `com.docker.compose.project=<project>`), one anonymous volume (a service with a `/data`
@@ -1325,7 +1325,7 @@ after groups 3F and 6G, and before T146–T148. Each pair is a failing test, the
     with a fake engine that holds labelled, anonymous, and external volumes).
   - The test removes every container, network, and volume it created, including the kept
     ones; it touches nothing else.
-- [ ] T163 Remove labelled volumes by name instead of `--volumes`, in `src/wtenv/compose.py`
+- [X] T163 Remove labelled volumes by name instead of `--volumes`, in `src/wtenv/compose.py`
   - Reading R6 (accepted, amended 2026-10-05 after a probe on Docker 29.5.3 and Compose
     5.1.4: only named volumes carry `com.docker.compose.project`; anonymous and external
     volumes do not). Drop `--volumes` from `docker compose down`.

@@ -22,7 +22,7 @@ from wtenv.database import Removal
 from wtenv.envfile import write_atomic
 from wtenv.errors import ErrorCode, JsonValue, WtenvError
 from wtenv.identity import short_id, slug
-from wtenv.output import FailedItem, Item, ItemKind, WarningCode, WarningInfo
+from wtenv.output import FailedItem, Item, ItemKind, KeptVolume, WarningCode, WarningInfo
 
 _FILE_SETTING = "compose.file"
 # Compose loads one of these beside the compose file; the pairs follow COMPOSE_FILE_NAMES.
@@ -599,6 +599,37 @@ def _list_project(project: str, run: Runner, environ: Mapping[str, str]) -> list
     return found
 
 
+# What `docker container inspect` prints per container: the name of each volume it mounts.
+_MOUNTED_VOLUMES = '{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}}{{"\\n"}}{{end}}{{end}}'
+
+
+def _unlabelled_mounts(
+    project: str, found: list[_Resource], run: Runner, environ: Mapping[str, str]
+) -> list[KeptVolume]:
+    """Return the volumes the project's containers mount that do not carry its label (reading R6).
+
+    Docker gives `com.docker.compose.project` only to named volumes. An anonymous volume and an
+    `external` one have no label, so the label listing never finds them; the only thing that ties
+    them to the project is a mount of one of its containers. They are reported, in name order,
+    and are never passed to a removal command (FR-039). This has to run while the containers
+    still exist, so before `docker compose down`.
+    """
+    containers = [r.key for r in found if r.kind is ItemKind.COMPOSE_CONTAINER]
+    if not containers:
+        return []
+    command = ["docker", "container", "inspect", "--format", _MOUNTED_VOLUMES, *containers]
+    process = _docker(run, command, environ)
+    if process.returncode != 0:
+        reason = _first_line(process.stderr) or f"exit status {process.returncode}"
+        raise _DockerFailed(f"cannot inspect the project's containers: {reason}")
+    labelled = {r.name for r in found if r.kind is ItemKind.COMPOSE_VOLUME}
+    mounted = {line.strip() for line in process.stdout.splitlines() if line.strip()}
+    return [
+        KeptVolume(name=name, project=project, reason="unlabelled")
+        for name in sorted(mounted - labelled)
+    ]
+
+
 def remove_project(
     project: str,
     *,
@@ -608,16 +639,20 @@ def remove_project(
 ) -> Removal:
     """Remove the recorded compose project `project`: its containers, networks, and volumes.
 
-    The resources carrying the project's label are listed, `docker compose -p <project> down
-    --volumes --remove-orphans` runs from a directory with no compose file (research.md §4), and
-    the label is listed again. What is still there is removed with `docker rm`, `docker network
-    rm`, and `docker volume rm`; what remains after that is `failed`. Only resources with the
-    recorded project's label are ever named in a removal command, so an `external` volume or
-    network is never removed (FR-039). Every removed resource is an item; a project with nothing
-    left is `already_absent` (FR-042). `COMPOSE_*` variables are not passed on, so they cannot
-    point Compose at another project or file. With `dry_run` only the listings run and the same
-    items are returned. When Docker cannot be asked, a real run reports the project as `failed`
-    and a listing returns the project itself, because `down` would try to remove it.
+    The resources carrying the project's label are listed, and the volumes its containers mount
+    without that label are found (`_unlabelled_mounts`). Then `docker compose -p <project> down
+    --remove-orphans` runs from a directory with no compose file (research.md §4), and the label
+    is listed again. What is still there is removed with `docker rm`, `docker network rm`, and
+    `docker volume rm`, each by its id or name; what remains after that is `failed`. `--volumes`
+    is never passed: it would remove the anonymous volumes too, which carry no label. Only
+    resources with the recorded project's label are ever named in a removal command, so an
+    anonymous or `external` volume and an `external` network are never removed (FR-039); the
+    volumes found without the label are `kept_volumes` (reading R6). Every removed resource is an
+    item; a project with nothing left is `already_absent` (FR-042). `COMPOSE_*` variables are not
+    passed on, so they cannot point Compose at another project or file. With `dry_run` only the
+    listings and the inspection run, and the same items are returned. When Docker cannot be asked,
+    a real run reports the project as `failed` and a listing returns the project itself, because
+    `down` would try to remove it.
     """
     base = os.environ if environ is None else environ
     env = {name: value for name, value in base.items() if not name.startswith("COMPOSE_")}
@@ -626,10 +661,11 @@ def remove_project(
         before = _list_project(project, run, env)
         if not before:
             return Removal(already_absent=[project_item])
+        kept_volumes = _unlabelled_mounts(project, before, run, env)
         if dry_run:
-            return Removal(removed=[_item_of(r) for r in before])
+            return Removal(removed=[_item_of(r) for r in before], kept_volumes=kept_volumes)
         with tempfile.TemporaryDirectory() as empty:
-            down = ["docker", "compose", "-p", project, "down", "--volumes", "--remove-orphans"]
+            down = ["docker", "compose", "-p", project, "down", "--remove-orphans"]
             _docker(run, down, env, Path(empty))  # what it leaves behind is checked next
         remaining = _list_project(project, run, env)
         reasons = {r: _remove_resource(r, run, env) for r in remaining}
@@ -650,6 +686,7 @@ def remove_project(
             )
             for r in left
         ],
+        kept_volumes=kept_volumes,
     )
 
 

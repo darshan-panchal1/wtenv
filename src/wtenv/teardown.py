@@ -3,9 +3,9 @@
 Teardown depends only on the registry: it works when the worktree directory, its `wtenv.toml`, and
 its env file are gone (FR-044). It removes only what the entry records, never anything found by a
 matching name (FR-039). The order of work is that of contracts/cli.md, `wtenv down`: the compose
-project (containers, networks, volumes, then the override file), the databases, wtenv's section of
-the env file, the port block and the registry entry, and, with the last registered worktree of the
-repository, wtenv's entries in `.git/info/exclude` (FR-085).
+project (containers, networks, the volumes that carry its label, then the override file), the
+databases, wtenv's section of the env file, the port block and the registry entry, and, with the
+last registered worktree of the repository, wtenv's entries in `.git/info/exclude` (FR-085).
 
 Nothing is written or deleted through a symbolic link (FR-086). Before the override file, the SQLite
 copy, or the env section is touched, and before it is marked `removing`, its path is checked with
@@ -43,6 +43,7 @@ from wtenv.output import (
     FailedItem,
     Item,
     ItemKind,
+    KeptVolume,
     ResourceState,
     WarningCode,
     WarningInfo,
@@ -58,15 +59,17 @@ SYMLINK_REASON = "symlink"
 
 @dataclass
 class Release:
-    """What releasing one entry did, or, for a plan, would do: the four lists of `DownResult`.
+    """What releasing one entry did, or, for a plan, would do: the lists of `DownResult`.
 
     `released` is whether the entry is gone from the registry, which happens only when no item
-    failed. Every item names the worktree it belongs to (`Item.worktree`).
+    failed. Every item names the worktree it belongs to (`Item.worktree`). `kept_volumes` are the
+    volumes of the compose project that were found and not removed, with or without a dry run.
     """
 
     removed: list[Item] = field(default_factory=list)
     already_absent: list[Item] = field(default_factory=list)
     failed: list[FailedItem] = field(default_factory=list)
+    kept_volumes: list[KeptVolume] = field(default_factory=list)
     released: bool = False
 
     def add(self, removal: Removal) -> None:
@@ -74,6 +77,7 @@ class Release:
         self.removed += removal.removed
         self.already_absent += removal.already_absent
         self.failed += removal.failed
+        self.kept_volumes += removal.kept_volumes
 
 
 def plan_release(entry: WorktreeEntry, *, password: str | None = None) -> Release:
@@ -451,4 +455,5 @@ def _result(
         would_remove=release.removed if dry_run else [],
         already_absent=release.already_absent,
         failed=release.failed,
+        kept_volumes=release.kept_volumes,
     )

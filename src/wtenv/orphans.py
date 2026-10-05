@@ -217,6 +217,7 @@ def _add(result: GcResult, entry: WorktreeEntry, release: "Release") -> None:
             result.released.append(entry.path)
     result.already_absent += release.already_absent
     result.failed += release.failed
+    result.kept_volumes += release.kept_volumes
 
 
 def _finished(result: GcResult) -> GcResult:
