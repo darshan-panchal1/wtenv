@@ -255,6 +255,16 @@ class FailedItem(Item):
     reason: str
 
 
+class KeptVolume(Model):
+    """A Docker volume that `down` or `gc` found and did not remove (FR-039, FR-041)."""
+
+    name: str
+    # The compose project it was found with.
+    project: str
+    # Why it was left: "unlabelled", it lacks `com.docker.compose.project=<project>`.
+    reason: Literal["unlabelled"]
+
+
 # --------------------------------------------------------------------------------------
 # One result model per command
 # --------------------------------------------------------------------------------------
@@ -299,6 +309,7 @@ class DownResult(Result):
     would_remove: list[Item] = Field(default_factory=list)
     already_absent: list[Item] = Field(default_factory=list)
     failed: list[FailedItem] = Field(default_factory=list)
+    kept_volumes: list[KeptVolume] = Field(default_factory=list)
 
 
 class KeptEntry(Model):
@@ -322,6 +333,7 @@ class GcResult(Result):
     would_remove: list[Item] = Field(default_factory=list)
     already_absent: list[Item] = Field(default_factory=list)
     failed: list[FailedItem] = Field(default_factory=list)
+    kept_volumes: list[KeptVolume] = Field(default_factory=list)
     kept: list[KeptEntry] = Field(default_factory=list)
     # Entries whose worktree lock was held; not waited for (FR-077).
     skipped_busy: list[str] = Field(default_factory=list)

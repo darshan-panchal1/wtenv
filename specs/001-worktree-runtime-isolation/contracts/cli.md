@@ -184,7 +184,7 @@ Releases everything the registry records for the current worktree (FR-038).
 `docker compose down` is run without `--volumes`, and wtenv removes each volume labelled
 `com.docker.compose.project=<recorded project name>` by name, as its own item in `removed`
 or, with `--dry-run`, `would_remove`; a volume without that label is never removed and is
-reported under `kept` with `reason` `unlabelled`);
+reported in `kept_volumes` with `reason` `unlabelled`, with or without `--dry-run`);
 databases; wtenv's section of the env file (and the file itself when wtenv created it and
 nothing else is in it); registry entry and port block; and, when this was the last
 registered worktree of the repository, wtenv's entries in `.git/info/exclude` (FR-085).
@@ -238,7 +238,9 @@ Releases registry entries whose worktrees git confirms are gone, across all repo
    under `removed` and, with `--dry-run`, under `would_remove`, as for `down`. It also
    includes the symbolic-link rule of `down` (FR-086): such an item goes under `failed`
    with `reason` `symlink`, the entry stays recorded and is not listed under `released`,
-   and the exit status is 13.
+   and the exit status is 13. Volumes of the entry's compose project are handled as for
+   `down`: a volume without the project label is never removed and is reported in
+   `kept_volumes` with `reason` `unlabelled`, with or without `--dry-run`.
 
 Entries that are `unverifiable` are reported under `kept` with their reason. Entries of
 existing worktrees are not touched and not listed. Neither `kept` nor `skipped_busy` changes
