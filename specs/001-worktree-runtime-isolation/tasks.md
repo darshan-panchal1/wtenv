@@ -1187,9 +1187,9 @@ nothing. Automated by T124–T125 and T130–T134.
 
 ### 8B. The agent contract for every command
 
-- [ ] T130 [P] [US6] Write contract tests for the command surface in `tests/contract/test_command_surface.py`
+- [X] T130 [P] [US6] Write contract tests for the command surface in `tests/contract/test_command_surface.py`
   - The commands and options are exactly cli.md's synopsis, nothing more (FR-001).
-- [ ] T131 [P] [US6] Write contract tests for every `--json` document in `tests/contract/test_json_documents.py`
+- [X] T131 [P] [US6] Write contract tests for every `--json` document in `tests/contract/test_json_documents.py`
   - The module creates worktrees, so it sets `pytestmark = pytest.mark.integration` and runs
     in the integration gate.
   - For `--version`, `up`, `down`, `down --dry-run`, `gc`, `gc --dry-run`, `gc --release`,
@@ -1197,16 +1197,16 @@ nothing. Automated by T124–T125 and T130–T134.
     failing `exec`: stdout is exactly one document that validates against the matching
     model of `json_models.py`; everything else is on stderr; `ok` is true exactly when the
     exit status is 0 (FR-058; US6 scenarios 1–2; SC-008).
-- [ ] T132 [P] [US6] Write contract tests for the exit statuses that need no git worktree in `tests/contract/test_exit_statuses.py`
+- [X] T132 [P] [US6] Write contract tests for the exit statuses that need no git worktree in `tests/contract/test_exit_statuses.py`
   - The module sets `pytestmark = pytest.mark.integration` (later cases create worktrees).
   - One triggering case per code, checking code and status (FR-059): 1, 2, 4 (outside any
     repository), 16 (a registry file that is not JSON, with `ls`).
-- [ ] T133 [US6] Add contract tests for the exit statuses of `up` to `tests/contract/test_exit_statuses.py`
+- [X] T133 [US6] Add contract tests for the exit statuses of `up` to `tests/contract/test_exit_statuses.py`
   - 3, 6, 7, 8 (Postgres on a closed port), 9 and 10 and 11 (SQLite), 12.
-- [ ] T134 [US6] Add contract tests for the exit statuses of the other commands to `tests/contract/test_exit_statuses.py`
+- [X] T134 [US6] Add contract tests for the exit statuses of the other commands to `tests/contract/test_exit_statuses.py`
   - 13 (damaged markers on `down`), 17, 18, 19 (`core.hooksPath`); 14 and 15 through the
     in-process functions with small bounds; 5 inside `exec`'s 125.
-- [ ] T135 [US6] Run `tests/contract/` and correct each deviation in `src/wtenv/cli.py` or `src/wtenv/output.py`
+- [X] T135 [US6] Run `tests/contract/` and correct each deviation in `src/wtenv/cli.py` or `src/wtenv/output.py`
   - Done when every test in `tests/contract/` passes, in both pytest gates.
 
 **Checkpoint**: all six stories work; the five gates pass.
