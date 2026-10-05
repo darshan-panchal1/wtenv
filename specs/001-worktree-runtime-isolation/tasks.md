@@ -1153,7 +1153,7 @@ nothing. Automated by T124–T125 and T130–T134.
 
 ### 8A. `wtenv doctor` (`doctor.py`, `cli.py`, `output.py`)
 
-- [ ] T124 [P] [US6] Write failing tests for the doctor checks in `tests/unit/test_doctor_checks.py`
+- [X] T124 [P] [US6] Write failing tests for the doctor checks in `tests/unit/test_doctor_checks.py`
   - Findings (cli.md, `wtenv doctor`): `block_overlap` (FR-060a); `orphaned_worktree`,
     `unverifiable_worktree` with `details.reason`, `incomplete_worktree`, from `classify`
     (FR-060c, d; FR-054); `missing_resource` for a recorded env section, env file, SQLite
@@ -1170,7 +1170,7 @@ nothing. Automated by T124–T125 and T130–T134.
   - Exit 0 without `problem` findings; otherwise 17, `ok` false, `error.code`
     `problems_found`, `details.problems` the count (FR-061).
   - The checks take the command runner as a parameter (`lsof`, `docker`).
-- [ ] T125 [P] [US6] Write failing integration tests for `doctor` in `tests/integration/test_us6_diagnostics.py`
+- [X] T125 [P] [US6] Write failing integration tests for `doctor` in `tests/integration/test_us6_diagnostics.py`
   - Scenario 3: a healthy setup → exit 0, no `problem` finding.
   - Scenario 4: a listener started outside the worktree on an assigned port →
     `port_conflict`; an entry whose worktree was removed with git → `orphaned_worktree`; a
@@ -1179,10 +1179,10 @@ nothing. Automated by T124–T125 and T130–T134.
   - A listener started inside the worktree is not a conflict.
   - Works outside any repository (FR-003); takes no worktree lock (FR-076); `DoctorResult`
     validates.
-- [ ] T126 [US6] Implement the registry checks in `src/wtenv/doctor.py`
-- [ ] T127 [US6] Implement the port-holder checks in `src/wtenv/doctor.py`
-- [ ] T128 [US6] Implement the dependency checks in `src/wtenv/doctor.py`
-- [ ] T129 [US6] Add `wtenv doctor [--json]` to `src/wtenv/cli.py` and its output to `src/wtenv/output.py`
+- [X] T126 [US6] Implement the registry checks in `src/wtenv/doctor.py`
+- [X] T127 [US6] Implement the port-holder checks in `src/wtenv/doctor.py`
+- [X] T128 [US6] Implement the dependency checks in `src/wtenv/doctor.py`
+- [X] T129 [US6] Add `wtenv doctor [--json]` to `src/wtenv/cli.py` and its output to `src/wtenv/output.py`
   - Exit statuses 0, 14, 16, 17.
 
 ### 8B. The agent contract for every command

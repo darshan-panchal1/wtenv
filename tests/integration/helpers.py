@@ -11,7 +11,7 @@ from pathlib import Path
 
 import psycopg
 
-from wtenv.output import DownResult, GcResult, Item, LsResult, UpResult
+from wtenv.output import DoctorResult, DownResult, GcResult, Item, LsResult, UpResult
 
 TEMPLATE_DATABASE = "wtenv_test_template"
 TEMPLATE_ROWS = [(1, "first"), (2, "second")]
@@ -54,6 +54,12 @@ def parse_ls(process: subprocess.CompletedProcess[str]) -> LsResult:
     """Return the `LsResult` that `wtenv ls --json` printed; standard output is one document."""
     assert len(process.stdout.splitlines()) == 1, process.stdout
     return LsResult.model_validate_json(process.stdout)
+
+
+def parse_doctor(process: subprocess.CompletedProcess[str]) -> DoctorResult:
+    """Return the `DoctorResult` that `wtenv doctor --json` printed; standard output is one document."""
+    assert len(process.stdout.splitlines()) == 1, process.stdout
+    return DoctorResult.model_validate_json(process.stdout)
 
 
 def snapshot_tree(root: Path) -> dict[str, tuple[str, bytes | str | None, int]]:

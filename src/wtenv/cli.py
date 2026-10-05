@@ -187,6 +187,34 @@ def exec_command(
     raise typer.Exit(replace_process(command, environment))
 
 
+@app.command("doctor")
+def doctor_command(
+    json_output: bool = typer.Option(False, "--json", help="Print one JSON document."),
+) -> None:
+    """Check ports, registry entries, and dependencies; it changes nothing."""
+    from wtenv.doctor import diagnose
+    from wtenv.output import (
+        DoctorResult,
+        failed_result,
+        print_error,
+        print_result,
+        render_doctor_text,
+    )
+
+    try:
+        result = diagnose()
+    except WtenvError as error:
+        print_error(error)
+        print_result(failed_result(DoctorResult, error), json_mode=json_output)
+        raise typer.Exit(EXIT_STATUS[error.code]) from error
+    if result.error is not None:
+        # Problems were found: the document still lists every finding.
+        print_error(WtenvError(result.error.code, result.error.message, hint=result.error.hint))
+    print_result(result, json_mode=json_output, text=render_doctor_text(result))
+    if result.error is not None:
+        raise typer.Exit(result.error.exit_status)
+
+
 hook_app = typer.Typer(
     help="Install or remove the git hook that provisions new worktrees.", no_args_is_help=True
 )

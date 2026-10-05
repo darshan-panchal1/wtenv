@@ -491,6 +491,26 @@ def render_hook_uninstall_text(result: HookUninstallResult) -> str:
     return "\n".join(f"wtenv: removed the {item.kind.value} {item.name}" for item in result.removed)
 
 
+def render_doctor_text(result: DoctorResult) -> str:
+    """Return the report `wtenv doctor` prints for people (cli.md, `wtenv doctor`; not stable).
+
+    The dependencies first, then one line per finding, problems marked `problem` and the rest
+    `info`, and a last line that says how many problems there are.
+    """
+    lines = ["dependencies:"]
+    for dependency in result.dependencies:
+        detail = "" if dependency.detail is None else f"  ({dependency.detail})"
+        lines.append(f"  {dependency.name:<10}{dependency.status}{detail}")
+    for finding in result.findings:
+        lines.append(f"{finding.severity:<8}{finding.code.value}: {finding.message}")
+    problems = sum(1 for finding in result.findings if finding.severity == "problem")
+    if problems:
+        lines.append(f"wtenv doctor: {problems} problem(s) found")
+    else:
+        lines.append("wtenv doctor: no problems found")
+    return "\n".join(lines)
+
+
 def render_ls_text(result: LsResult) -> str:
     """Return the table `wtenv ls` prints for people (cli.md, `wtenv ls`; not a stable interface).
 

@@ -13,7 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from helpers import commit_all, git, make_sqlite_template
+from helpers import commit_all, git, make_sqlite_template, snapshot_tree
 
 from wtenv.errors import ErrorCode
 from wtenv.hooks import BLOCK
@@ -402,12 +402,42 @@ def test_no_other_command_installs_the_hook(
     run_wtenv: Run, repo: Path, add_worktree: AddWorktree
 ) -> None:
     worktree = add_worktree(repo, "feature-x", "feature-x")
+    hooks_before = snapshot_tree(repo / ".git" / "hooks")
 
-    for command in (["up"], ["ls"], ["gc"], ["down"]):
-        assert run_wtenv([*command, "--json"], worktree).returncode == 0
+    for command in (["up"], ["ls"], ["doctor"], ["gc"], ["down"]):
+        assert run_wtenv([*command, "--json"], worktree).returncode == 0, command
+        assert snapshot_tree(repo / ".git" / "hooks") == hooks_before, command
 
     assert not hook_file(repo).exists()
     assert load().hooks == {}
+
+
+def test_doctor_never_installs_the_hook_even_when_a_problem_is_found(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree
+) -> None:
+    gone = add_worktree(repo, "gone", "gone")
+    assert run_wtenv(["up"], gone).returncode == 0
+    git(repo, "worktree", "remove", "--force", str(gone))
+    hooks_before = snapshot_tree(repo / ".git" / "hooks")
+
+    for flags in ([], ["--json"]):
+        assert run_wtenv(["doctor", *flags], repo).returncode == 17
+
+    assert snapshot_tree(repo / ".git" / "hooks") == hooks_before
+    assert not hook_file(repo).exists()
+
+
+def test_no_command_changes_a_hook_the_developer_already_has(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree
+) -> None:
+    hook_file(repo).write_text('#!/bin/sh\necho "developer hook ran" >&2\n', encoding="utf-8")
+    hook_file(repo).chmod(0o755)
+    worktree = add_worktree(repo, "feature-x", "feature-x")
+    hooks_before = snapshot_tree(repo / ".git" / "hooks")
+
+    for command in (["up"], ["ls"], ["doctor"], ["gc"], ["down"]):
+        assert run_wtenv([*command, "--json"], worktree).returncode == 0, command
+        assert snapshot_tree(repo / ".git" / "hooks") == hooks_before, command
 
 
 # --- unsupported setups -----------------------------------------------------------------------

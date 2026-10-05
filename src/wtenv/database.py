@@ -503,6 +503,32 @@ def inspect_postgres(target: PostgresTarget, *, template: str, name: str) -> Pos
         _raise_mapped(error, target, template, name, None)
 
 
+def postgres_database_exists(target: PostgresTarget, name: str) -> bool:
+    """Return whether the server holds a database called `name`. It changes nothing.
+
+    Raises `dependency_unavailable` when the server cannot be reached, refuses the login, is
+    older than 13, or cannot answer; `wtenv doctor` asks it of the databases the registry records.
+    """
+    import psycopg
+
+    try:
+        with _connect(target) as connection:
+            check_postgres_version(connection.info.server_version, target)
+            return _exists(connection, name)
+    except psycopg.Error as error:
+        mapped = map_postgres_error(error, target=target, template="", name=name)
+        if mapped is None:
+            mapped = _unavailable(
+                "cannot_connect", f"cannot ask the Postgres server at {_server_text(target)}"
+            )
+        raise mapped from None
+
+
+def check_postgres_server(target: PostgresTarget) -> None:
+    """Raise `dependency_unavailable` unless the server answers, accepts the login, and is 13+."""
+    postgres_database_exists(target, MAINTENANCE_DATABASE)
+
+
 def create_postgres_database(target: PostgresTarget, *, template: str, name: str) -> None:
     """Run `CREATE DATABASE <name> TEMPLATE <template>` on one autocommit connection.
 

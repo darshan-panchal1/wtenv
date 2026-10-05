@@ -60,3 +60,25 @@ def test_ls_json_does_not_load_psycopg_or_the_compose_module(tmp_path: Path) -> 
     document_line, report_line = result.stdout.splitlines()
     assert json.loads(document_line)["command"] == "ls"
     assert json.loads(report_line) == {"status": 0, "loaded": []}
+
+
+def test_doctor_does_not_load_psycopg_without_a_postgres_configuration(tmp_path: Path) -> None:
+    script = (
+        "import json, sys\n"
+        "import wtenv.cli\n"
+        "status = wtenv.cli.main(['doctor', '--json'])\n"
+        "loaded = [name for name in ['psycopg'] if name in sys.modules]\n"
+        "print(json.dumps({'status': status, 'loaded': loaded}))\n"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=tmp_path,
+    )
+
+    document_line, report_line = result.stdout.splitlines()
+    assert json.loads(document_line)["command"] == "doctor"
+    assert json.loads(report_line) == {"status": 0, "loaded": []}
