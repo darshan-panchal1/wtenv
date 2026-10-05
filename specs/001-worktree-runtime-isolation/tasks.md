@@ -308,7 +308,7 @@ byte-identical. Automated by T039–T043; manual by quickstart.md sections 1 and
 
 ### 3B. Port allocation (`ports.py`) — core area 2
 
-- [ ] T029 [P] [US1] Write failing tests for the free-port test and the block search in `tests/unit/test_ports_search.py`
+- [X] T029 [P] [US1] Write failing tests for the free-port test and the block search in `tests/unit/test_ports_search.py`
   - A port is free when a TCP `bind` without `SO_REUSEADDR` succeeds on `127.0.0.1`,
     `0.0.0.0`, and `::1`; an unavailable address family (`EADDRNOTAVAIL`, `EAFNOSUPPORT`) is
     skipped (data-model.md, Port allocation; FR-009).
@@ -318,12 +318,12 @@ byte-identical. Automated by T039–T043; manual by quickstart.md sections 1 and
   - None left → `no_free_block` with `details.block_size` and `details.range` (FR-012).
   - The same registry and the same free ports give the same block. The search takes the
     free-port test as a parameter, so tests can fake it.
-- [ ] T030 [P] [US1] Write failing tests for assigning variable ports in `tests/unit/test_ports_assign.py`
+- [X] T030 [P] [US1] Write failing tests for assigning variable ports in `tests/unit/test_ports_assign.py`
   - Variable `i` (from 0) in `ports` gets `start + i`, the same on every call (FR-014, FR-017).
   - More variables than the block holds → `config_invalid`, `details.setting` `block_size`,
     `details.min_block_size` the number needed (FR-014). No port outside the block (FR-011).
-- [ ] T031 [US1] Implement the free-port test and the block search in `src/wtenv/ports.py`
-- [ ] T032 [US1] Implement assigning variable ports in `src/wtenv/ports.py`
+- [X] T031 [US1] Implement the free-port test and the block search in `src/wtenv/ports.py`
+- [X] T032 [US1] Implement assigning variable ports in `src/wtenv/ports.py`
 
 ### 3C. Env file section (`envfile.py`) — core area 8
 
