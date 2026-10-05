@@ -950,7 +950,7 @@ T104–T108, and T112.
 
 ### 6F. `wtenv ls` (`listing.py`, `cli.py`, `output.py`)
 
-- [ ] T112 [US4] Add failing tests for `ls` to `tests/integration/test_us4_lifecycle.py`
+- [X] T112 [US4] Add failing tests for `ls` to `tests/integration/test_us4_lifecycle.py`
   - Scenario 6 (FR-048, FR-049): entries of two repositories listed from anywhere, each with
     repository, path, block, each variable's port, published ports, database, compose
     project, and status.
@@ -962,14 +962,14 @@ T104–T108, and T112.
   - FR-050: the registry is byte-identical afterwards; `ls` works while another process
     holds a worktree lock (FR-068, FR-076).
   - `LsResult` validates; the text table has cli.md's columns; no credentials (FR-019).
-- [ ] T113 [P] [US4] Add an `ls --json` case to `tests/unit/test_lazy_imports.py`
+- [X] T113 [P] [US4] Add an `ls --json` case to `tests/unit/test_lazy_imports.py`
   - After `wtenv.cli.main(["ls", "--json"])` in a fresh interpreter, `psycopg` and
     `wtenv.compose` are not in `sys.modules` (NFR-001; research.md §8).
-- [ ] T114 [US4] Implement the `ls` views in `src/wtenv/listing.py`
+- [X] T114 [US4] Implement the `ls` views in `src/wtenv/listing.py`
   - One `WorktreeView` per entry, status from `classify`. Inside a repository, add the
     worktrees that are in the listing, exist on disk, and whose `points_to` is not a registry
     key, as `unprovisioned` (data-model.md).
-- [ ] T115 [US4] Add `wtenv ls [--json]` to `src/wtenv/cli.py` and its table to `src/wtenv/output.py`
+- [X] T115 [US4] Add `wtenv ls [--json]` to `src/wtenv/cli.py` and its table to `src/wtenv/output.py`
   - Registry lock only, briefly; no worktree lock (FR-076). Exit statuses 0, 14, 16.
 
 **Checkpoint**: US1–US4 work; the five gates pass.

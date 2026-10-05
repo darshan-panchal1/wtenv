@@ -103,6 +103,23 @@ def down(
         raise typer.Exit(result.error.exit_status)
 
 
+@app.command()
+def ls(
+    json_output: bool = typer.Option(False, "--json", help="Print one JSON document."),
+) -> None:
+    """List every worktree wtenv knows, and this repository's worktrees that have no entry."""
+    from wtenv.listing import list_worktrees
+    from wtenv.output import LsResult, failed_result, print_error, print_result, render_ls_text
+
+    try:
+        result = list_worktrees()
+    except WtenvError as error:
+        print_error(error)
+        print_result(failed_result(LsResult, error), json_mode=json_output)
+        raise typer.Exit(EXIT_STATUS[error.code]) from error
+    print_result(result, json_mode=json_output, text=render_ls_text(result))
+
+
 def _print_version(json_mode: bool) -> None:
     """Print `wtenv <version>`, or a `VersionResult` document with `--json`."""
     if json_mode:

@@ -413,6 +413,49 @@ def render_down_text(result: DownResult) -> str:
     return "\n".join(lines)
 
 
+_LS_HEADER = ("STATUS", "PORTS", "VARIABLES", "DATABASE", "COMPOSE", "PATH")
+
+
+def render_ls_text(result: LsResult) -> str:
+    """Return the table `wtenv ls` prints for people (cli.md, `wtenv ls`; not a stable interface).
+
+    One row per worktree under the header STATUS, PORTS, VARIABLES, DATABASE, COMPOSE, PATH; a part
+    that is not there shows `-`. An unverifiable row ends with its reason in parentheses. A
+    database is shown by kind and name or path, never by a URL, which can hold a password.
+    """
+    if not result.worktrees:
+        return "wtenv: no worktrees"
+    rows = [_LS_HEADER] + [_ls_row(view) for view in result.worktrees]
+    widths = [max(len(row[column]) for row in rows) + 2 for column in range(len(_LS_HEADER) - 1)]
+    return "\n".join(
+        "".join(cell.ljust(width) for cell, width in zip(row, widths, strict=False))
+        + row[len(widths)]
+        for row in rows
+    )
+
+
+def _ls_row(view: WorktreeView) -> tuple[str, str, str, str, str, str]:
+    """Return the cells of one `ls` row, in the order of `_LS_HEADER`."""
+    block = "-" if view.block is None else f"{view.block.start}-{view.block.end}"
+    variables = " ".join(f"{port.variable}={port.port}" for port in view.ports if port.variable)
+    databases = ", ".join(
+        f"{database.kind} {database.name if database.kind == 'postgres' else database.path}"
+        for database in view.databases
+    )
+    path = view.path
+    if view.reason is not None:
+        path += f"  ({view.reason.value}"
+        path += f": {view.current_path})" if view.current_path else ")"
+    return (
+        view.status.value,
+        block,
+        variables or "-",
+        databases or "-",
+        view.compose_project or "-",
+        path,
+    )
+
+
 def _published_text(port: PortView) -> str:
     """Return `service:target -> port (VARIABLE)`; a port that is not tcp shows `/protocol`."""
     protocol = "" if port.protocol in (None, "tcp") else f"/{port.protocol}"

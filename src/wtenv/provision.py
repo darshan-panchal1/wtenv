@@ -26,13 +26,12 @@ from wtenv.database import PostgresTarget
 from wtenv.errors import ErrorCode, WtenvError
 from wtenv.gitutil import git_path, is_tracked
 from wtenv.identity import WorktreeIdentity, current_worktree
+from wtenv.listing import database_view, port_views
 from wtenv.locks import WORKTREE_LOCK_TIMEOUT, registry_lock, worktree_lock
 from wtenv.output import (
     BlockView,
-    DatabaseView,
     Item,
     ItemKind,
-    PortView,
     PostUpRun,
     ResourceState,
     Status,
@@ -888,61 +887,9 @@ def _result(
         path=identity.path,
         status=Status.PROVISIONED,
         block=BlockView(start=block.start, end=block.start + block.size - 1, size=block.size),
-        ports=_port_views(entry),
-        databases=[_database_view(identity, record) for record in entry.databases],
+        ports=port_views(entry),
+        databases=[database_view(identity.path, record) for record in entry.databases],
         compose_project=None if entry.compose is None else entry.compose.project,
         env_file=env_rel,
     )
     return UpResult(ok=True, worktree=view, changes=changes, warnings=warnings, post_up=post_up)
-
-
-def _port_views(entry: WorktreeEntry) -> list[PortView]:
-    """Describe the block's ports: each variable's port, then the published ports without one.
-
-    A published port tied to a variable shows on that variable's view, with its service.
-    """
-    tied: dict[str, PublishedPort] = {}
-    others: list[PublishedPort] = []
-    for published in entry.published:
-        if published.variable is not None and published.variable not in tied:
-            tied[published.variable] = published
-        else:
-            others.append(published)
-    views = []
-    for assigned in entry.ports:
-        match = tied.get(assigned.variable)
-        views.append(
-            PortView(
-                port=assigned.port,
-                variable=assigned.variable,
-                service=None if match is None else match.service,
-                target=None if match is None else match.target,
-                protocol=None if match is None else match.protocol,
-                host_ip=None if match is None else match.host_ip,
-            )
-        )
-    for published in others:
-        views.append(
-            PortView(
-                port=published.port,
-                variable=published.variable,
-                service=published.service,
-                target=published.target,
-                protocol=published.protocol,
-                host_ip=published.host_ip,
-            )
-        )
-    return views
-
-
-def _database_view(identity: WorktreeIdentity, record: DatabaseRecord) -> DatabaseView:
-    """Describe a recorded database: kind, name, host, and port, or the copy's path; no URL."""
-    path = None if record.path is None else str(Path(identity.path) / record.path)
-    return DatabaseView(
-        kind=record.kind,
-        state=record.state,
-        name=record.name,
-        host=record.host,
-        port=record.port,
-        path=path,
-    )

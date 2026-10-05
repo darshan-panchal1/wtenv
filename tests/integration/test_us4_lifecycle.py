@@ -9,6 +9,7 @@ containers, networks, volumes, and databases they created.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import uuid
@@ -31,6 +32,7 @@ from helpers import (
     keys,
     make_sqlite_template,
     parse_down,
+    parse_ls,
     parse_up,
     project_resources,
     sqlite_rows,
@@ -39,7 +41,17 @@ from helpers import (
 from wtenv.database import postgres_database_name
 from wtenv.errors import ErrorCode
 from wtenv.identity import current_worktree
-from wtenv.output import DownResult, ItemKind
+from wtenv.output import (
+    BlockView,
+    DatabaseView,
+    DownResult,
+    ItemKind,
+    LsResult,
+    PortView,
+    ResourceState,
+    Status,
+    UnverifiableReason,
+)
 from wtenv.registry import WorktreeEntry, load, registry_path
 
 pytestmark = pytest.mark.integration
@@ -899,3 +911,221 @@ def test_the_items_of_a_full_down_come_out_in_the_order_of_cli_md(
     assert planned.would_remove == result.removed
     assert not postgres_server.database_exists(database_name(worktree))
     assert all(not ids for ids in project_resources(project).values())
+
+
+# --- `wtenv ls` (T112; FR-048 to FR-050, FR-054, FR-076; US4 scenario 6) -------------------------
+
+
+def ls(run_wtenv: Run, cwd: Path) -> LsResult:
+    """Run `wtenv ls --json` in `cwd`; it must succeed."""
+    process = run_wtenv(["ls", "--json"], cwd)
+    assert process.returncode == 0, process.stdout + process.stderr
+    return parse_ls(process)
+
+
+def test_ls_lists_the_entries_of_two_repositories_from_anywhere_with_everything_recorded(
+    run_wtenv: Run, make_repo: Callable[[str], Path], add_worktree: AddWorktree, tmp_path: Path
+) -> None:
+    first_repo = make_repo("app")
+    make_sqlite_template(first_repo / "db" / "dev.sqlite3")
+    write_config(first_repo, 'ports = ["PORT", "API_PORT"]\n\n' + SQLITE_TOML.lstrip())
+    commit_all(first_repo)
+    first = add_worktree(first_repo, "feature-a", "feature-a")
+    second = add_worktree(make_repo("other"), "feature-b", "feature-b")
+    up(run_wtenv, first)
+    up(run_wtenv, second)
+    plain = tmp_path / "plain"
+    plain.mkdir()
+
+    result = ls(run_wtenv, plain)  # outside any repository (FR-003)
+
+    assert result.ok and result.error is None
+    views = {view.path: view for view in result.worktrees}
+    assert set(views) == {str(first), str(second)}  # nothing is unprovisioned outside a repository
+    a, b = views[str(first)], views[str(second)]
+    assert (a.repository, a.git_dir) == (entry_of(first).repository, entry_of(first).git_dir)
+    assert b.repository != a.repository  # two repositories, listed together
+    assert a.status is Status.PROVISIONED and a.reason is None and a.current_path is None
+    assert a.block == BlockView(start=20000, end=20009, size=10)
+    assert a.ports == [
+        PortView(port=20000, variable="PORT"),
+        PortView(port=20001, variable="API_PORT"),
+    ]
+    assert a.databases == [
+        DatabaseView(
+            kind="sqlite", state=ResourceState.CREATED, path=str(first / ".wtenv" / "dev.sqlite3")
+        )
+    ]
+    assert a.compose_project is None and a.env_file == ".env.local"
+    assert b.block == BlockView(start=20010, end=20019, size=10)
+    assert b.ports == [PortView(port=20010, variable="PORT")] and b.databases == []
+
+
+def test_inside_a_repository_ls_adds_its_worktrees_that_have_no_entry_as_unprovisioned(
+    run_wtenv: Run, make_repo: Callable[[str], Path], add_worktree: AddWorktree, tmp_path: Path
+) -> None:
+    repo = make_repo("app")
+    provisioned = add_worktree(repo, "one", "one")
+    plain_worktree = add_worktree(repo, "two", "two")
+    elsewhere = add_worktree(make_repo("other"), "three", "three")  # another repository
+    up(run_wtenv, provisioned)
+
+    inside = ls(run_wtenv, provisioned)
+
+    statuses = {view.path: view.status for view in inside.worktrees}
+    assert statuses == {
+        str(provisioned): Status.PROVISIONED,
+        str(plain_worktree): Status.UNPROVISIONED,
+        str(repo): Status.UNPROVISIONED,  # the main worktree has no entry either
+    }
+    assert str(elsewhere) not in statuses
+    row = next(view for view in inside.worktrees if view.path == str(plain_worktree))
+    assert row.git_dir == current_worktree(plain_worktree).git_dir
+    assert row.repository == entry_of(provisioned).repository
+    assert row.block is None and row.ports == [] and row.databases == []
+    assert row.compose_project is None and row.env_file is None
+
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    outside = ls(run_wtenv, plain)
+
+    assert [view.path for view in outside.worktrees] == [str(provisioned)]
+
+
+def test_ls_with_an_empty_registry_outside_any_repository_is_an_empty_list(
+    run_wtenv: Run, tmp_path: Path
+) -> None:
+    plain = tmp_path / "plain"
+    plain.mkdir()
+
+    result = ls(run_wtenv, plain)
+
+    assert result.ok and result.worktrees == []
+    assert not registry_path().exists()  # reading creates no registry (FR-050)
+
+
+def test_every_status_comes_from_classify(
+    run_wtenv: Run, make_repo: Callable[[str], Path], add_worktree: AddWorktree, tmp_path: Path
+) -> None:
+    repo = make_repo("app")
+    ok = add_worktree(repo, "ok", "ok")
+    failing = add_worktree(repo, "failing", "failing")
+    removed = add_worktree(repo, "removed", "removed")
+    deleted = add_worktree(repo, "deleted", "deleted")
+    moving = add_worktree(repo, "moving", "moving")
+    doomed_repo = make_repo("doomed")
+    doomed = add_worktree(doomed_repo, "stray", "stray")
+    write_config(failing, 'post_up = ["exit 3"]\n')
+    for worktree in (ok, removed, deleted, moving, doomed):
+        up(run_wtenv, worktree)
+    assert run_wtenv(["up"], failing).returncode == 12  # a failed post-up command
+    git(repo, "worktree", "remove", "--force", str(removed))
+    shutil.rmtree(deleted)  # deleted by hand: git still lists it
+    new_place = moving.parent / "moved-away"
+    git(repo, "worktree", "move", str(moving), str(new_place))
+    shutil.rmtree(doomed_repo)
+    shutil.rmtree(doomed)  # the whole repository, and its worktree, are gone
+    plain = tmp_path / "plain"
+    plain.mkdir()
+
+    views = {view.path: view for view in ls(run_wtenv, plain).worktrees}
+
+    def row(path: Path) -> tuple[Status, UnverifiableReason | None, str | None]:
+        view = views[str(path)]
+        return view.status, view.reason, view.current_path
+
+    assert row(ok) == (Status.PROVISIONED, None, None)
+    assert row(failing) == (Status.INCOMPLETE, None, None)
+    assert row(removed) == (Status.ORPHANED, None, None)  # FR-054
+    assert row(deleted) == (Status.UNVERIFIABLE, UnverifiableReason.GIT_STILL_LISTS, None)
+    assert row(moving) == (Status.UNVERIFIABLE, UnverifiableReason.MOVED, str(new_place.resolve()))
+    assert row(doomed) == (Status.UNVERIFIABLE, UnverifiableReason.REPOSITORY_NOT_FOUND, None)
+
+
+def test_ls_changes_nothing_and_works_while_another_process_holds_a_worktree_lock(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree
+) -> None:
+    worktree = add_worktree(repo, "feature-x", "feature-x")
+    up(run_wtenv, worktree)
+    before = registry_path().read_bytes()
+    holder = subprocess.Popen(
+        [sys.executable, "-c", LOCK_HOLDER, current_worktree(worktree).git_dir],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout is not None and holder.stdout.readline().strip() == "locked"
+
+        result = ls(run_wtenv, worktree)
+        text = run_wtenv(["ls"], worktree)
+
+        assert [view.path for view in result.worktrees] == [str(worktree), str(repo)]
+        assert text.returncode == 0
+    finally:
+        holder.kill()
+        holder.wait()
+    assert registry_path().read_bytes() == before  # FR-050: byte-identical
+
+
+def test_the_text_table_has_the_columns_of_cli_md_and_names_the_reason(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, tmp_path: Path
+) -> None:
+    ok = add_worktree(repo, "ok", "ok")
+    gone = add_worktree(repo, "gone", "gone")
+    write_config(ok, 'ports = ["PORT", "API_PORT"]\n')
+    up(run_wtenv, ok)
+    up(run_wtenv, gone)
+    shutil.rmtree(gone)
+
+    process = run_wtenv(["ls"], ok)
+
+    assert process.returncode == 0
+    header, *rows = process.stdout.splitlines()
+    assert header.split() == ["STATUS", "PORTS", "VARIABLES", "DATABASE", "COMPOSE", "PATH"]
+    by_path = {row.split()[-1] if "(" not in row else row.split()[-2]: row for row in rows}
+    assert "provisioned" in by_path[str(ok)] and "20000-20009" in by_path[str(ok)]
+    assert "PORT=20000 API_PORT=20001" in by_path[str(ok)]
+    assert "unverifiable" in by_path[str(gone)] and "(git_still_lists)" in by_path[str(gone)]
+    assert any("unprovisioned" in row and str(repo) in row for row in rows)
+    assert not process.stdout.lstrip().startswith("{")
+
+
+def test_ls_shows_a_postgres_database_and_a_compose_project_and_never_a_credential(
+    run_wtenv: Run,
+    repo: Path,
+    add_worktree: AddWorktree,
+    postgres_server: PostgresServer,
+    pg_env: dict[str, str],
+    database_cleanup: list[str],
+    compose_image: str,
+    compose_projects: ComposeProjects,
+    external_volume: str,
+) -> None:
+    toml = COMPOSE_TOML + "\n" + postgres_toml(postgres_server)
+    worktree = compose_worktree(repo, add_worktree, external_volume, toml)
+    database_cleanup.append(database_name(worktree))
+    up(run_wtenv, worktree, pg_env)
+    project = compose_projects.track(project_of(worktree))
+
+    as_json = run_wtenv(["ls", "--json"], worktree, pg_env)
+    as_text = run_wtenv(["ls"], worktree, pg_env)
+
+    result = parse_ls(as_json)
+    row = next(view for view in result.worktrees if view.path == str(worktree))
+    assert row.compose_project == project
+    assert row.databases == [
+        DatabaseView(
+            kind="postgres",
+            state=ResourceState.CREATED,
+            name=database_name(worktree),
+            host=postgres_server.host,
+            port=postgres_server.port,
+        )
+    ]
+    cache = next(port for port in row.ports if port.variable == "CACHE_PORT")
+    assert (cache.service, cache.target, cache.protocol) == ("cache", 6379, "tcp")
+    assert row.block is not None
+    assert cache.port in range(row.block.start, row.block.end + 1)
+    for process in (as_json, as_text):
+        assert postgres_server.password not in process.stdout + process.stderr  # FR-019
+    assert f"postgres {database_name(worktree)}" in as_text.stdout and project in as_text.stdout
