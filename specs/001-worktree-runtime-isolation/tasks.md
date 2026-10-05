@@ -153,7 +153,7 @@ identity, the registry and its locks, and the CLI shell with a lazy-import `--ve
 
 ### 2C. Git helpers and worktree identity (`gitutil.py`, `identity.py`) — core area 3
 
-- [ ] T013 [P] Write failing tests for git output parsing in `tests/unit/test_gitutil.py`
+- [X] T013 [P] Write failing tests for git output parsing in `tests/unit/test_gitutil.py`
   - `git worktree list --porcelain` text → one record per worktree with its path and the
     `bare`, `detached`, `locked`, and `prunable` attributes (research.md §6).
   - Git missing → `dependency_unavailable`, `details.dependency` `git`, `reason`
@@ -162,7 +162,7 @@ identity, the registry and its locks, and the CLI shell with a lazy-import `--ve
   - The environment given to git lacks every repository-local variable (`GIT_DIR`,
     `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR`, and the rest of
     `git rev-parse --local-env-vars`).
-- [ ] T014 [P] Write failing tests for `points_to`, the identity parser, `short_id`, and `slug` in `tests/unit/test_identity.py`
+- [X] T014 [P] Write failing tests for `points_to`, the identity parser, `short_id`, and `slug` in `tests/unit/test_identity.py`
   - `points_to(p)` (data-model.md, Status and the orphan checks): `p/.git` is a directory →
     that directory; a file holding `gitdir: <path>` → the path resolved against `p`;
     missing or unreadable → nothing.
@@ -175,7 +175,7 @@ identity, the registry and its locks, and the CLI shell with a lazy-import `--ve
     "lowercased, with every run of characters outside `a–z` and `0–9` replaced by one `_`
     (for databases) or `-` (for compose), trimmed of those characters at both ends, and cut
     to 40 characters. An empty slug becomes `wt`."
-- [ ] T015 [P] Write failing integration tests for identity on real worktrees in `tests/integration/test_identity_git.py`
+- [X] T015 [P] Write failing integration tests for identity on real worktrees in `tests/integration/test_identity_git.py`
   - The same identity from the worktree root, a subdirectory, and through a symbolic link;
     main and linked worktrees differ and share `repository` (FR-006).
   - After `git worktree move` and after a plain `mv`, `git_dir` is unchanged and `path` is
@@ -183,13 +183,13 @@ identity, the registry and its locks, and the CLI shell with a lazy-import `--ve
   - Outside a repository and inside `.git`: `not_in_worktree` with `details.cwd` (FR-002).
   - An inherited `GIT_DIR` that points at another repository does not change the result.
   - Every name printed by `git rev-parse --local-env-vars` is in gitutil's scrub list.
-- [ ] T016 Implement `src/wtenv/gitutil.py`: run git with a scrubbed environment, the porcelain parser, `git_path`, and `is_tracked`
+- [X] T016 Implement `src/wtenv/gitutil.py`: run git with a scrubbed environment, the porcelain parser, `git_path`, and `is_tracked`
   - The scrub list is a constant, so no extra git call is made. The git version is read only
     after a git call fails, to report `too_old`; the normal path makes no version call
     (NFR-001).
   - `git_path(worktree, name)` runs `git rev-parse --path-format=absolute --git-path <name>`;
     `is_tracked(worktree, path)` asks git whether the path is tracked.
-- [ ] T017 Implement `WorktreeIdentity`, the current-worktree lookup, `points_to`, `short_id`, and `slug` in `src/wtenv/identity.py`
+- [X] T017 Implement `WorktreeIdentity`, the current-worktree lookup, `points_to`, `short_id`, and `slug` in `src/wtenv/identity.py`
   - One `git rev-parse` call; exit status 128 → `not_in_worktree` with `details.cwd`.
   - `slug` and `short_id` are here, not in a story phase, because US2's database names and
     US3's compose project name both use them.
