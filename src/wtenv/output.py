@@ -349,8 +349,9 @@ def failed_result(model: type[R], error: WtenvError, warnings: Sequence[WarningI
 def render_up_text(result: UpResult) -> str:
     """Return the text `wtenv up` prints for people (cli.md, `wtenv up`; not a stable interface).
 
-    One header line, then one line per part of the worktree: its ports with their variables, and
-    the env file with what happened to it.
+    One header line, then one line per part of the worktree: its ports with their variables, its
+    databases, and the env file with what happened to it. A database line shows the kind, the
+    name and server or the path, and what happened to it; never a URL, which can hold a password.
     """
     worktree = result.worktree
     if worktree is None:
@@ -364,6 +365,8 @@ def render_up_text(result: UpResult) -> str:
     for change in result.changes:
         if change.action == "released":
             lines.append(f"  {'released':<11}{change.item.kind.value} {change.item.name}")
+    for database in worktree.databases:
+        lines.append(_database_line(database, result.changes))
     if worktree.env_file is not None:
         # The section of the env file that is in use, not one that was released.
         action = next(
@@ -376,6 +379,21 @@ def render_up_text(result: UpResult) -> str:
         )
         lines.append(f"  {'env file':<11}{worktree.env_file} ({action})")
     return "\n".join(lines)
+
+
+def _database_line(database: DatabaseView, changes: Sequence[UpChange]) -> str:
+    """Return the `database` line of `render_up_text`; what happened comes from `changes`."""
+    kind = ItemKind.POSTGRES_DATABASE if database.kind == "postgres" else ItemKind.SQLITE_FILE
+    named = database.name if database.kind == "postgres" else database.path
+    action = next(
+        (c.action for c in changes if c.item.kind is kind and c.item.name == named), "unchanged"
+    )
+    where = (
+        f"{database.name} on {database.host}:{database.port}"
+        if database.kind == "postgres"
+        else f"{database.path}"
+    )
+    return f"  {'database':<11}{database.kind} {where}  ({action})"
 
 
 def print_result(result: Result, *, json_mode: bool, text: str = "") -> None:

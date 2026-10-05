@@ -281,25 +281,9 @@ def map_postgres_error(
     from psycopg import OperationalError, errors
 
     if isinstance(error, errors.ObjectInUse):
-        details: dict[str, JsonValue] = {"kind": "postgres", "template": template}
-        count = ""
-        if connections is not None:
-            details["connections"] = connections
-            count = f" ({connections} open)"
-        return WtenvError(
-            ErrorCode.TEMPLATE_IN_USE,
-            f"the template database {template} has other sessions connected{count}, "
-            "and cannot be copied while they are",
-            hint="Close the connections to the template, then run `wtenv up` again.",
-            details=details,
-        )
+        return _template_in_use(template, connections)
     if isinstance(error, errors.InvalidCatalogName):
-        return WtenvError(
-            ErrorCode.TEMPLATE_MISSING,
-            f"the template database {template} does not exist",
-            hint="Create the template database, or fix database.template in wtenv.toml.",
-            details={"kind": "postgres", "template": template},
-        )
+        return _template_missing(template)
     if isinstance(error, errors.DuplicateDatabase):
         return _database_conflict(name)
     if isinstance(error, errors.InsufficientPrivilege):
@@ -321,6 +305,32 @@ def map_postgres_error(
     return None
 
 
+def _template_in_use(template: str, connections: int | None) -> WtenvError:
+    """Build `template_in_use` for a Postgres template; `connections` is left out when unknown."""
+    details: dict[str, JsonValue] = {"kind": "postgres", "template": template}
+    count = ""
+    if connections is not None:
+        details["connections"] = connections
+        count = f" ({connections} open)"
+    return WtenvError(
+        ErrorCode.TEMPLATE_IN_USE,
+        f"the template database {template} has other sessions connected{count}, "
+        "and cannot be copied while they are",
+        hint="Close the connections to the template, then run `wtenv up` again.",
+        details=details,
+    )
+
+
+def _template_missing(template: str) -> WtenvError:
+    """Build `template_missing` for a Postgres template."""
+    return WtenvError(
+        ErrorCode.TEMPLATE_MISSING,
+        f"the template database {template} does not exist",
+        hint="Create the template database, or fix database.template in wtenv.toml.",
+        details={"kind": "postgres", "template": template},
+    )
+
+
 def _authentication_failed(target: PostgresTarget) -> WtenvError:
     return _unavailable(
         "authentication_failed",
@@ -339,9 +349,19 @@ def _database_conflict(name: str) -> WtenvError:
     )
 
 
-def database_conflict(name: str) -> WtenvError:
-    """Return the error for a Postgres database `name` that exists and is not recorded (FR-024)."""
-    return _database_conflict(name)
+def check_creatable(state: PostgresState, *, template: str, name: str) -> None:
+    """Raise unless a database `name` may be created from `template`, given what the server holds.
+
+    `template_missing` when the template is not there, `template_in_use` when other sessions are
+    connected to it (FR-082), `ownership_conflict` when `name` exists (FR-024). Call it only for
+    a database the registry does not record, and before anything is recorded.
+    """
+    if not state.template_exists:
+        raise _template_missing(template)
+    if state.template_connections > 0:
+        raise _template_in_use(template, state.template_connections)
+    if state.database_exists:
+        raise _database_conflict(name)
 
 
 def _connect(target: PostgresTarget) -> "psycopg.Connection[tuple[object, ...]]":

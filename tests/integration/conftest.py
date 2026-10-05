@@ -1,44 +1,12 @@
 """Fixtures for the integration tests: a real Postgres server, started once per session."""
 
 from collections.abc import Iterator
-from dataclasses import dataclass
 
-import psycopg
 import pytest
+from helpers import TEMPLATE_DATABASE, TEMPLATE_ROWS, PostgresServer
 from testcontainers.community.postgres import PostgresContainer
 
 POSTGRES_IMAGE = "postgres:17"
-TEMPLATE_DATABASE = "wtenv_test_template"
-TEMPLATE_ROWS = [(1, "first"), (2, "second")]
-
-
-@dataclass(frozen=True)
-class PostgresServer:
-    """A running local Postgres server, and the template database it holds."""
-
-    host: str
-    port: int
-    user: str
-    password: str
-    template: str
-
-    def connect(self, dbname: str = "postgres") -> psycopg.Connection[tuple[object, ...]]:
-        """Open an autocommit connection to `dbname`; the caller closes it."""
-        return psycopg.connect(
-            host=self.host,
-            port=self.port,
-            user=self.user,
-            password=self.password,
-            dbname=dbname,
-            autocommit=True,
-            connect_timeout=10,
-        )
-
-    def database_exists(self, name: str) -> bool:
-        """Return whether a database called `name` exists on the server."""
-        with self.connect() as connection:
-            row = connection.execute("SELECT 1 FROM pg_database WHERE datname = %s", [name])
-            return row.fetchone() is not None
 
 
 @pytest.fixture(scope="session")

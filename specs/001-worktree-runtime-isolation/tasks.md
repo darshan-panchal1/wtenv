@@ -544,14 +544,14 @@ T059–T060, T062, T063, and T067. US2 scenario 5 (`down` removes only this data
     `reason` `cannot_connect`, `authentication_failed`, `permission_denied`, or `too_old`.
   - The `42501` message says the template needs `IS_TEMPLATE` or ownership (research.md §3).
   - No message or detail contains the password (FR-019).
-- [ ] T059 [P] [US2] Write failing Postgres creation tests in `tests/integration/test_us2_database.py`
+- [X] T059 [P] [US2] Write failing Postgres creation tests in `tests/integration/test_us2_database.py`
   - Request `postgres_server`. Scenario 1 (FR-020): database `wtenv_<slug>_<id8>` exists,
     holds the template's rows, and `DATABASE_URL` names it.
   - Scenario 2: a schema change in one worktree leaves the other's database and the template
     unchanged. Scenario 3 (FR-023, SC-006): a repeat `up` keeps the database and its rows.
   - The password comes from `{env:NAME}` (FR-026) and is in no output and not in the
     registry (FR-019); `UpResult` shows kind, name, host, and port.
-- [ ] T060 [US2] Add failing Postgres failure tests to `tests/integration/test_us2_database.py`
+- [X] T060 [US2] Add failing Postgres failure tests to `tests/integration/test_us2_database.py`
   - Scenario 6 (FR-024): an unrecorded database with the target name → exit 11, unmodified.
   - Scenario 7: a closed port → exit 8; once the server answers, `up` completes.
   - Scenario 8 (FR-082, FR-027): another session on the template → exit 10 within 2 s,
@@ -572,7 +572,7 @@ T059–T060, T062, T063, and T067. US2 scenario 5 (`down` removes only this data
 
 ### 4E. The database step of `up` (`provision.py`)
 
-- [ ] T062 [US2] Add failing SQLite tests to `tests/integration/test_us2_database.py`
+- [X] T062 [US2] Add failing SQLite tests to `tests/integration/test_us2_database.py`
   - Scenario 4 (FR-021, FR-022): the worktree's copy exists, `DATABASE_URL` points to it
     after the port variables, and writing to it changes neither the template nor another
     worktree's copy. Scenario 3 for SQLite: a repeat `up` keeps the copy's data.
@@ -585,12 +585,12 @@ T059–T060, T062, T063, and T067. US2 scenario 5 (`down` removes only this data
     `DATABASE_URL` and keeps the database; a new `database.type` creates the new kind and
     keeps the old one recorded; removing `[database]` removes `DATABASE_URL` and keeps the
     database recorded (FR-065).
-- [ ] T063 [US2] Add failing recovery tests for the database step to `tests/integration/test_recovery.py`
+- [X] T063 [US2] Add failing recovery tests for the database step to `tests/integration/test_recovery.py`
   - `up` interrupted (as in T041) after the database is recorded as `creating` but before it
     exists, and after it exists but before it is marked `created`: the next `up` creates or
     keeps it and marks it `created`; no database exists that the registry does not record
     (FR-067, FR-069; data-model.md, Resource states). SQLite always; Postgres with Docker.
-- [ ] T064 [US2] Implement the database checks and the database step in `src/wtenv/provision.py`
+- [X] T064 [US2] Implement the database checks and the database step in `src/wtenv/provision.py`
   - Step 7, before anything changes: the URL pattern resolves and names a local host.
   - Step 10, when no database of the configured kind is recorded: check the template exists
     and is not busy, check nothing exists at the target (`ownership_conflict`), record it as
@@ -601,10 +601,10 @@ T059–T060, T062, T063, and T067. US2 scenario 5 (`down` removes only this data
   - A recorded database is kept as it is (FR-023); `up` never removes a database
     (data-model.md, Resource states). SQLite adds `/.wtenv/` to the exclude patterns in the
     step-8 save, before the exclude block is written (data-model.md, Write order of `up`).
-- [ ] T065 [US2] Write `DATABASE_URL` and apply database configuration changes in `src/wtenv/provision.py`
+- [X] T065 [US2] Write `DATABASE_URL` and apply database configuration changes in `src/wtenv/provision.py`
   - The section holds the port variables in `ports` order, then `DATABASE_URL` when a database
     is configured and created (files.md). Config changes as in T062 (FR-065).
-- [ ] T066 [US2] Show the database (kind, name or path, host, port; never a URL) in the `up` output in `src/wtenv/output.py`
+- [X] T066 [US2] Show the database (kind, name or path, host, port; never a URL) in the `up` output in `src/wtenv/output.py`
 
 ### 4F. Post-up commands (`provision.py`)
 

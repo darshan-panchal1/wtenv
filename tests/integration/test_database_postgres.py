@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import replace
 
 import pytest
-from conftest import TEMPLATE_ROWS, PostgresServer
+from helpers import TEMPLATE_ROWS, PostgresServer
 
 from wtenv.database import (
     PostgresTarget,
