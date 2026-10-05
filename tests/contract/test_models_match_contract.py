@@ -4,7 +4,8 @@ import enum
 import inspect
 from types import ModuleType
 
-from pydantic import BaseModel
+import pytest
+from pydantic import BaseModel, ValidationError
 
 from wtenv import errors, output
 
@@ -70,3 +71,23 @@ def test_the_schema_version_is_one(contract: ModuleType) -> None:
 def test_error_codes_are_imported_from_the_errors_module_not_defined_twice() -> None:
     assert output.ErrorCode is errors.ErrorCode
     assert output.EXIT_STATUS is errors.EXIT_STATUS
+
+
+def test_kept_volume_exists_with_the_contracts_schema(contract: ModuleType) -> None:
+    assert issubclass(output.KeptVolume, BaseModel)
+    assert output.KeptVolume.model_json_schema() == contract.KeptVolume.model_json_schema()
+    kept = output.KeptVolume(name="data", project="wtenv-x-1", reason="unlabelled")
+    assert kept.model_dump() == {"name": "data", "project": "wtenv-x-1", "reason": "unlabelled"}
+
+
+def test_down_and_gc_results_have_empty_kept_volumes_by_default(contract: ModuleType) -> None:
+    for name in ("DownResult", "GcResult"):
+        model = getattr(output, name)
+        assert "kept_volumes" in model.model_fields, name
+        assert model(ok=True).kept_volumes == [], name
+        assert model.model_json_schema() == getattr(contract, name).model_json_schema(), name
+
+
+def test_kept_volumes_take_only_the_reason_unlabelled() -> None:
+    with pytest.raises(ValidationError):
+        output.KeptVolume(name="data", project="p", reason="in-use")  # type: ignore[arg-type]

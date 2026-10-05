@@ -1296,11 +1296,11 @@ after groups 3F and 6G, and before T146–T148. Each pair is a failing test, the
 - [ ] T161 List unreachable items as failed in dry runs, in `src/wtenv/database.py` and `src/wtenv/compose.py`
   - cli.md, `wtenv down` and `wtenv gc`, `--dry-run`. `teardown` already leaves the block and
     the entry out when an item failed.
-- [ ] T172 Add failing contract tests for `KeptVolume` and `kept_volumes` to `tests/contract/test_models_match_contract.py`
+- [X] T172 Add failing contract tests for `KeptVolume` and `kept_volumes` to `tests/contract/test_models_match_contract.py`
   - Reading R6, FR-041, FR-058: as T009, `wtenv.output.KeptVolume` exists and its
     `model_json_schema()` equals the contract's; `DownResult` and `GcResult` have a
     `kept_volumes` field, default empty, and their schemas equal the contract's.
-- [ ] T173 Add `KeptVolume` and the `kept_volumes` field of `DownResult` and `GcResult` to `src/wtenv/output.py`
+- [X] T173 Add `KeptVolume` and the `kept_volumes` field of `DownResult` and `GcResult` to `src/wtenv/output.py`
   - Port them from `json_models.py` as T011 did; `KeptEntry` and `kept` are unchanged.
     T172 passes. Comes before T162 and T163.
 - [ ] T162 Add a failing Docker-backed test for volumes to `tests/integration/test_us4_lifecycle.py`
