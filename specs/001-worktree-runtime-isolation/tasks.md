@@ -672,7 +672,7 @@ T079–T080.
 
 ### 5D. The override file (`compose.py`) — core area 6
 
-- [ ] T075 [P] [US3] Write failing override tests in `tests/unit/test_compose_override.py` with the golden file `tests/unit/golden/compose.override.yaml`
+- [X] T075 [P] [US3] Write failing override tests in `tests/unit/test_compose_override.py` with the golden file `tests/unit/golden/compose.override.yaml`
   - The golden file is the example in files.md, "Compose override file", byte for byte; the
     matching input generates exactly it, and generating twice gives identical bytes (US3
     scenario 4).
@@ -682,7 +682,7 @@ T079–T080.
   - Override file name: `compose.override.yaml` for `compose.yaml`, `compose.override.yml`
     for `compose.yml`, `docker-compose.override.yaml` for `docker-compose.yaml`,
     `docker-compose.override.yml` for `docker-compose.yml`.
-- [ ] T076 [US3] Implement the project name, the override text, and the override file name in `src/wtenv/compose.py`
+- [X] T076 [US3] Implement the project name, the override text, and the override file name in `src/wtenv/compose.py`
   - The project name uses `identity.slug` and `identity.short_id` (T017), so US3 does not
     depend on US2.
 
