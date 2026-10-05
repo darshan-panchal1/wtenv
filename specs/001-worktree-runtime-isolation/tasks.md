@@ -365,14 +365,14 @@ byte-identical. Automated by T039–T043; manual by quickstart.md sections 1 and
 
 ### 3D. `.git/info/exclude` block (`exclude.py`)
 
-- [ ] T037 [P] [US1] Write failing tests for the exclude block in `tests/unit/test_exclude.py`
+- [X] T037 [P] [US1] Write failing tests for the exclude block in `tests/unit/test_exclude.py`
   - Adding patterns creates or extends the block (files.md, `.git/info/exclude` block): the
     same two marker lines as the env file; inside, the sorted union of the patterns, each
     starting with `/`; every other line kept; a missing file or `info/` directory created.
   - Adding the same patterns again changes nothing; adding never removes a line.
   - Removing the block takes out the markers and the lines between them, nothing else (FR-085).
   - Damaged markers → `unsupported`, reason `markers_damaged`.
-- [ ] T038 [US1] Implement adding patterns (`add_patterns`) and removing the block in `src/wtenv/exclude.py`
+- [X] T038 [US1] Implement adding patterns (`add_patterns`) and removing the block in `src/wtenv/exclude.py`
 
 ### 3E. `wtenv up` (`provision.py`, `output.py`, `cli.py`)
 

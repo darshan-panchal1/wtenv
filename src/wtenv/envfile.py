@@ -5,7 +5,8 @@ the developer's (FR-016). The file is handled as bytes, so what lies outside the
 preserved exactly, whatever its encoding or line endings. Writes go through a temporary file and
 an atomic rename of the real path, so a symbolic link stays a link.
 
-`locate_section` is also used by `exclude.py`, whose block has the same markers.
+`locate_section` and `write_atomic` are also used by `exclude.py`, whose block has the same
+markers.
 """
 
 import contextlib
@@ -82,7 +83,7 @@ def write_section(path: Path, variables: Sequence[tuple[str, str]]) -> SectionWr
     section = _render(variables)
     content = _read(path)
     if content is None:
-        _write_atomic(path, section, _PRIVATE_FILE)
+        write_atomic(path, section, _PRIVATE_FILE)
         return SectionWrite("created", created_file=True, added_newline=False)
 
     lines = content.splitlines(keepends=True)
@@ -98,7 +99,7 @@ def write_section(path: Path, variables: Sequence[tuple[str, str]]) -> SectionWr
         action = "updated"
     if updated == content:
         return SectionWrite("unchanged", created_file=False, added_newline=False)
-    _write_atomic(path, updated, stat.S_IMODE(os.stat(path).st_mode))
+    write_atomic(path, updated, stat.S_IMODE(os.stat(path).st_mode))
     return SectionWrite(action, created_file=False, added_newline=added_newline)
 
 
@@ -154,7 +155,7 @@ def remove_section(
     if created_file and not remaining.strip():
         os.unlink(path)
         return SectionRemoval(removed=True, deleted_file=True)
-    _write_atomic(path, remaining, stat.S_IMODE(os.stat(path).st_mode))
+    write_atomic(path, remaining, stat.S_IMODE(os.stat(path).st_mode))
     return SectionRemoval(removed=True, deleted_file=False)
 
 
@@ -221,8 +222,11 @@ def _read(path: Path) -> bytes | None:
         raise _unusable(path, "not_writable") from None
 
 
-def _write_atomic(path: Path, data: bytes, mode: int) -> None:
-    """Replace the real file behind `path` with `data` through a temporary file beside it."""
+def write_atomic(path: Path, data: bytes, mode: int) -> None:
+    """Replace the real file behind `path` with `data` through a temporary file beside it.
+
+    The file gets `mode`. The temporary file is removed again when anything fails.
+    """
     real = Path(os.path.realpath(path))
     descriptor, temporary = tempfile.mkstemp(
         dir=real.parent, prefix=f".{real.name}.", suffix=".tmp"
