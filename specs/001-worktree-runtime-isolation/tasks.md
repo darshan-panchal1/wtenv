@@ -800,7 +800,7 @@ T104–T108, and T112.
 
 ### 6C. Removing a compose project (`compose.py`)
 
-- [ ] T090 [P] [US4] Write failing tests for compose project removal in `tests/unit/test_compose_teardown.py`
+- [X] T090 [P] [US4] Write failing tests for compose project removal in `tests/unit/test_compose_teardown.py`
   - With a fake command runner: list containers, networks, and volumes labelled
     `com.docker.compose.project=<project>` before and after
     `docker compose -p <project> down --volumes --remove-orphans`, run from a directory with
@@ -811,7 +811,7 @@ T104–T108, and T112.
     `docker volume rm`; what remains is failed.
   - Only resources with the recorded project's label are ever named in a removal command;
     external volumes and networks (no label) never are (FR-039). Listing only runs no removal.
-- [ ] T091 [US4] Implement compose project listing and removal in `src/wtenv/compose.py`
+- [X] T091 [US4] Implement compose project listing and removal in `src/wtenv/compose.py`
 
 ### 6D. `wtenv down` (`teardown.py`, `provision.py`, `cli.py`, `output.py`)
 

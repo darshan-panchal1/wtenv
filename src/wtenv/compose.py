@@ -10,6 +10,7 @@ import os
 import posixpath
 import re
 import subprocess
+import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,10 +18,11 @@ from typing import Any, Literal, Protocol
 from urllib.parse import urlsplit
 
 from wtenv.config import COMPOSE_FILE_NAMES
+from wtenv.database import Removal
 from wtenv.envfile import write_atomic
 from wtenv.errors import ErrorCode, JsonValue, WtenvError
 from wtenv.identity import short_id, slug
-from wtenv.output import WarningCode, WarningInfo
+from wtenv.output import FailedItem, Item, ItemKind, WarningCode, WarningInfo
 
 _FILE_SETTING = "compose.file"
 # Compose loads one of these beside the compose file; the pairs follow COMPOSE_FILE_NAMES.
@@ -528,3 +530,137 @@ def write_and_verify_override(
         path.unlink(missing_ok=True)
         raise
     return action
+
+
+# --- removing a recorded project (research.md §4; FR-039, FR-042) -------------------------------
+
+PROJECT_LABEL = "com.docker.compose.project"
+
+# Per kind of resource: the listing command (the label filter and the format are added), the
+# format that prints what a removal command names and then the display name, and the removal.
+_RESOURCE_KINDS = (
+    (ItemKind.COMPOSE_CONTAINER, ["docker", "ps", "-a"], "{{.ID}} {{.Names}}", ["docker", "rm"]),
+    (
+        ItemKind.COMPOSE_NETWORK,
+        ["docker", "network", "ls"],
+        "{{.ID}} {{.Name}}",
+        ["docker", "network", "rm"],
+    ),
+    (ItemKind.COMPOSE_VOLUME, ["docker", "volume", "ls"], "{{.Name}}", ["docker", "volume", "rm"]),
+)
+
+
+@dataclass(frozen=True)
+class _Resource:
+    """A container, network, or volume that carries the recorded project's label."""
+
+    kind: ItemKind
+    key: str  # what a removal command names: the id, or the name of a volume
+    name: str
+
+
+class _DockerFailed(Exception):
+    """Docker could not be asked or told; the message becomes the reason of a failed item."""
+
+
+def _first_line(text: str) -> str:
+    """Return the first non-empty line of `text`, cut short, for a reason."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return lines[0][:200] if lines else ""
+
+
+def _docker(
+    run: Runner, command: Sequence[str], environ: Mapping[str, str], cwd: Path | None = None
+) -> "subprocess.CompletedProcess[str]":
+    """Run a docker command; a missing `docker` program is `_DockerFailed`."""
+    try:
+        return run(command, environ, cwd)
+    except FileNotFoundError:
+        raise _DockerFailed("docker is not installed") from None
+
+
+def _list_project(project: str, run: Runner, environ: Mapping[str, str]) -> list[_Resource]:
+    """Return the containers, networks, and volumes labelled with `project`, in that order.
+
+    A resource with no compose label, such as an `external` volume or network, is never listed,
+    and neither is one of another project: the engine filters on the exact label value.
+    """
+    found = []
+    for kind, listing, template, _ in _RESOURCE_KINDS:
+        label = f"label={PROJECT_LABEL}={project}"
+        process = _docker(run, [*listing, "--filter", label, "--format", template], environ)
+        if process.returncode != 0:
+            reason = _first_line(process.stderr) or f"exit status {process.returncode}"
+            raise _DockerFailed(f"cannot list the project's resources: {reason}")
+        for line in process.stdout.splitlines():
+            if line.strip():
+                key, _, name = line.strip().partition(" ")
+                found.append(_Resource(kind, key, name or key))
+    return found
+
+
+def remove_project(
+    project: str,
+    *,
+    dry_run: bool = False,
+    run: Runner = run_command,
+    environ: Mapping[str, str] | None = None,
+) -> Removal:
+    """Remove the recorded compose project `project`: its containers, networks, and volumes.
+
+    The resources carrying the project's label are listed, `docker compose -p <project> down
+    --volumes --remove-orphans` runs from a directory with no compose file (research.md §4), and
+    the label is listed again. What is still there is removed with `docker rm`, `docker network
+    rm`, and `docker volume rm`; what remains after that is `failed`. Only resources with the
+    recorded project's label are ever named in a removal command, so an `external` volume or
+    network is never removed (FR-039). Every removed resource is an item; a project with nothing
+    left is `already_absent` (FR-042). `COMPOSE_*` variables are not passed on, so they cannot
+    point Compose at another project or file. With `dry_run` only the listings run and the same
+    items are returned. When Docker cannot be asked, a real run reports the project as `failed`
+    and a listing returns the project itself, because `down` would try to remove it.
+    """
+    base = os.environ if environ is None else environ
+    env = {name: value for name, value in base.items() if not name.startswith("COMPOSE_")}
+    project_item = Item(kind=ItemKind.COMPOSE_PROJECT, name=project)
+    try:
+        before = _list_project(project, run, env)
+        if not before:
+            return Removal(already_absent=[project_item])
+        if dry_run:
+            return Removal(removed=[_item_of(r) for r in before])
+        with tempfile.TemporaryDirectory() as empty:
+            down = ["docker", "compose", "-p", project, "down", "--volumes", "--remove-orphans"]
+            _docker(run, down, env, Path(empty))  # what it leaves behind is checked next
+        remaining = _list_project(project, run, env)
+        reasons = {r: _remove_resource(r, run, env) for r in remaining}
+        left = _list_project(project, run, env)
+    except _DockerFailed as error:
+        if dry_run:
+            return Removal(removed=[project_item])
+        reason = str(error)
+        return Removal(failed=[FailedItem(kind=project_item.kind, name=project, reason=reason)])
+    candidates = before + [r for r in remaining if r not in before]
+    return Removal(
+        removed=[_item_of(r) for r in candidates if r not in left],
+        failed=[
+            FailedItem(
+                kind=r.kind,
+                name=r.name,
+                reason=reasons.get(r) or "it was still there after it was removed",
+            )
+            for r in left
+        ],
+    )
+
+
+def _item_of(resource: _Resource) -> Item:
+    return Item(kind=resource.kind, name=resource.name)
+
+
+def _remove_resource(resource: _Resource, run: Runner, environ: Mapping[str, str]) -> str:
+    """Remove one labelled resource that `compose down` left; return why it failed, or ''."""
+    removal = next(command for kind, _, _, command in _RESOURCE_KINDS if kind is resource.kind)
+    process = _docker(run, [*removal, resource.key], environ)
+    if process.returncode == 0:
+        return ""
+    return _first_line(process.stderr) or f"exit status {process.returncode}"
