@@ -36,19 +36,22 @@ from helpers import (
     parse_ls,
     parse_up,
     project_resources,
+    snapshot_tree,
     sqlite_rows,
 )
 
-from wtenv import orphans
+from wtenv import orphans, teardown
 from wtenv.database import postgres_database_name
 from wtenv.errors import ErrorCode
 from wtenv.gitutil import WorktreeRecord
 from wtenv.identity import current_worktree
+from wtenv.locks import worktree_lock
 from wtenv.orphans import Classification
 from wtenv.output import (
     BlockView,
     DatabaseView,
     DownResult,
+    FailedItem,
     GcResult,
     ItemKind,
     KeptEntry,
@@ -1707,3 +1710,299 @@ def test_one_gc_after_git_worktree_remove_leaves_no_database_container_volume_or
     assert all(not ids for ids in project_resources(project).values())
     assert volume_exists(external_volume)  # declared external: never removed (FR-039)
     assert git_dir not in load().worktrees
+
+
+# --- symbolic links in `down` and `gc` (T155, T156; FR-086) --------------------------------------
+#
+# Every case links to a decoy outside the worktree, or to another worktree, and compares it before
+# and after, for the real run and for `--dry-run`. wtenv reports a linked item under `failed` with
+# the reason `symlink`, exits 13 (0 for a dry run), keeps the item recorded, and never follows the
+# link, so the link and everything it leads to stay as they were.
+
+LINK_STACK = f"""\
+services:
+  cache:
+    image: {COMPOSE_IMAGE}
+    pull_policy: never
+    ports:
+      - "${{CACHE_PORT:-6379}}:6379"
+"""
+
+
+def failed_as_symlink(failed: Sequence[FailedItem]) -> list[tuple[str, str]]:
+    """Return `(kind, name)` of each failed item, after checking that its reason is `symlink`."""
+    assert [item.reason for item in failed] == ["symlink"] * len(failed)
+    return keys(failed)
+
+
+def replace_with_link(path: Path, target: Path) -> None:
+    """Delete `path` (a file, or a directory with everything in it) and put a link to `target`."""
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink(missing_ok=True)
+    path.symlink_to(target)
+
+
+@pytest.mark.parametrize("dangling", [False, True], ids=["to-a-file", "dangling"])
+def test_down_reports_an_env_file_that_is_a_link_as_failed_and_leaves_it_and_its_target_alone(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, decoy: Path, dangling: bool
+) -> None:
+    worktree = add_worktree(repo, "feature-x", "feature-x")
+    up(run_wtenv, worktree)
+    env_file = worktree / ".env.local"
+    replace_with_link(env_file, decoy / ("new.env" if dangling else "shared.env"))
+    decoy_before = snapshot_tree(decoy)
+    registry_before = registry_path().read_bytes()
+    section = ("env_section", str(env_file))
+
+    status, planned = down(run_wtenv, worktree, "--dry-run")
+
+    assert status == 0 and planned.ok and planned.dry_run
+    assert failed_as_symlink(planned.failed) == [section]
+    assert section not in keys(planned.would_remove)
+    assert planned.removed == []
+    assert snapshot_tree(decoy) == decoy_before and env_file.is_symlink()
+    assert registry_path().read_bytes() == registry_before
+
+    status, result = down(run_wtenv, worktree)
+
+    assert status == 13 and not result.ok
+    assert result.error is not None and result.error.code is ErrorCode.PARTIAL_FAILURE
+    assert failed_as_symlink(result.failed) == [section]
+    assert section not in keys(result.removed)
+    assert snapshot_tree(decoy) == decoy_before  # the target is byte-identical
+    assert env_file.is_symlink() and os.readlink(env_file) == str(
+        decoy / ("new.env" if dangling else "shared.env")
+    )
+    entry = entry_of(worktree)  # the entry and its block stay recorded
+    assert entry.state == "incomplete" and entry.env_file is not None
+    assert entry.block.size == 10
+    assert registry_path().exists()
+
+    # Once the link is a regular file, the next `down` finishes the job (FR-042).
+    env_file.unlink()
+    env_file.write_bytes(f"MINE=1\n{BEGIN}\nPORT=20000\n{END}\n".encode())
+
+    status, done = down(run_wtenv, worktree)
+
+    assert status == 0 and done.ok and done.failed == []
+    assert section in keys(done.removed)
+    assert not is_recorded(worktree)
+    assert env_file.read_bytes() == b"MINE=1\n"
+    assert snapshot_tree(decoy) == decoy_before
+
+
+def test_down_does_not_delete_an_env_file_through_a_directory_that_is_a_link(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, decoy: Path
+) -> None:
+    worktree = add_worktree(repo, "feature-x", "feature-x")
+    write_config(worktree, 'env_file = "config/.env.local"\n')
+    (worktree / "config").mkdir()
+    up(run_wtenv, worktree)
+    env_file = worktree / "config" / ".env.local"
+    # The decoy holds an env file with a wtenv section that `down` would otherwise remove.
+    (decoy / ".env.local").write_bytes(env_file.read_bytes())
+    replace_with_link(worktree / "config", decoy)
+    decoy_before = snapshot_tree(decoy)
+    section = ("env_section", str(env_file))
+
+    _, planned = down(run_wtenv, worktree, "--dry-run")
+    status, result = down(run_wtenv, worktree)
+
+    assert failed_as_symlink(planned.failed) == [section] and section not in keys(
+        planned.would_remove
+    )
+    assert status == 13 and failed_as_symlink(result.failed) == [section]
+    assert (
+        snapshot_tree(decoy) == decoy_before
+    )  # the decoy's env file kept its section and its file
+    assert (worktree / "config").is_symlink()
+    assert entry_of(worktree).state == "incomplete"
+
+
+def test_down_reports_a_sqlite_directory_that_is_a_link_to_another_worktrees_copy_as_failed(
+    run_wtenv: Run, sqlite_repo: Path, add_worktree: AddWorktree
+) -> None:
+    other = add_worktree(sqlite_repo, "other", "other")
+    worktree = add_worktree(sqlite_repo, "feature-x", "feature-x")
+    up(run_wtenv, other)
+    up(run_wtenv, worktree)
+    add_side_files(other / ".wtenv" / "dev.sqlite3", ("-wal",))
+    replace_with_link(worktree / ".wtenv", other / ".wtenv")
+    other_before = snapshot_tree(other / ".wtenv")
+    copy = ("sqlite_file", str(worktree / ".wtenv" / "dev.sqlite3"))
+    registry_before = registry_path().read_bytes()
+
+    status, planned = down(run_wtenv, worktree, "--dry-run")
+
+    assert status == 0 and planned.ok
+    assert failed_as_symlink(planned.failed) == [copy]  # one item: no side file is looked for
+    assert all(kind != "sqlite_file" for kind, _ in keys(planned.would_remove))
+    assert snapshot_tree(other / ".wtenv") == other_before
+    assert registry_path().read_bytes() == registry_before
+
+    status, result = down(run_wtenv, worktree)
+
+    assert status == 13 and not result.ok
+    assert failed_as_symlink(result.failed) == [copy]
+    assert all(kind != "sqlite_file" for kind, _ in keys(result.removed + result.already_absent))
+    assert snapshot_tree(other / ".wtenv") == other_before  # the copy and its `-wal` file
+    assert (worktree / ".wtenv").is_symlink()
+    entry = entry_of(worktree)
+    assert entry.state == "incomplete"
+    assert [record.kind for record in entry.databases] == ["sqlite"]
+    assert entry.databases[0].state is not ResourceState.REMOVING  # never marked: never touched
+    # The rest of the entry was released as usual, and the other worktree is untouched.
+    assert ("env_section", str(worktree / ".env.local")) in keys(result.removed)
+    assert is_recorded(other)
+
+
+def test_down_leaves_a_sqlite_copy_that_is_a_link_and_the_side_files_beside_it_alone(
+    run_wtenv: Run, sqlite_repo: Path, add_worktree: AddWorktree, decoy: Path
+) -> None:
+    worktree = add_worktree(sqlite_repo, "feature-x", "feature-x")
+    up(run_wtenv, worktree)
+    copy = worktree / ".wtenv" / "dev.sqlite3"
+    replace_with_link(copy, decoy / "notes.txt")
+    (wal,) = add_side_files(copy, ("-wal",))  # a real file beside the link
+    decoy_before = snapshot_tree(decoy)
+    item = ("sqlite_file", str(copy))
+
+    _, planned = down(run_wtenv, worktree, "--dry-run")
+    status, result = down(run_wtenv, worktree)
+
+    assert failed_as_symlink(planned.failed) == [item]
+    assert status == 13 and failed_as_symlink(result.failed) == [item]
+    assert snapshot_tree(decoy) == decoy_before
+    assert copy.is_symlink() and wal.read_bytes() == b"side file"  # neither was touched
+    assert all(kind != "sqlite_file" for kind, _ in keys(result.removed))
+
+
+def test_down_reports_a_compose_override_that_is_a_link_as_failed_and_leaves_its_target_alone(
+    run_wtenv: Run,
+    repo: Path,
+    add_worktree: AddWorktree,
+    compose_image: str,
+    compose_projects: ComposeProjects,
+    decoy: Path,
+) -> None:
+    worktree = add_worktree(repo, "feature-x", "feature-x")
+    (worktree / "compose.yaml").write_text(LINK_STACK, encoding="utf-8")
+    write_config(worktree, COMPOSE_TOML)
+    commit_all(worktree)
+    up(run_wtenv, worktree)
+    compose_projects.track(project_of(worktree))
+    override = worktree / "compose.override.yaml"
+    replace_with_link(override, decoy / "notes.txt")
+    decoy_before = snapshot_tree(decoy)
+    item = ("compose_override", str(override))
+
+    status, planned = down(run_wtenv, worktree, "--dry-run")
+
+    assert status == 0 and planned.ok
+    assert failed_as_symlink(planned.failed) == [item] and item not in keys(planned.would_remove)
+
+    status, result = down(run_wtenv, worktree)
+
+    assert status == 13 and not result.ok
+    assert failed_as_symlink(result.failed) == [item] and item not in keys(result.removed)
+    assert snapshot_tree(decoy) == decoy_before
+    assert override.is_symlink()
+    compose = entry_of(worktree).compose
+    assert compose is not None and compose.override_state is not ResourceState.REMOVING
+    assert entry_of(worktree).state == "incomplete"
+
+
+# --- gc --release and links (T156) ---------------------------------------------------------------
+
+
+def test_gc_release_reports_an_env_file_that_is_a_link_as_failed_and_keeps_the_entry(
+    run_wtenv: Run,
+    make_repo: Callable[[str], Path],
+    add_worktree: AddWorktree,
+    outside: Path,
+    decoy: Path,
+) -> None:
+    stray, stray_dir = stray_of_a_deleted_repository(run_wtenv, make_repo, add_worktree)
+    env_file = stray / ".env.local"
+    replace_with_link(env_file, decoy / "shared.env")
+    decoy_before = snapshot_tree(decoy)
+    registry_before = registry_path().read_bytes()
+    section = ("env_section", str(env_file))
+
+    status, planned = gc(run_wtenv, outside, "--release", str(stray), "--dry-run")
+
+    assert status == 0 and planned.ok and planned.dry_run
+    assert failed_as_symlink(planned.failed) == [section]
+    assert planned.would_release == [] and section not in keys(planned.would_remove)
+    assert snapshot_tree(decoy) == decoy_before
+    assert registry_path().read_bytes() == registry_before
+
+    status, result = gc(run_wtenv, outside, "--release", str(stray))
+
+    assert status == 13 and not result.ok
+    assert result.error is not None and result.error.code is ErrorCode.PARTIAL_FAILURE
+    assert failed_as_symlink(result.failed) == [section]
+    assert result.released == [] and section not in keys(result.removed)
+    assert stray_dir in load().worktrees  # still recorded
+    assert load().worktrees[stray_dir].state == "incomplete"
+    assert snapshot_tree(decoy) == decoy_before
+    assert env_file.is_symlink()
+
+    # Once the link is gone, the same command finishes the job.
+    env_file.unlink()
+    status, done = gc(run_wtenv, outside, "--release", str(stray))
+
+    assert status == 0 and done.released == [str(stray)]
+    assert stray_dir not in load().worktrees
+
+
+def test_plain_gc_leaves_a_decoy_alone_when_the_worktree_that_linked_to_it_is_gone(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, outside: Path, decoy: Path
+) -> None:
+    worktree = add_worktree(repo, "feature-x", "feature-x")
+    up(run_wtenv, worktree)
+    replace_with_link(worktree / ".env.local", decoy / "shared.env")
+    remove_with_git(repo, worktree)  # removes the link with the directory, never its target
+    decoy_before = snapshot_tree(decoy)
+
+    _, planned = gc(run_wtenv, outside, "--dry-run")
+    status, result = gc(run_wtenv, outside)
+
+    assert planned.failed == [] and status == 0 and result.failed == []
+    assert result.released == [str(worktree)]
+    assert snapshot_tree(decoy) == decoy_before
+
+
+def test_a_release_whose_worktree_root_is_a_link_touches_nothing_behind_it(
+    run_wtenv: Run, sqlite_repo: Path, add_worktree: AddWorktree, tmp_path: Path, decoy: Path
+) -> None:
+    worktree = add_worktree(sqlite_repo, "feature-x", "feature-x")
+    up(run_wtenv, worktree)
+    entry = entry_of(worktree)
+    # A copy of the provisioned worktree is the decoy, and the recorded path leads to it.
+    behind = decoy / "worktree"
+    shutil.copytree(worktree, behind, symlinks=True)
+    root_link = tmp_path / "root-link"
+    root_link.symlink_to(behind)
+    linked = entry.model_copy(update={"path": str(root_link)})
+    decoy_before = snapshot_tree(decoy)
+
+    planned = teardown.plan_release(linked)
+
+    assert planned.released is False
+    assert failed_as_symlink(planned.failed) == [
+        ("sqlite_file", str(root_link / ".wtenv" / "dev.sqlite3")),
+        ("env_section", str(root_link / ".env.local")),
+    ]
+    assert snapshot_tree(decoy) == decoy_before
+
+    with worktree_lock(entry.git_dir, 1):
+        real = teardown.release_entry(linked)
+
+    assert real.released is False
+    assert failed_as_symlink(real.failed) == failed_as_symlink(planned.failed)
+    assert real.removed == []
+    assert snapshot_tree(decoy) == decoy_before
+    assert is_recorded(worktree)

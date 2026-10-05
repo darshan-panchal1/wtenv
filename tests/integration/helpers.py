@@ -5,6 +5,7 @@ import re
 import sqlite3
 import subprocess
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -75,7 +76,7 @@ def snapshot_tree(root: Path) -> dict[str, tuple[str, bytes | str | None, int]]:
     return described
 
 
-def keys(items: list[Item]) -> list[tuple[str, str]]:
+def keys(items: Sequence[Item]) -> list[tuple[str, str]]:
     """Return `(kind, name)` of each item, so a test can compare lists of items briefly."""
     return [(item.kind.value, item.name) for item in items]
 

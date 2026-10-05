@@ -7,6 +7,13 @@ project (containers, networks, volumes, then the override file), the databases, 
 the env file, the port block and the registry entry, and, with the last registered worktree of the
 repository, wtenv's entries in `.git/info/exclude` (FR-085).
 
+Nothing is written or deleted through a symbolic link (FR-086). Before the override file, the SQLite
+copy, or the env section is touched, and before it is marked `removing`, its path is checked with
+`identity.symlinked_part`. A link, or a link anywhere from the worktree root down to the path, makes
+the item `failed` with the reason `symlink`: it stays recorded, the entry stays `incomplete`, and a
+SQLite copy's side files are not even looked for. `down`, `gc`, `gc --release`, and every dry run go
+through this one code path, so they list the same items.
+
 `release_entry` and `plan_release` are one code path: the plan is the release with `dry_run` set, so
 `--dry-run` lists exactly what a real run removes (FR-040). A real run records each resource as
 `removing` before it removes it, and drops the record once it is gone, so an interruption at any
@@ -28,7 +35,7 @@ from wtenv import database, envfile, exclude, registry
 from wtenv.config import load_config
 from wtenv.database import PostgresTarget, Removal
 from wtenv.errors import EXIT_STATUS, ErrorCode, WtenvError
-from wtenv.identity import WorktreeIdentity, current_worktree
+from wtenv.identity import WorktreeIdentity, current_worktree, symlinked_part
 from wtenv.locks import WORKTREE_LOCK_TIMEOUT, registry_lock, worktree_lock
 from wtenv.output import (
     DownResult,
@@ -43,6 +50,10 @@ from wtenv.output import (
 from wtenv.registry import DatabaseRecord, WorktreeEntry
 
 ItemT = TypeVar("ItemT", bound=Item)
+
+# The `reason` of an item left alone because it, or a directory above it, is a symbolic link
+# (FR-086).
+SYMLINK_REASON = "symlink"
 
 
 @dataclass
@@ -132,6 +143,9 @@ def _compose_step(entry: WorktreeEntry, root: Path, release: Release, dry_run: b
     project_failed = len(release.failed) > failures_before
     override = root / record.override
     item = Item(kind=ItemKind.COMPOSE_OVERRIDE, name=str(override))
+    if symlinked_part(root, record.override) is not None:
+        release.failed.append(FailedItem(kind=item.kind, name=item.name, reason=SYMLINK_REASON))
+        return
     if not os.path.lexists(override):
         release.already_absent.append(item)
     elif dry_run:
@@ -170,6 +184,17 @@ def _database_step(
 ) -> None:
     """Remove each recorded database: a SQLite copy and its side files, or a Postgres database."""
     for record in entry.databases:
+        if record.kind == "sqlite":
+            assert record.path is not None
+            if symlinked_part(root, record.path) is not None:
+                release.failed.append(
+                    FailedItem(
+                        kind=ItemKind.SQLITE_FILE,
+                        name=str(root / record.path),
+                        reason=SYMLINK_REASON,
+                    )
+                )
+                continue  # not marked `removing`, and no side file is looked for
         if not dry_run and record.state is not ResourceState.REMOVING:
             _set_database_state(entry.git_dir, record.kind, ResourceState.REMOVING)
         removal = _remove_database(record, root, password, dry_run)
@@ -221,6 +246,11 @@ def _env_step(entry: WorktreeEntry, root: Path, release: Release, dry_run: bool)
         return
     path = root / record.path
     section = Item(kind=ItemKind.ENV_SECTION, name=str(path))
+    if symlinked_part(root, record.path) is not None:
+        release.failed.append(
+            FailedItem(kind=section.kind, name=section.name, reason=SYMLINK_REASON)
+        )
+        return
     if not dry_run and record.state is not ResourceState.REMOVING:
         _update(entry.git_dir, _mark_env_removing)
     try:

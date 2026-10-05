@@ -1019,7 +1019,7 @@ T104–T108, and T112.
 Added after the review of the destructive paths (2026-10-05, finding MEDIUM-1). Run this
 group after Phase 7 and group 3F (it uses T153's `symlinked_part`).
 
-- [ ] T155 [US4] Add failing tests for `down` and symbolic links to `tests/integration/test_us4_lifecycle.py`
+- [X] T155 [US4] Add failing tests for `down` and symbolic links to `tests/integration/test_us4_lifecycle.py`
   - FR-086: after `up`, `.env.local` replaced by a link to a file that holds a wtenv
     section → `down` lists the section under `failed` with `reason` `symlink`; the link and
     its target byte-identical; the entry `incomplete`, its block still recorded; exit 13.
@@ -1031,14 +1031,14 @@ group after Phase 7 and group 3F (it uses T153's `symlinked_part`).
     changes; exit 0.
   - With `docker`: the override replaced by a link → the override under `failed`, `reason`
     `symlink`, the target unchanged, exit 13.
-- [ ] T156 [US4] Add failing tests for `gc --release` and symbolic links to `tests/integration/test_us4_lifecycle.py`
+- [X] T156 [US4] Add failing tests for `gc --release` and symbolic links to `tests/integration/test_us4_lifecycle.py`
   - FR-086: a linked worktree's repository deleted, the worktree directory left, its
     `.env.local` a link to a shared file → `gc --release <path>`: the section under
     `failed` with `reason` `symlink`, the path not under `released`, the entry still
     recorded, the shared file byte-identical, exit 13. With `--dry-run`: under `failed`, not
     under `would_release`, exit 0.
   - A plain `gc` needs no case: an orphan's path does not exist (FR-045, check 3).
-- [ ] T157 [US4] Leave symbolic links alone when releasing an entry in `src/wtenv/teardown.py`
+- [X] T157 [US4] Leave symbolic links alone when releasing an entry in `src/wtenv/teardown.py`
   - FR-086: before the override, the SQLite copy, or the env section is touched (before it
     is marked `removing`), check its path with `identity.symlinked_part`. A link →
     `FailedItem` with `reason` `symlink`; for the SQLite copy, side files are not looked
