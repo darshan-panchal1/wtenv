@@ -29,7 +29,7 @@ from helpers import (
 from wtenv.database import postgres_database_name
 from wtenv.envfile import read_section
 from wtenv.identity import current_worktree
-from wtenv.output import DatabaseView, ItemKind, ResourceState
+from wtenv.output import DatabaseView, ItemKind, PostUpRun, ResourceState
 from wtenv.registry import WorktreeEntry, load, registry_path
 
 pytestmark = pytest.mark.integration
@@ -648,3 +648,133 @@ def test_a_copy_that_was_deleted_is_created_again(
     assert sqlite_rows(copy) == [(0,)]
     files = [c for c in parse_up(process).changes if c.item.kind is ItemKind.SQLITE_FILE]
     assert [c.action for c in files] == ["created"]
+
+
+# ---------------------------------------------------------------------------------------------
+# Post-up commands (T067)
+# ---------------------------------------------------------------------------------------------
+
+
+def toml_with_post_up(commands: list[str], extra: str = "") -> str:
+    return f"post_up = {json.dumps(commands)}\n{extra}"
+
+
+def test_post_up_commands_run_in_order_from_the_worktree_root_with_its_variables(
+    run_wtenv: Run, sqlite_repo: Path, add_worktree: AddWorktree
+) -> None:
+    worktree = add_worktree(sqlite_repo, "feature-x", "feature-x")
+    commands = [
+        "echo first >> order.txt",
+        "pwd > cwd.txt",
+        'printf "%s" "$PORT" > port.txt; printf "%s" "$DATABASE_URL" > url.txt',
+        "echo last >> order.txt",
+    ]
+    write_config(worktree, toml_with_post_up(commands, SQLITE_TOML))
+
+    process = run_wtenv(["up", "--json"], worktree / "db")  # from a subdirectory
+
+    assert process.returncode == 0, process.stderr
+    assert (worktree / "order.txt").read_text() == "first\nlast\n"
+    assert Path((worktree / "cwd.txt").read_text().strip()).resolve() == worktree
+    block = entry_of(worktree).block
+    assert (worktree / "port.txt").read_text() == str(block.start)
+    assert (worktree / "url.txt").read_text() == f"sqlite:///{worktree / '.wtenv' / 'dev.sqlite3'}"
+    assert parse_up(process).post_up == [PostUpRun(command=c, exit_status=0) for c in commands]
+    assert entry_of(worktree).state == "provisioned"
+
+
+def test_post_up_commands_run_on_every_successful_up_including_a_repeat_one(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree
+) -> None:
+    worktree = add_worktree(repo, "feature-x", "feature-x")
+    write_config(worktree, toml_with_post_up(["echo ran >> runs.txt"]))
+
+    for _ in range(3):
+        process = run_up(run_wtenv, worktree)
+        assert process.returncode == 0, process.stderr
+        assert len(parse_up(process).post_up) == 1
+
+    assert (worktree / "runs.txt").read_text() == "ran\n" * 3
+    assert entry_of(worktree).state == "provisioned"
+
+
+def test_post_up_standard_output_goes_to_standard_error_and_json_stays_one_document(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree
+) -> None:
+    worktree = add_worktree(repo, "feature-x", "feature-x")
+    write_config(worktree, toml_with_post_up(["echo marker-$((20 + 22))"]))
+
+    process = run_up(run_wtenv, worktree)
+
+    assert process.returncode == 0, process.stderr
+    assert "marker-42" in process.stderr
+    assert "marker-42" not in process.stdout  # the command text is in the JSON, its output is not
+    assert len(process.stdout.splitlines()) == 1
+    assert parse_up(process).ok
+
+
+def test_post_up_commands_get_a_closed_standard_input(
+    repo: Path, add_worktree: AddWorktree
+) -> None:
+    worktree = add_worktree(repo, "feature-x", "feature-x")
+    write_config(worktree, toml_with_post_up(["cat > stdin-seen.txt"]))
+    # wtenv's own standard input stays open and silent: a command that inherited it would wait.
+    process = subprocess.Popen(
+        [sys.executable, "-m", "wtenv", "up"],
+        cwd=worktree,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        process.wait(timeout=30)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        for stream in (process.stdin, process.stdout, process.stderr):
+            if stream is not None:
+                stream.close()
+
+    assert process.returncode == 0
+    assert (worktree / "stdin-seen.txt").read_text() == ""
+
+
+def test_the_first_failing_command_stops_up_with_exit_12(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree
+) -> None:
+    worktree = add_worktree(repo, "feature-x", "feature-x")
+    commands = ["echo one >> log.txt", "exit 3", "echo never >> log.txt"]
+    write_config(worktree, toml_with_post_up(commands))
+
+    process = run_up(run_wtenv, worktree)
+
+    assert process.returncode == 12
+    error = error_of(process)
+    assert error["code"] == "post_up_failed"
+    assert error["details"] == {"command": "exit 3", "exit_status": 3}
+    assert (worktree / "log.txt").read_text() == "one\n"  # later commands do not run
+    entry = entry_of(worktree)
+    assert entry.state == "incomplete"
+    assert [name for name, _ in read_section(worktree / ".env.local")] == ["PORT"]  # resources stay
+
+    write_config(worktree, toml_with_post_up(["echo fixed >> log.txt"]))
+    again = run_up(run_wtenv, worktree)
+
+    assert again.returncode == 0, again.stderr
+    assert entry_of(worktree).state == "provisioned"
+
+
+def test_a_failing_command_on_a_repeat_up_makes_the_entry_incomplete(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree
+) -> None:
+    worktree = add_worktree(repo, "feature-x", "feature-x")
+    assert run_up(run_wtenv, worktree).returncode == 0
+    assert entry_of(worktree).state == "provisioned"
+
+    write_config(worktree, toml_with_post_up(["exit 7"]))
+    process = run_up(run_wtenv, worktree)
+
+    assert process.returncode == 12
+    assert error_of(process)["details"] == {"command": "exit 7", "exit_status": 7}
+    assert entry_of(worktree).state == "incomplete"

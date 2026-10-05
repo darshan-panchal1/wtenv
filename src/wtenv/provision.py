@@ -12,6 +12,8 @@ tests can stop `up` right after any one of them.
 """
 
 import os
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -111,7 +113,7 @@ def _provision(identity: WorktreeIdentity) -> UpResult:
         if plan is not None:
             changes.append(_database_change(root, plan, "unchanged"))
         changes.append(_env_change(env_path, "unchanged"))
-        runs: list[PostUpRun] = []
+        runs = _run_post_up(root, config.post_up, _variables(known.ports, plan), known.git_dir)
         return _result(identity, known, config.env_file, changes, warnings, runs)
 
     # Step 8: the registry first.
@@ -131,7 +133,8 @@ def _provision(identity: WorktreeIdentity) -> UpResult:
     variables = _variables(after.ports, plan)
     changes += _env_file_step(root, config, before, after, variables)
 
-    runs = []
+    # Step 13: the post-up commands.
+    runs = _run_post_up(root, config.post_up, variables, after.git_dir)
 
     # Step 14: the entry is `provisioned` only now.
     with registry.transaction() as reg:
@@ -542,6 +545,43 @@ def _database_change(root: Path, plan: _DatabasePlan, action: Action) -> UpChang
         return UpChange(item=Item(kind=ItemKind.POSTGRES_DATABASE, name=plan.name), action=action)
     assert plan.path is not None
     return UpChange(item=Item(kind=ItemKind.SQLITE_FILE, name=str(root / plan.path)), action=action)
+
+
+# --- step 13: the post-up commands --------------------------------------------------------------
+
+
+def _run_post_up(
+    root: Path, commands: list[str], variables: list[tuple[str, str]], git_dir: str
+) -> list[PostUpRun]:
+    """Run each command through `sh -c`, in order, and stop at the first that fails (FR-036).
+
+    They run in the worktree root with its variables added to the environment, with standard
+    input closed and standard output sent to wtenv's standard error, so `--json` output stays one
+    document. A failure makes the entry `incomplete` and raises `post_up_failed` (FR-037).
+    """
+    environment = {**os.environ, **dict(variables)}
+    runs = []
+    for command in commands:
+        sys.stderr.flush()
+        finished = subprocess.run(
+            ["sh", "-c", command],
+            cwd=root,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=sys.stderr,
+            check=False,
+        )
+        if finished.returncode != 0:
+            with registry.transaction() as reg:
+                reg.worktrees[git_dir].state = "incomplete"
+            raise WtenvError(
+                ErrorCode.POST_UP_FAILED,
+                f"the post-up command exited with status {finished.returncode}: {command}",
+                hint="Fix the command, then run `wtenv up` again.",
+                details={"command": command, "exit_status": finished.returncode},
+            )
+        runs.append(PostUpRun(command=command, exit_status=finished.returncode))
+    return runs
 
 
 # --- the result --------------------------------------------------------------------------------

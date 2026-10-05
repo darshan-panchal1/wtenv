@@ -608,7 +608,7 @@ T059–T060, T062, T063, and T067. US2 scenario 5 (`down` removes only this data
 
 ### 4F. Post-up commands (`provision.py`)
 
-- [ ] T067 [US2] Add failing post-up tests to `tests/integration/test_us2_database.py`
+- [X] T067 [US2] Add failing post-up tests to `tests/integration/test_us2_database.py`
   - FR-036: commands run in order through `sh -c`, from the worktree root, with the
     worktree's variables set, standard input closed, and their standard output sent to
     wtenv's standard error, on every successful `up`, including a repeat one (cli.md).
@@ -616,7 +616,7 @@ T059–T060, T062, T063, and T067. US2 scenario 5 (`down` removes only this data
     `details.exit_status`; later commands do not run; resources stay; the entry is
     `incomplete`; `UpResult.post_up` lists each command run.
   - With `--json`, stdout still holds exactly one document.
-- [ ] T068 [US2] Implement post-up commands (step 13) in `src/wtenv/provision.py`
+- [X] T068 [US2] Implement post-up commands (step 13) in `src/wtenv/provision.py`
 
 **Checkpoint**: US1 and US2 work; the five gates pass.
 
