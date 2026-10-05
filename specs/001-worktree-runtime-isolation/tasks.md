@@ -486,7 +486,7 @@ T059–T060, T062, T063, and T067. US2 scenario 5 (`down` removes only this data
 
 ### 4A. Configuration: `[database]` and `post_up` (`config.py`) — core area 4
 
-- [ ] T050 [P] [US2] Write failing tests for the database table and `post_up` in `tests/unit/test_config_database.py`
+- [X] T050 [P] [US2] Write failing tests for the database table and `post_up` in `tests/unit/test_config_database.py`
   - `database.type` `"postgres"` or `"sqlite"`, `database.template`, and `database.url` are
     required (config.md, Settings).
   - Placeholders `{name}`, `{path}`, `{env:NAME}`: "Any other text in braces is
@@ -499,7 +499,7 @@ T059–T060, T062, T063, and T067. US2 scenario 5 (`down` removes only this data
   - SQLite patterns "must contain `{path}`".
   - `post_up`: a list of shell commands; "Each must be non-empty."
   - Each error names its setting (`database.url`, `database.type`, `post_up`).
-- [ ] T051 [US2] Add the `database` table and `post_up` to `src/wtenv/config.py`
+- [X] T051 [US2] Add the `database` table and `post_up` to `src/wtenv/config.py`
 
 ### 4B. Names and the URL pattern (`database.py`)
 
