@@ -453,6 +453,25 @@ def render_gc_text(result: GcResult) -> str:
 _LS_HEADER = ("STATUS", "PORTS", "VARIABLES", "DATABASE", "COMPOSE", "PATH")
 
 
+def render_hook_install_text(result: HookInstallResult) -> str:
+    """Return the text `wtenv hook install` prints for people (not a stable interface)."""
+    if result.action == "unchanged":
+        return f"wtenv: the post-checkout hook in {result.hook_file} is already up to date"
+    verb = "updated" if result.action == "updated" else "installed"
+    return f"wtenv: {verb} the post-checkout hook block in {result.hook_file}"
+
+
+def render_hook_uninstall_text(result: HookUninstallResult) -> str:
+    """Return the text `wtenv hook uninstall` prints for people (not a stable interface)."""
+    if result.action == "absent":
+        return f"wtenv: no wtenv block in {result.hook_file}; nothing to remove"
+    if result.dry_run:
+        return "\n".join(
+            f"wtenv: would remove the {item.kind.value} {item.name}" for item in result.would_remove
+        )
+    return "\n".join(f"wtenv: removed the {item.kind.value} {item.name}" for item in result.removed)
+
+
 def render_ls_text(result: LsResult) -> str:
     """Return the table `wtenv ls` prints for people (cli.md, `wtenv ls`; not a stable interface).
 

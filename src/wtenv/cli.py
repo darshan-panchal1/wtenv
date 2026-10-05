@@ -157,6 +157,61 @@ def ls(
     print_result(result, json_mode=json_output, text=render_ls_text(result))
 
 
+hook_app = typer.Typer(
+    help="Install or remove the git hook that provisions new worktrees.", no_args_is_help=True
+)
+app.add_typer(hook_app, name="hook")
+
+
+@hook_app.command("install")
+def hook_install(
+    json_output: bool = typer.Option(False, "--json", help="Print one JSON document."),
+) -> None:
+    """Install the post-checkout hook that runs `wtenv up` in each new worktree."""
+    from wtenv.hooks import install
+    from wtenv.output import (
+        HookInstallResult,
+        failed_result,
+        print_error,
+        print_result,
+        render_hook_install_text,
+    )
+
+    try:
+        result = install()
+    except WtenvError as error:
+        print_error(error)
+        print_result(failed_result(HookInstallResult, error), json_mode=json_output)
+        raise typer.Exit(EXIT_STATUS[error.code]) from error
+    print_result(result, json_mode=json_output, text=render_hook_install_text(result))
+
+
+@hook_app.command("uninstall")
+def hook_uninstall(
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Change nothing; list what `hook uninstall` would remove."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Print one JSON document."),
+) -> None:
+    """Remove the block that `hook install` added, and the hook file if wtenv created it."""
+    from wtenv.hooks import uninstall
+    from wtenv.output import (
+        HookUninstallResult,
+        failed_result,
+        print_error,
+        print_result,
+        render_hook_uninstall_text,
+    )
+
+    try:
+        result = uninstall(dry_run=dry_run)
+    except WtenvError as error:
+        print_error(error)
+        print_result(failed_result(HookUninstallResult, error), json_mode=json_output)
+        raise typer.Exit(EXIT_STATUS[error.code]) from error
+    print_result(result, json_mode=json_output, text=render_hook_uninstall_text(result))
+
+
 def _print_version(json_mode: bool) -> None:
     """Print `wtenv <version>`, or a `VersionResult` document with `--json`."""
     if json_mode:

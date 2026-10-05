@@ -1,15 +1,26 @@
-"""The git `post-checkout` hook block: its text, and putting it into a hook and taking it out
-(contracts/files.md, "Git hook block"; research.md section 1; FR-051 to FR-053).
+"""The git `post-checkout` hook: the block's text, putting it into a hook and taking it out
+(contracts/files.md, "Git hook block"; research.md section 1; FR-051 to FR-053), and the commands
+`wtenv hook install` and `wtenv hook uninstall` (cli.md).
 
 The hook file is handled as bytes, so every byte outside the block is kept as it was (FR-053).
-The functions here take and return file content; they touch no file.
+`insert_block`, `remove_block`, and `only_shebang_left` take and return file content and touch no
+file; `install` and `uninstall` read and write `<git-common-dir>/hooks/post-checkout`.
 """
 
+import os
 import re
+import stat
 from pathlib import Path
 from typing import Literal
 
+from wtenv import registry
+from wtenv.envfile import write_atomic
 from wtenv.errors import ErrorCode, WtenvError
+from wtenv.gitutil import git_path
+from wtenv.identity import WorktreeIdentity, current_worktree
+from wtenv.locks import registry_lock
+from wtenv.output import HookInstallResult, HookUninstallResult, Item, ItemKind
+from wtenv.registry import HookRecord
 
 BEGIN_MARKER = "# >>> wtenv managed (written by `wtenv hook install`; do not edit) >>>"
 END_MARKER = "# <<< wtenv managed <<<"
@@ -29,6 +40,9 @@ if [ "$3" = "1" ] && [ -n "$1" ] && [ -z "$(printf '%s' "$1" | tr -d 0)" ]; then
 fi
 {END_MARKER}
 """
+
+HOOK_NAME = "post-checkout"
+_NEW_FILE_MODE = 0o755
 
 _BLOCK = BLOCK.encode()
 _BEGIN = BEGIN_MARKER.encode()
@@ -95,6 +109,118 @@ def only_shebang_left(content: bytes) -> bool:
     """
     lines = [line for line in content.splitlines() if line.strip()]
     return len(lines) == 1 and lines[0].startswith(b"#!")
+
+
+def install(cwd: str | Path | None = None) -> HookInstallResult:
+    """Install the block into the repository's `post-checkout` hook (FR-051 to FR-053).
+
+    Acts on the repository of the worktree that contains `cwd` (default: the current directory).
+    The hook file is `<git-common-dir>/hooks/post-checkout`: a new file gets mode 0755 and a
+    registry record with `created_file` true, so `uninstall` may delete it; an existing hook keeps
+    its mode and is recorded with `created_file` false. Running it again is `unchanged` or
+    `updated`. Raises `not_in_worktree`, `registry_busy`, `registry_unreadable`, and
+    `unsupported` with reason `hooks_path_redirected` (`core.hooksPath` names another directory),
+    `hook_not_shell`, or `markers_damaged`. The registry is read first, and nothing is written
+    when anything fails.
+    """
+    identity = current_worktree(cwd)
+    hooks_dir = Path(identity.repository) / "hooks"
+    hook_file = hooks_dir / HOOK_NAME
+    _require_default_hooks_directory(identity, hooks_dir, hook_file)
+    with registry_lock():
+        reg = registry.load()
+        try:
+            content: bytes | None = hook_file.read_bytes()
+        except FileNotFoundError:
+            content = None
+        updated, action = insert_block(content, hook_file)
+        if action != "unchanged":
+            hooks_dir.mkdir(parents=True, exist_ok=True)
+            mode = _NEW_FILE_MODE if content is None else stat.S_IMODE(os.stat(hook_file).st_mode)
+            write_atomic(hook_file, updated, mode)
+        old = reg.hooks.get(identity.repository)
+        created = content is None or (
+            old is not None and old.hook_file == str(hook_file) and old.created_file
+        )
+        record = HookRecord(hook_file=str(hook_file), created_file=created)
+        if old != record:
+            reg.hooks[identity.repository] = record
+            registry.save(reg)
+    return HookInstallResult(ok=True, hook_file=str(hook_file), action=action)
+
+
+def uninstall(cwd: str | Path | None = None, *, dry_run: bool = False) -> HookUninstallResult:
+    """Remove the block that `install` added, and the file too when `install` created it.
+
+    Acts on the repository of the worktree that contains `cwd`. It looks in
+    `<git-common-dir>/hooks/post-checkout` whatever `core.hooksPath` says now, so that a block can
+    still be removed after the setting moved. The file is deleted only when the registry records
+    that wtenv created it and nothing but the shebang line is left (cli.md). No block is success
+    with `action` `absent`. With `dry_run` nothing is written, and `would_remove` holds what a
+    real run would remove (FR-040); `action` is then left unset unless there is no block.
+    Raises `not_in_worktree`, `registry_busy`, `registry_unreadable`, and `unsupported` (reason
+    `markers_damaged`).
+    """
+    identity = current_worktree(cwd)
+    hook_file = Path(identity.repository) / "hooks" / HOOK_NAME
+    with registry_lock():
+        reg = registry.load()
+        record = reg.hooks.get(identity.repository)
+        try:
+            content = hook_file.read_bytes()
+        except FileNotFoundError:
+            content = None
+        remaining = None if content is None else remove_block(content, hook_file)
+        if remaining is None:
+            # No block: success, and a record of a hook that is gone is stale.
+            if record is not None and not dry_run:
+                del reg.hooks[identity.repository]
+                registry.save(reg)
+            return HookUninstallResult(
+                ok=True, dry_run=dry_run, hook_file=str(hook_file), action="absent"
+            )
+        items = [Item(kind=ItemKind.HOOK_BLOCK, name=str(hook_file))]
+        delete = (
+            record is not None
+            and record.created_file
+            and record.hook_file == str(hook_file)
+            and only_shebang_left(remaining)
+        )
+        if delete:
+            items.append(Item(kind=ItemKind.HOOK_FILE, name=str(hook_file)))
+        if dry_run:
+            return HookUninstallResult(
+                ok=True, dry_run=True, hook_file=str(hook_file), would_remove=items
+            )
+        if delete:
+            os.unlink(hook_file)
+        else:
+            write_atomic(hook_file, remaining, stat.S_IMODE(os.stat(hook_file).st_mode))
+        reg.hooks.pop(identity.repository, None)
+        registry.save(reg)
+    return HookUninstallResult(ok=True, hook_file=str(hook_file), action="removed", removed=items)
+
+
+def _require_default_hooks_directory(
+    identity: WorktreeIdentity, hooks_dir: Path, hook_file: Path
+) -> None:
+    """Raise `unsupported` (`hooks_path_redirected`) unless git runs hooks from `hooks_dir`.
+
+    Hook directories that `core.hooksPath` redirects are often tracked directories (husky,
+    lefthook) or shared by many repositories, so wtenv never writes there (research.md section 1).
+    """
+    active = git_path(identity.path, "hooks")
+    if os.path.realpath(active) == os.path.realpath(hooks_dir):
+        return
+    raise WtenvError(
+        ErrorCode.UNSUPPORTED,
+        f"core.hooksPath makes git run hooks from {active}, not from {hooks_dir}",
+        hint=(
+            "wtenv installs only into the default hooks directory. To provision new worktrees "
+            f"automatically, add this block to your hook manager's post-checkout hook:\n{BLOCK}"
+        ),
+        details={"reason": "hooks_path_redirected", "file": str(hook_file)},
+    )
 
 
 def _names_a_shell(line: bytes) -> bool:

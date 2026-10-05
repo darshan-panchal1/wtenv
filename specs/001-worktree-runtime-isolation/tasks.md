@@ -1070,7 +1070,7 @@ provisioned. `wtenv exec -- env` shows the worktree's variables. Automated by T1
 
 ### 7B. `wtenv hook install` and `wtenv hook uninstall`
 
-- [ ] T118 [P] [US5] Write failing integration tests for the hook in `tests/integration/test_us5_hook_exec.py`
+- [X] T118 [P] [US5] Write failing integration tests for the hook in `tests/integration/test_us5_hook_exec.py`
   - Setup: `PATH` starts with the directory of the test environment's `wtenv` script
     (`Path(sys.executable).parent`).
   - Scenario 1 (FR-051): after `hook install`, `git worktree add` with a branch and with
@@ -1091,12 +1091,12 @@ provisioned. `wtenv exec -- env` shows the worktree's variables. Automated by T1
     nothing written; a non-shell hook → reason `hook_not_shell`.
   - `hook install` and `hook uninstall` outside any worktree → exit 4 `not_in_worktree`,
     nothing written (cli.md, Where it runs).
-- [ ] T119 [US5] Implement install and uninstall in `src/wtenv/hooks.py`
+- [X] T119 [US5] Implement install and uninstall in `src/wtenv/hooks.py`
   - Hook file `<git-common-dir>/hooks/post-checkout`; `git rev-parse --git-path hooks` must
     equal `<git-common-dir>/hooks`, otherwise `hooks_path_redirected` (research.md §1).
   - A new file gets mode `0755` and a `HookRecord` with `created_file` true; uninstall
     deletes the file only then, and only when nothing but the shebang is left.
-- [ ] T120 [US5] Add `wtenv hook install` and `wtenv hook uninstall [--dry-run]` to `src/wtenv/cli.py` and their output to `src/wtenv/output.py`
+- [X] T120 [US5] Add `wtenv hook install` and `wtenv hook uninstall [--dry-run]` to `src/wtenv/cli.py` and their output to `src/wtenv/output.py`
   - `HookInstallResult`, `HookUninstallResult`; exit statuses 0, 4, 14, 16, 19.
 
 ### 7C. `wtenv exec` (`execcmd.py`, `cli.py`)
