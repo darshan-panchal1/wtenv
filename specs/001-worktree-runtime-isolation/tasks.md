@@ -255,7 +255,7 @@ identity, the registry and its locks, and the CLI shell with a lazy-import `--ve
 
 ### 2E. CLI shell and `--version` (`cli.py`, `__main__.py`)
 
-- [ ] T024 [P] Write failing tests for the CLI shell in `tests/contract/test_cli_shell.py`
+- [X] T024 [P] Write failing tests for the CLI shell in `tests/contract/test_cli_shell.py`
   - `wtenv --version` prints `wtenv <version>`; `wtenv --version --json` prints a
     `VersionResult`; both exit 0. `python -m wtenv` behaves like `wtenv`.
   - An unknown command or option exits 2. With `--json` before any `--`, stdout holds one
@@ -264,11 +264,11 @@ identity, the registry and its locks, and the CLI shell with a lazy-import `--ve
   - An unexpected exception inside a command exits 1 with `internal_error` and
     `details.exception` set to the class name.
   - `--help` works; no shell-completion option is offered (cli.md, Rules for every command).
-- [ ] T025 [P] Write failing lazy-import tests in `tests/unit/test_lazy_imports.py`
+- [X] T025 [P] Write failing lazy-import tests in `tests/unit/test_lazy_imports.py`
   - In a fresh interpreter, after `wtenv.cli.main(["--version"])`: `pydantic`, `filelock`,
     `platformdirs`, `psycopg`, and `click` are not in `sys.modules` (NFR-001; research.md §7,
     §8).
-- [ ] T026 Implement the Typer app, `main`, `--version`, and exit-status mapping in `src/wtenv/cli.py`; add `src/wtenv/__main__.py`
+- [X] T026 Implement the Typer app, `main`, `--version`, and exit-status mapping in `src/wtenv/cli.py`; add `src/wtenv/__main__.py`
   - `main(argv)` runs the app with `standalone_mode=False` and returns the exit status:
     `WtenvError` → its status; a Typer usage error → `usage_error`; anything else →
     `internal_error` (plan.md, Design overview).
