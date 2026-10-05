@@ -10,6 +10,7 @@ this module imports no other wtenv module.
 
 from __future__ import annotations
 
+import os
 import sys
 from collections.abc import Sequence
 from enum import StrEnum
@@ -349,9 +350,10 @@ def failed_result(model: type[R], error: WtenvError, warnings: Sequence[WarningI
 def render_up_text(result: UpResult) -> str:
     """Return the text `wtenv up` prints for people (cli.md, `wtenv up`; not a stable interface).
 
-    One header line, then one line per part of the worktree: its ports with their variables, its
-    databases, and the env file with what happened to it. A database line shows the kind, the
-    name and server or the path, and what happened to it; never a URL, which can hold a password.
+    One header line, then one line per part of the worktree: its ports with their variables, the
+    ports its compose services publish, its databases, its compose project, and the env file with
+    what happened to it. A database line shows the kind, the name and server or the path, and
+    what happened to it; never a URL, which can hold a password.
     """
     worktree = result.worktree
     if worktree is None:
@@ -362,11 +364,16 @@ def render_up_text(result: UpResult) -> str:
             f"{port.variable}={port.port}" for port in worktree.ports if port.variable is not None
         )
         lines.append(f"  {'ports':<11}{worktree.block.start}-{worktree.block.end}  {variables}")
+    published = [_published_text(port) for port in worktree.ports if port.service is not None]
+    if published:
+        lines.append(f"  {'published':<11}{'  '.join(published)}")
     for change in result.changes:
         if change.action == "released":
             lines.append(f"  {'released':<11}{change.item.kind.value} {change.item.name}")
     for database in worktree.databases:
         lines.append(_database_line(database, result.changes))
+    if worktree.compose_project is not None:
+        lines.append(_compose_line(worktree.compose_project, worktree.path, result.changes))
     if worktree.env_file is not None:
         # The section of the env file that is in use, not one that was released.
         action = next(
@@ -379,6 +386,30 @@ def render_up_text(result: UpResult) -> str:
         )
         lines.append(f"  {'env file':<11}{worktree.env_file} ({action})")
     return "\n".join(lines)
+
+
+def _published_text(port: PortView) -> str:
+    """Return `service:target -> port (VARIABLE)`; a port that is not tcp shows `/protocol`."""
+    protocol = "" if port.protocol in (None, "tcp") else f"/{port.protocol}"
+    tied = "" if port.variable is None else f" ({port.variable})"
+    return f"{port.service}:{port.target}{protocol} -> {port.port}{tied}"
+
+
+def _compose_line(project: str, root: str, changes: Sequence[UpChange]) -> str:
+    """Return the `compose` line: the project, and the override file with what happened to it."""
+    override = next(
+        (
+            change
+            for change in changes
+            if change.item.kind is ItemKind.COMPOSE_OVERRIDE and change.action != "released"
+        ),
+        None,
+    )
+    if override is None:
+        return f"  {'compose':<11}{project}  (no override)"
+    name = override.item.name
+    shown = os.path.relpath(name, root) if name.startswith(root.rstrip("/") + "/") else name
+    return f"  {'compose':<11}{project}  {shown} ({override.action})"
 
 
 def _database_line(database: DatabaseView, changes: Sequence[UpChange]) -> str:

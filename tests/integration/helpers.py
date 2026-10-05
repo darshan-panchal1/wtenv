@@ -1,8 +1,11 @@
 """Small helpers shared by the integration tests of `wtenv up`."""
 
+import os
+import re
 import sqlite3
 import subprocess
-from dataclasses import dataclass
+import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import psycopg
@@ -96,3 +99,79 @@ class PostgresServer:
         with self.connect() as connection:
             row = connection.execute("SELECT 1 FROM pg_database WHERE datname = %s", [name])
             return row.fetchone() is not None
+
+
+# --- docker compose ------------------------------------------------------------------------------
+
+# Local images only: the tests never pull. `valkey` is small and declares a volume.
+COMPOSE_IMAGE = "valkey/valkey:latest"
+PROJECT_LABEL = "com.docker.compose.project"
+
+
+def clean_environment() -> dict[str, str]:
+    """Return the environment without any `COMPOSE_*` variable, which would beat the override."""
+    return {key: value for key, value in os.environ.items() if not key.startswith("COMPOSE_")}
+
+
+def compose_version() -> tuple[int, int, int] | None:
+    """Return the version of `docker compose`, or None when it is not available."""
+    try:
+        result = subprocess.run(
+            ["docker", "compose", "version", "--short"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    match = re.match(r"v?(\d+)\.(\d+)\.(\d+)", result.stdout.strip())
+    if result.returncode != 0 or match is None:
+        return None
+    return int(match.group(1)), int(match.group(2)), int(match.group(3))
+
+
+def project_resources(project: str) -> dict[str, list[str]]:
+    """Return the ids of the containers, networks, and volumes labelled with `project`."""
+    label = f"label={PROJECT_LABEL}={project}"
+    commands = {
+        "containers": ["docker", "ps", "-a", "-q", "--filter", label],
+        "networks": ["docker", "network", "ls", "-q", "--filter", label],
+        "volumes": ["docker", "volume", "ls", "-q", "--filter", label],
+    }
+    return {
+        kind: subprocess.run(command, capture_output=True, text=True, check=True).stdout.split()
+        for kind, command in commands.items()
+    }
+
+
+@dataclass
+class ComposeProjects:
+    """The compose projects one test started; only these are ever removed."""
+
+    names: list[str] = field(default_factory=list)
+
+    def track(self, project: str) -> str:
+        """Register `project`, a name wtenv generated for this test's worktree; return it."""
+        assert project.startswith("wtenv-"), project
+        if project not in self.names:
+            self.names.append(project)
+        return project
+
+    def remove_all(self) -> None:
+        """Take down each tracked project by name, from a directory with no compose file."""
+        for project in self.names:
+            with tempfile.TemporaryDirectory() as empty:
+                subprocess.run(
+                    ["docker", "compose", "-p", project, "down", "--volumes", "--remove-orphans"],
+                    cwd=empty,
+                    env=clean_environment(),
+                    capture_output=True,
+                    check=False,
+                )
+
+    def assert_nothing_left(self) -> None:
+        """Fail if a tracked project still has a container, a network, or a volume."""
+        for project in self.names:
+            left = {kind: ids for kind, ids in project_resources(project).items() if ids}
+            assert not left, f"compose project {project} left resources behind: {left}"

@@ -1,4 +1,5 @@
-"""`wtenv up`: give the current worktree its port block, its env file section, and its database.
+"""`wtenv up`: give the current worktree its port block, its env file section, its database, and
+its compose project.
 
 The order of work is that of contracts/cli.md, `wtenv up`. Everything that needs no resource is
 checked first, so a failure there changes nothing (steps 1 to 6). Then the registry is written
@@ -8,7 +9,8 @@ from the recorded states (FR-067, FR-069).
 
 Steps that other modules perform are called through their module (`registry.transaction`,
 `exclude.add_patterns`, `envfile.write_section`, `database.create_sqlite_copy`), so the recovery
-tests can stop `up` right after any one of them.
+tests can stop `up` right after any one of them. The compose module is imported only when
+`[compose]` is configured or a compose project is recorded (research.md section 8).
 """
 
 import os
@@ -16,7 +18,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from wtenv import database, envfile, exclude, ports, registry
 from wtenv.config import CONFIG_FILE_NAME, Config, load_config
@@ -41,13 +43,19 @@ from wtenv.output import (
     WorktreeView,
 )
 from wtenv.registry import (
+    PORT_RANGE_START,
+    ComposeRecord,
     DatabaseRecord,
     EnvFileRecord,
     PortBlock,
+    PublishedPort,
     Registry,
     VariablePort,
     WorktreeEntry,
 )
+
+if TYPE_CHECKING:
+    from wtenv.compose import ComposeModel, PortMapping
 
 Action = Literal["created", "updated", "unchanged", "released"]
 DatabaseKind = Literal["postgres", "sqlite"]
@@ -75,6 +83,16 @@ class _DatabasePlan:
     target: PostgresTarget | None = None  # Postgres: wtenv's own connection
 
 
+@dataclass(frozen=True)
+class _ComposePlan:
+    """What the compose step needs, worked out before anything changes (step 5)."""
+
+    file: str  # the compose file, relative to the worktree root
+    override: str  # the override file beside it, relative to the worktree root
+    project: str  # the recorded project name, or the one to record
+    model: "ComposeModel"  # the compose file as Compose resolved it
+
+
 def up(cwd: str | Path | None = None, *, lock_timeout: float = WORKTREE_LOCK_TIMEOUT) -> UpResult:
     """Provision the worktree that contains `cwd` (default: the current directory).
 
@@ -94,15 +112,18 @@ def _provision(identity: WorktreeIdentity) -> UpResult:
     config = load_config(root)  # step 3
     env_path = root / config.env_file
     _check_env_file(root, config.env_file)  # step 4
-    ports.check_block_size(len(config.ports), config.block_size)  # step 6
     section = _read_section_or_none(env_path)  # also the markers check of step 4
     with registry_lock():
         known = registry.load().worktrees.get(identity.git_dir)
+    compose_plan = _compose_plan(root, identity, config, known)  # step 5
+    _check_block_size(config, compose_plan)  # step 6
     plan = _database_plan(root, identity, config, known)  # step 7
-    warnings = _warnings(identity, known, config, env_path)
+    warnings = _warnings(identity, known, config, env_path, compose_plan)
     exclude_path = git_path(root, "info/exclude")
 
-    if known is not None and _has_nothing_to_change(known, identity, config, section, plan):
+    if known is not None and _has_nothing_to_change(
+        known, identity, config, section, plan, compose_plan
+    ):
         # Nothing is saved. The exclude block is put back if someone removed it, which does not
         # take the worktree out of `provisioned`.
         changed = _add_exclude_patterns(exclude_path, known.exclude_patterns)
@@ -112,6 +133,8 @@ def _provision(identity: WorktreeIdentity) -> UpResult:
         ]
         if plan is not None:
             changes.append(_database_change(root, plan, "unchanged"))
+        if compose_plan is not None:
+            changes.append(_compose_change(root, compose_plan, "unchanged"))
         changes.append(_env_change(env_path, "unchanged"))
         runs = _run_post_up(root, config.post_up, _variables(known.ports, plan), known.git_dir)
         return _result(identity, known, config.env_file, changes, warnings, runs)
@@ -119,7 +142,7 @@ def _provision(identity: WorktreeIdentity) -> UpResult:
     # Step 8: the registry first.
     with registry.transaction() as reg:
         before = reg.worktrees.get(identity.git_dir)
-        after = _registry_step(reg, identity, config, before, section is not None)
+        after = _registry_step(reg, identity, config, before, section is not None, compose_plan)
     changes = _block_changes(before, after)
 
     # Step 9: the exclude block, with lines the entry already records.
@@ -128,6 +151,9 @@ def _provision(identity: WorktreeIdentity) -> UpResult:
 
     # Step 10: the database.
     changes += _database_step(root, config, plan, after)
+
+    # Step 11: the compose override.
+    changes += _compose_step(root, compose_plan, after)
 
     # Step 12: the env file.
     variables = _variables(after.ports, plan)
@@ -194,6 +220,55 @@ def _record_of(entry: WorktreeEntry | None, kind: DatabaseKind) -> DatabaseRecor
     return next((record for record in entry.databases if record.kind == kind), None)
 
 
+def _compose_plan(
+    root: Path, identity: WorktreeIdentity, config: Config, known: WorktreeEntry | None
+) -> _ComposePlan | None:
+    """Step 5: check the compose limits and have Compose resolve the compose file.
+
+    Returns None without `[compose]`. Raises `dependency_unavailable` (Docker, or Compose older
+    than 2.24.4, or a remote engine), `ownership_conflict` (an override file that is not wtenv's),
+    `unsupported` (`COMPOSE_PROJECT_NAME` or `COMPOSE_FILE`, a published range), or
+    `config_invalid` (Compose cannot resolve the file). Nothing is changed. The project name is
+    the recorded one, and never changes (data-model.md, Compose record).
+    """
+    settings = config.compose
+    if settings is None:
+        return None
+    from wtenv import compose  # only now: the module is not loaded without `[compose]`
+
+    compose.check_docker()
+    recorded = None if known is None or known.compose is None else known.compose
+    compose.check_override_files(
+        root, settings.file, None if recorded is None else recorded.override
+    )
+    compose.check_environment(root, settings.file, os.environ)
+    model = compose.resolve_model(root / settings.file, config.ports)
+    return _ComposePlan(
+        file=settings.file,
+        override=compose.override_path(settings.file),
+        project=(
+            recorded.project
+            if recorded is not None
+            else compose.project_name(Path(identity.path).name, identity.git_dir)
+        ),
+        model=model,
+    )
+
+
+def _check_block_size(config: Config, compose_plan: _ComposePlan | None) -> None:
+    """Step 6: check that the block holds every port variable and every published port.
+
+    With compose, a stand-in block of the configured size is assigned to the published ports. That
+    runs the same check as the real assignment, needs no block, and finds a port clash now
+    (data-model.md, Port allocation: "Steps 2 to 5 run before anything is changed").
+    """
+    if compose_plan is None:
+        ports.check_block_size(len(config.ports), config.block_size)
+        return
+    stand_in = PortBlock(start=PORT_RANGE_START, size=config.block_size)
+    ports.assign_published_ports(compose_plan.model.mappings, config.ports, stand_in)
+
+
 def _database_plan(
     root: Path, identity: WorktreeIdentity, config: Config, known: WorktreeEntry | None
 ) -> _DatabasePlan | None:
@@ -227,9 +302,13 @@ def _database_plan(
 
 
 def _warnings(
-    identity: WorktreeIdentity, known: WorktreeEntry | None, config: Config, env_path: Path
+    identity: WorktreeIdentity,
+    known: WorktreeEntry | None,
+    config: Config,
+    env_path: Path,
+    compose_plan: _ComposePlan | None,
 ) -> list[WarningInfo]:
-    """Return the warnings of this run: a moved worktree (FR-084), duplicate variables (FR-080)."""
+    """Return the warnings: a moved worktree (FR-084), duplicate variables (FR-080), fixed names."""
     warnings = []
     if known is not None and known.path != identity.path:
         warnings.append(
@@ -253,6 +332,8 @@ def _warnings(
                 details={"variable": name, "file": config.env_file},
             )
         )
+    if compose_plan is not None:
+        warnings += compose_plan.model.warnings
     return warnings
 
 
@@ -262,26 +343,31 @@ def _has_nothing_to_change(
     config: Config,
     section: list[tuple[str, str]] | None,
     plan: _DatabasePlan | None,
+    compose_plan: _ComposePlan | None,
 ) -> bool:
     """Return whether a repeat `up` finds everything as it should be (data-model.md, Entry states).
 
-    The block, the ports, the env-file record, the exclude patterns, and the configured
-    database are as recorded, the worktree is where it was, and the env file's section holds the
-    values the ports and the database call for.
+    The block, the ports, the env-file record, the exclude patterns, the configured database, and
+    the compose override are as recorded, the worktree is where it was, and the env file's
+    section holds the values the ports and the database call for.
     """
     if known.block.size != config.block_size:
         return False
     assigned = ports.assign_variable_ports(config.ports, known.block)
     record = known.env_file
-    return _database_is_as_recorded(known, plan) and (
-        known.state == "provisioned"
-        and known.path == identity.path
-        and known.ports == assigned
-        and record is not None
-        and record.path == config.env_file
-        and record.state is ResourceState.CREATED
-        and f"/{config.env_file}" in known.exclude_patterns
-        and section == _variables(assigned, plan)
+    return (
+        _database_is_as_recorded(known, plan)
+        and _compose_is_as_recorded(known, compose_plan, config.ports)
+        and (
+            known.state == "provisioned"
+            and known.path == identity.path
+            and known.ports == assigned
+            and record is not None
+            and record.path == config.env_file
+            and record.state is ResourceState.CREATED
+            and f"/{config.env_file}" in known.exclude_patterns
+            and section == _variables(assigned, plan)
+        )
     )
 
 
@@ -301,6 +387,46 @@ def _database_is_as_recorded(known: WorktreeEntry, plan: _DatabasePlan | None) -
     return True
 
 
+def _compose_is_as_recorded(
+    known: WorktreeEntry, compose_plan: _ComposePlan | None, variables: list[str]
+) -> bool:
+    """Return whether the compose override is as it should be, so that nothing is to be done.
+
+    With compose configured, the record, the published ports, and the exclude pattern are as
+    the plan calls for, and the override file on disk holds exactly the text `up` would write.
+    Without it, any override of wtenv's is gone and no published port is left.
+    """
+    record = known.compose
+    root = Path(known.path)
+    if compose_plan is None:
+        return not known.published and (
+            record is None
+            or (
+                record.override_state is ResourceState.REMOVING
+                and not os.path.lexists(root / record.override)
+            )
+        )
+    if (
+        record is None
+        or record.file != compose_plan.file
+        or record.override != compose_plan.override
+        or record.override_state is not ResourceState.CREATED
+        or f"/{compose_plan.override}" not in known.exclude_patterns
+    ):
+        return False
+    assigned = ports.assign_published_ports(compose_plan.model.mappings, variables, known.block)
+    if known.published != assigned:
+        return False
+    from wtenv import compose
+
+    pairs = _override_pairs(compose_plan.model, assigned)
+    expected = compose.override_text(compose_plan.project, pairs)
+    try:
+        return (root / compose_plan.override).read_text(encoding="utf-8") == expected
+    except OSError:
+        return False
+
+
 def _copy_exists(known: WorktreeEntry, record: DatabaseRecord) -> bool:
     assert record.path is not None
     return (Path(known.path) / record.path).exists()
@@ -315,8 +441,12 @@ def _registry_step(
     config: Config,
     before: WorktreeEntry | None,
     has_section: bool,
+    compose_plan: _ComposePlan | None,
 ) -> WorktreeEntry:
     """Save the entry as `incomplete`, with its block, ports, patterns, and env-file record.
+
+    With compose, it also records the published ports, the project, and the override file as
+    `creating` (a moved compose file keeps the old override recorded as `removing`).
 
     Call it inside a registry transaction. The block is searched for here, so the search and
     the save share one lock (FR-013).
@@ -336,6 +466,8 @@ def _registry_step(
     patterns = {f"/{config.env_file}"}
     if config.database is not None and config.database.type == "sqlite":
         patterns.add(SQLITE_EXCLUDE_PATTERN)  # saved here, before the exclude block is written
+    if compose_plan is not None:
+        patterns.add(f"/{compose_plan.override}")
     if before is not None:
         patterns |= set(before.exclude_patterns)
     entry = WorktreeEntry(
@@ -345,14 +477,46 @@ def _registry_step(
         state="incomplete",
         block=block,
         ports=ports.assign_variable_ports(config.ports, block),
-        published=[] if before is None else before.published,
+        published=_published(config, compose_plan, block),
         env_file=record,
         databases=[] if before is None else before.databases,
-        compose=None if before is None else before.compose,
+        compose=_compose_record(None if before is None else before.compose, compose_plan),
         exclude_patterns=sorted(patterns),
     )
     reg.worktrees[identity.git_dir] = entry
     return entry
+
+
+def _published(
+    config: Config, compose_plan: _ComposePlan | None, block: PortBlock
+) -> list[PublishedPort]:
+    """Return the host port of every published port in `block`; none without compose."""
+    if compose_plan is None:
+        return []
+    return ports.assign_published_ports(compose_plan.model.mappings, config.ports, block)
+
+
+def _compose_record(
+    old: ComposeRecord | None, compose_plan: _ComposePlan | None
+) -> ComposeRecord | None:
+    """Return the compose record to save before the compose step runs.
+
+    The project is recorded first and never changes. A new override is recorded as `creating`.
+    When the compose file moved, the old override stays recorded, as `removing`, until the
+    compose step has removed it. Without `[compose]`, the record stays until `down`.
+    """
+    if compose_plan is None:
+        return old
+    if old is None:
+        return ComposeRecord(
+            project=compose_plan.project,
+            file=compose_plan.file,
+            override=compose_plan.override,
+            override_state=ResourceState.CREATING,
+        )
+    if old.override != compose_plan.override:
+        return old.model_copy(update={"override_state": ResourceState.REMOVING})
+    return old
 
 
 def _env_record(
@@ -547,6 +711,85 @@ def _database_change(root: Path, plan: _DatabasePlan, action: Action) -> UpChang
     return UpChange(item=Item(kind=ItemKind.SQLITE_FILE, name=str(root / plan.path)), action=action)
 
 
+# --- step 11: the compose override ------------------------------------------------------------
+
+
+def _override_pairs(
+    model: "ComposeModel", assigned: list[PublishedPort]
+) -> list[tuple["PortMapping", int]]:
+    """Pair each port mapping of the compose model with its host port.
+
+    `assigned` is in the order of `ports.published_order`, so the sorted mappings line up.
+    """
+    ordered = sorted(model.mappings, key=ports.published_order)
+    return list(zip(ordered, (published.port for published in assigned), strict=True))
+
+
+def _compose_step(
+    root: Path, compose_plan: _ComposePlan | None, entry: WorktreeEntry
+) -> list[UpChange]:
+    """Write and verify the override, move it when the compose file moved, or remove it.
+
+    The record was saved in step 8. Here the override is recorded as `creating` before it is
+    written, and as `created` once it is verified. Without `[compose]`, wtenv's own override is
+    removed and the project stays recorded until `down` (FR-065).
+    """
+    record = entry.compose
+    if record is None:
+        return []
+    if compose_plan is None:
+        return _remove_override(root, entry.git_dir, record)
+    from wtenv import compose
+
+    changes: list[UpChange] = []
+    if record.override != compose_plan.override:
+        # The compose file moved: the old override goes, the project stays.
+        changes += _remove_override(root, entry.git_dir, record)
+        record = ComposeRecord(
+            project=record.project,
+            file=compose_plan.file,
+            override=compose_plan.override,
+            override_state=ResourceState.CREATING,
+        )
+        _save_compose_record(entry.git_dir, record)
+    pairs = _override_pairs(compose_plan.model, entry.published)
+    text = compose.override_text(record.project, pairs)
+    action = compose.write_and_verify_override(
+        root, record.file, record.override, record.project, pairs, text
+    )
+    if record.override_state is not ResourceState.CREATED:
+        _save_compose_record(
+            entry.git_dir, record.model_copy(update={"override_state": ResourceState.CREATED})
+        )
+        action = "created"  # it is complete only now
+    return [*changes, _compose_change(root, compose_plan, action)]
+
+
+def _remove_override(root: Path, git_dir: str, record: ComposeRecord) -> list[UpChange]:
+    """Remove wtenv's recorded override file, recording `removing` first; report it if it was there."""
+    path = root / record.override
+    if record.override_state is not ResourceState.REMOVING:
+        _save_compose_record(
+            git_dir, record.model_copy(update={"override_state": ResourceState.REMOVING})
+        )
+    if not os.path.lexists(path):
+        return []
+    path.unlink()
+    item = Item(kind=ItemKind.COMPOSE_OVERRIDE, name=str(path))
+    return [UpChange(item=item, action="released")]
+
+
+def _save_compose_record(git_dir: str, record: ComposeRecord) -> None:
+    """Record `record` as the entry's compose record; the registry lock is held only here."""
+    with registry.transaction() as reg:
+        reg.worktrees[git_dir].compose = record
+
+
+def _compose_change(root: Path, compose_plan: _ComposePlan, action: Action) -> UpChange:
+    item = Item(kind=ItemKind.COMPOSE_OVERRIDE, name=str(root / compose_plan.override))
+    return UpChange(item=item, action=action)
+
+
 # --- step 13: the post-up commands --------------------------------------------------------------
 
 
@@ -628,11 +871,51 @@ def _result(
         path=identity.path,
         status=Status.PROVISIONED,
         block=BlockView(start=block.start, end=block.start + block.size - 1, size=block.size),
-        ports=[PortView(port=p.port, variable=p.variable) for p in entry.ports],
+        ports=_port_views(entry),
         databases=[_database_view(identity, record) for record in entry.databases],
+        compose_project=None if entry.compose is None else entry.compose.project,
         env_file=env_rel,
     )
     return UpResult(ok=True, worktree=view, changes=changes, warnings=warnings, post_up=post_up)
+
+
+def _port_views(entry: WorktreeEntry) -> list[PortView]:
+    """Describe the block's ports: each variable's port, then the published ports without one.
+
+    A published port tied to a variable shows on that variable's view, with its service.
+    """
+    tied: dict[str, PublishedPort] = {}
+    others: list[PublishedPort] = []
+    for published in entry.published:
+        if published.variable is not None and published.variable not in tied:
+            tied[published.variable] = published
+        else:
+            others.append(published)
+    views = []
+    for assigned in entry.ports:
+        match = tied.get(assigned.variable)
+        views.append(
+            PortView(
+                port=assigned.port,
+                variable=assigned.variable,
+                service=None if match is None else match.service,
+                target=None if match is None else match.target,
+                protocol=None if match is None else match.protocol,
+                host_ip=None if match is None else match.host_ip,
+            )
+        )
+    for published in others:
+        views.append(
+            PortView(
+                port=published.port,
+                variable=published.variable,
+                service=published.service,
+                target=published.target,
+                protocol=published.protocol,
+                host_ip=published.host_ip,
+            )
+        )
+    return views
 
 
 def _database_view(identity: WorktreeIdentity, record: DatabaseRecord) -> DatabaseView:

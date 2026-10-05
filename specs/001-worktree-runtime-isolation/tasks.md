@@ -707,7 +707,7 @@ T079–T080.
 
 ### 5F. The compose step of `up` (`compose.py`, `provision.py`, `output.py`)
 
-- [ ] T079 [P] [US3] Write failing integration tests for US3 in `tests/integration/test_us3_compose.py`
+- [X] T079 [P] [US3] Write failing integration tests for US3 in `tests/integration/test_us3_compose.py`
   - Request `docker`. Scenario 1 (FR-028, FR-029): a project name no other worktree has;
     every host-published port in the override is a port of the block; container ports
     unchanged.
@@ -720,7 +720,7 @@ T079–T080.
   - Scenario 5 (FR-029): the compose file is unchanged and `git status --porcelain` is empty.
   - FR-034: after `up` no container carries the project's label. Untied published ports
     appear in the `UpResult` ports with `service`, `target`, and `protocol` (FR-031).
-- [ ] T080 [US3] Add failing tests for the compose limits to `tests/integration/test_us3_compose.py`
+- [X] T080 [US3] Add failing tests for the compose limits to `tests/integration/test_us3_compose.py`
   - Each fails before anything changes for the compose step (no override, no compose record):
     another compose file name → exit 3 naming `compose.file`; a developer's own override →
     exit 11, unmodified; `COMPOSE_PROJECT_NAME` in the environment, and `COMPOSE_FILE` in
@@ -731,13 +731,13 @@ T079–T080.
   - `container_name` → success with warning `compose_fixed_container_name`.
   - Config changes (config.md): a new `compose.file` moves the override and keeps the
     project name; removing `[compose]` removes the override and keeps the project recorded.
-- [ ] T081 [US3] Implement writing and verifying the override in `src/wtenv/compose.py`
+- [X] T081 [US3] Implement writing and verifying the override in `src/wtenv/compose.py`
   - Write through a temporary file and an atomic rename. Verify with a plain
     `docker compose --profile "*" config --format json` in the compose file's directory: the
     recorded project name and only assigned published ports; otherwise remove the override
     just written and fail with `unsupported`, reason `compose_verification_failed`
     (research.md §4; FR-033).
-- [ ] T082 [US3] Implement the compose checks and the compose step in `src/wtenv/provision.py`
+- [X] T082 [US3] Implement the compose checks and the compose step in `src/wtenv/provision.py`
   - Step 5 before anything changes; step 6 counts published ports; step 8 records
     `published` and the override's pattern in `exclude_patterns`, saved before the exclude
     block is written; step 11 writes and verifies.
@@ -745,10 +745,10 @@ T079–T080.
     (data-model.md, Compose record); the override is recorded as `creating` before it is
     written. No container is started (FR-034). Compose code is imported only when
     `[compose]` is configured (research.md §8).
-- [ ] T083 [US3] Apply compose configuration changes in `up` in `src/wtenv/provision.py`
+- [X] T083 [US3] Apply compose configuration changes in `up` in `src/wtenv/provision.py`
   - `compose.file` changed: the override moves, the project name stays. `[compose]` removed:
     wtenv's override file is removed, the project stays recorded until `down` (FR-065).
-- [ ] T084 [US3] Show published ports and the compose project in the `up` output in `src/wtenv/output.py`
+- [X] T084 [US3] Show published ports and the compose project in the `up` output in `src/wtenv/output.py`
 
 **Checkpoint**: US1–US3 work; the five gates pass.
 

@@ -13,10 +13,11 @@ import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 from urllib.parse import urlsplit
 
 from wtenv.config import COMPOSE_FILE_NAMES
+from wtenv.envfile import write_atomic
 from wtenv.errors import ErrorCode, JsonValue, WtenvError
 from wtenv.identity import short_id, slug
 from wtenv.output import WarningCode, WarningInfo
@@ -415,3 +416,115 @@ def _env_override(variable: str, where: str, file: str | None) -> WtenvError:
         hint=f"Unset {variable}, then run `wtenv up` again. Nothing was changed.",
         details=details,
     )
+
+
+# --- writing and verifying the override (research.md §4) ---------------------------------------
+
+_OVERRIDE_MODE = 0o644  # a generated file that Compose and the developer read
+
+
+def write_override(path: Path, text: str) -> Literal["created", "updated", "unchanged"]:
+    """Write `text` to `path` through a temporary file and an atomic rename.
+
+    Returns what happened. A file that already holds `text` is not touched, so a repeat `up`
+    leaves identical bytes (US3 scenario 4).
+    """
+    try:
+        current: str | None = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        current = None
+    if current == text:
+        return "unchanged"
+    write_atomic(path, text.encode("utf-8"), _OVERRIDE_MODE)
+    return "created" if current is None else "updated"
+
+
+def verify_override(
+    root: Path,
+    compose_file: str,
+    project: str,
+    assigned: Sequence[tuple[PortMapping, int]],
+    *,
+    run: Runner = run_command,
+    environ: Mapping[str, str] | None = None,
+) -> None:
+    """Check that plain Compose, run the way a developer runs it, uses the override.
+
+    Runs `docker compose --profile "*" config --format json` in the compose file's directory.
+    The project name must be `project`, and the published ports must be exactly the assigned
+    ones. Otherwise raises `unsupported` (`compose_verification_failed`): isolation would
+    silently not apply (FR-033).
+    """
+    file = root / compose_file
+    base = os.environ if environ is None else environ
+    process = run(
+        ["docker", "compose", "--profile", "*", "config", "--format", "json"], base, file.parent
+    )
+    if process.returncode != 0:
+        raise _verification_failed(file, process.stderr.strip() or "Compose failed")
+    try:
+        document = json.loads(process.stdout)
+        if not isinstance(document, dict):
+            raise TypeError("not a JSON object")
+        model = parse_model(document)
+    except (ValueError, TypeError, WtenvError) as error:
+        raise _verification_failed(
+            file, f"Compose printed something unexpected ({error})"
+        ) from error
+    if document.get("name") != project:
+        raise _verification_failed(
+            file, f"Compose uses the project name {document.get('name')}, not {project}"
+        )
+    found = {_port_key(m, m.published) for m in model.mappings}
+    expected = {_port_key(m, str(port)) for m, port in assigned}
+    unexpected = sorted(found - expected)
+    if unexpected or found != expected:
+        service = (unexpected or sorted(expected - found))[0][0]
+        raise _verification_failed(
+            file, f"service {service} does not publish exactly the assigned ports"
+        )
+
+
+def _port_key(mapping: PortMapping, published: str | None) -> tuple[str, int, str, str, str]:
+    return (
+        mapping.service,
+        mapping.target,
+        mapping.protocol,
+        mapping.host_ip or "",
+        published or "",
+    )
+
+
+def _verification_failed(file: Path, problem: str) -> WtenvError:
+    return WtenvError(
+        ErrorCode.UNSUPPORTED,
+        f"{file}: the generated override is not in force: {problem}",
+        hint="The override was removed. Check the compose file for something wtenv cannot "
+        "isolate, such as an `include` that sets ports, then run `wtenv up` again.",
+        details={"reason": "compose_verification_failed", "file": str(file)},
+    )
+
+
+def write_and_verify_override(
+    root: Path,
+    compose_file: str,
+    override_file: str,
+    project: str,
+    assigned: Sequence[tuple[PortMapping, int]],
+    text: str,
+    *,
+    run: Runner = run_command,
+    environ: Mapping[str, str] | None = None,
+) -> Literal["created", "updated", "unchanged"]:
+    """Write the override, then verify it; when verification fails, remove the file just written.
+
+    Returns what happened to the file. Raises `unsupported` (`compose_verification_failed`).
+    """
+    path = root / override_file
+    action = write_override(path, text)
+    try:
+        verify_override(root, compose_file, project, assigned, run=run, environ=environ)
+    except WtenvError:
+        path.unlink(missing_ok=True)
+        raise
+    return action

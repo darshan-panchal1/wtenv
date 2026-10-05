@@ -126,8 +126,12 @@ def count_untied_ports(mappings: Sequence["PortMapping"], variable_count: int) -
     return sum(1 for mapping in mappings if not _is_tied(mapping, variable_count))
 
 
-def _order(mapping: "PortMapping") -> tuple[str, int, str, str]:
-    """The order in which untied ports are numbered: service, container port, protocol, IP."""
+def published_order(mapping: "PortMapping") -> tuple[str, int, str, str]:
+    """The order of published ports: service, container port, protocol, host IP.
+
+    Untied ports are numbered in this order, and `assign_published_ports` returns its result in
+    it, so sorting the mappings with this key lines them up with the result.
+    """
     return (mapping.service, mapping.target, mapping.protocol, mapping.host_ip or "")
 
 
@@ -147,7 +151,7 @@ def assign_published_ports(
     next_free = block.start + len(variables)
     result: list[PublishedPort] = []
     taken: dict[tuple[int, str, str | None], str] = {}
-    for mapping in sorted(mappings, key=_order):
+    for mapping in sorted(mappings, key=published_order):
         tied = _is_tied(mapping, len(variables))
         if tied:
             index = int(cast(str, mapping.published)) - 1
