@@ -269,6 +269,13 @@ _UNUSABLE = {
         "git tracks it, and wtenv never changes a tracked file",
         "Untrack it with `git rm --cached`, or set env_file in wtenv.toml to an untracked path.",
     ),
+    "symlink": (
+        (
+            "it, or a directory above it inside the worktree, is a symbolic link, and wtenv "
+            "never writes or deletes through one"
+        ),
+        "Replace the link with a regular file or directory, or point env_file at another path.",
+    ),
     "missing": ("it does not exist", "Run `wtenv up` to write the env file."),
     "no_section": ("it has no wtenv section", "Run `wtenv up` to write wtenv's section."),
 }

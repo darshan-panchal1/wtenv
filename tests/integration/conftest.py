@@ -3,6 +3,7 @@ Docker Compose projects of the compose tests."""
 
 import subprocess
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from helpers import (
@@ -16,6 +17,25 @@ from helpers import (
 from testcontainers.community.postgres import PostgresContainer
 
 POSTGRES_IMAGE = "postgres:17"
+
+
+@pytest.fixture
+def decoy(tmp_path: Path) -> Path:
+    """A directory outside every worktree, for the symbolic-link tests to point at (FR-086).
+
+    wtenv must never write, rewrite, or delete anything through a link, so a test links to
+    something here and compares `snapshot_tree(decoy)` before and after. It holds a file that
+    looks like an env file with a wtenv section, another file, and a subdirectory with a file.
+    """
+    path = tmp_path / "decoy"
+    (path / "sub").mkdir(parents=True)
+    (path / "shared.env").write_bytes(
+        b"SHARED=1\n# >>> wtenv managed (rewritten by `wtenv up`; do not edit) >>>\n"
+        b"PORT=20000\n# <<< wtenv managed <<<\n"
+    )
+    (path / "notes.txt").write_bytes(b"not wtenv's\n")
+    (path / "sub" / "inner.txt").write_bytes(b"inner\n")
+    return path
 
 
 @pytest.fixture(scope="session")

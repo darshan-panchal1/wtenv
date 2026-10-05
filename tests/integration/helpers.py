@@ -55,6 +55,26 @@ def parse_ls(process: subprocess.CompletedProcess[str]) -> LsResult:
     return LsResult.model_validate_json(process.stdout)
 
 
+def snapshot_tree(root: Path) -> dict[str, tuple[str, bytes | str | None, int]]:
+    """Describe everything under `root` without following a link, so a test can compare two states.
+
+    Each entry is `(kind, content, mode)`: a file's bytes, a link's target, `None` for a directory.
+    A symbolic link is never followed; a test uses this on a decoy that a link points at, so a
+    write, a delete, or a new file anywhere under it shows as a difference (FR-086).
+    """
+    described: dict[str, tuple[str, bytes | str | None, int]] = {}
+    for path in [root, *sorted(root.rglob("*"))]:
+        mode = path.lstat().st_mode
+        relative = str(path.relative_to(root))
+        if path.is_symlink():
+            described[relative] = ("link", os.readlink(path), mode)
+        elif path.is_dir():
+            described[relative] = ("dir", None, mode)
+        else:
+            described[relative] = ("file", path.read_bytes(), mode)
+    return described
+
+
 def keys(items: list[Item]) -> list[tuple[str, str]]:
     """Return `(kind, name)` of each item, so a test can compare lists of items briefly."""
     return [(item.kind.value, item.name) for item in items]

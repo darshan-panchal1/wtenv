@@ -476,13 +476,13 @@ byte-identical. Automated by T039–T043; manual by quickstart.md sections 1 and
 Added after the review of the destructive paths (2026-10-05, finding MEDIUM-1). Run this
 group after Phase 7, then group 6G.
 
-- [ ] T151 [P] [US1] Add failing tests for the symbolic-link check to `tests/unit/test_identity.py`
+- [X] T151 [P] [US1] Add failing tests for the symbolic-link check to `tests/unit/test_identity.py`
   - FR-086: `symlinked_part(root, relative)` returns the first of the worktree root, each
     directory below it, and the path itself that is a symbolic link, or None. A dangling
     link counts. A path that does not exist, with no link on the way, gives None.
   - A link above the root does not count: a root reached through a link is resolved first
     (FR-006).
-- [ ] T152 [US1] Add failing tests for `up` refusing symbolic links to `tests/integration/test_us1_ports_env.py`
+- [X] T152 [US1] Add failing tests for `up` refusing symbolic links to `tests/integration/test_us1_ports_env.py`
   - FR-086: `.env.local` a symbolic link to a file outside the worktree → exit 7,
     `details.reason` `symlink`, `details.path` the link; the target byte-identical; no
     registry entry created.
@@ -494,9 +494,9 @@ group after Phase 7, then group 6G.
   - A changed `env_file` (FR-065) whose old recorded file is now a link → exit 7, nothing
     removed from it.
   - With `docker`: the override path a link → exit 7, before anything is changed for compose.
-- [ ] T153 [US1] Implement `symlinked_part` in `src/wtenv/identity.py`
+- [X] T153 [US1] Implement `symlinked_part` in `src/wtenv/identity.py`
   - Walk from the root down with `os.lstat`, no `realpath`.
-- [ ] T154 [US1] Refuse symbolic links in the checks of `up` in `src/wtenv/provision.py`
+- [X] T154 [US1] Refuse symbolic links in the checks of `up` in `src/wtenv/provision.py`
   - cli.md, `wtenv up`, steps 4, 5, and 7: the env file, the override path, `.wtenv/` and
     the SQLite copy, and a recorded env file or override that a configuration change would
     remove → `env_file_unusable`, reason `symlink`, `details.path` the link. Nothing changes

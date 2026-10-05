@@ -10,7 +10,18 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
-from helpers import BEGIN, END, block_lines, commit_all, git, parse_up
+from helpers import (
+    BEGIN,
+    COMPOSE_IMAGE,
+    END,
+    ComposeProjects,
+    block_lines,
+    commit_all,
+    git,
+    make_sqlite_template,
+    parse_up,
+    snapshot_tree,
+)
 
 from wtenv.envfile import read_section
 from wtenv.identity import current_worktree
@@ -653,3 +664,271 @@ def test_a_port_of_the_block_taken_later_does_not_move_the_block(
     assert second.ok
     assert second.worktree == first.worktree
     assert (worktree / ".env.local").read_bytes() == env_bytes
+
+
+# --- symbolic links (T152; FR-086) -----------------------------------------------------
+#
+# Every case links to a decoy outside the worktree, or to another worktree, and compares it
+# before and after. A link is refused with `env_file_unusable`, reason `symlink`, `details.path`
+# the link, and nothing changes: not the target, not the registry.
+
+SQLITE_TOML = '[database]\ntype = "sqlite"\ntemplate = "db/dev.sqlite3"\nurl = "sqlite:///{path}"\n'
+COMPOSE_TOML = (
+    'ports = ["PORT", "CACHE_PORT"]\nblock_size = 10\n\n[compose]\nfile = "compose.yaml"\n'
+)
+COMPOSE_STACK = f"""\
+services:
+  cache:
+    image: {COMPOSE_IMAGE}
+    pull_policy: never
+    ports:
+      - "${{CACHE_PORT:-6379}}:6379"
+"""
+
+
+def assert_refused_as_symlink(process: subprocess.CompletedProcess[str], link: Path) -> None:
+    """The run failed with exit 7 and `env_file_unusable`, reason `symlink`, naming `link`."""
+    assert process.returncode == 7, process.stdout + process.stderr
+    result = parse_up(process)
+    assert result.error is not None
+    assert result.error.code.value == "env_file_unusable"
+    assert result.error.details["reason"] == "symlink"
+    assert result.error.details["path"] == str(link)
+    assert "wtenv: error [env_file_unusable]" in process.stderr
+
+
+def sqlite_worktree(repo: Path, add_worktree: AddWorktree, name: str) -> Path:
+    """Add a worktree whose commit holds a SQLite template and its `wtenv.toml`."""
+    worktree = add_worktree(repo, name, f"branch-{name}")
+    make_sqlite_template(worktree / "db" / "dev.sqlite3")
+    write_config(worktree, SQLITE_TOML)
+    commit_all(worktree)
+    return worktree
+
+
+def compose_worktree(repo: Path, add_worktree: AddWorktree) -> Path:
+    """Add a worktree whose commit holds a compose file and a `wtenv.toml` with `[compose]`."""
+    worktree = add_worktree(repo, "feature-x", "feature-x")
+    (worktree / "compose.yaml").write_text(COMPOSE_STACK, encoding="utf-8")
+    write_config(worktree, COMPOSE_TOML)
+    commit_all(worktree)
+    return worktree
+
+
+def provisioned_compose_worktree(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, compose_projects: ComposeProjects
+) -> Path:
+    """`compose_worktree`, brought up; its compose project is tracked for cleanup."""
+    worktree = compose_worktree(repo, add_worktree)
+    up(run_wtenv, worktree)
+    compose = entry_of(worktree).compose
+    assert compose is not None
+    compose_projects.track(compose.project)
+    return worktree
+
+
+@pytest.mark.parametrize("dangling", [False, True], ids=["to-a-file", "dangling"])
+def test_an_env_file_that_is_a_link_is_refused_and_its_target_is_left_alone(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, decoy: Path, dangling: bool
+) -> None:
+    worktree = add_worktree(repo, "feature-x", "feature-x")
+    link = worktree / ".env.local"
+    link.symlink_to(decoy / ("new.env" if dangling else "shared.env"))
+    before = snapshot_tree(decoy)
+
+    process = run_wtenv(["up", "--json"], worktree)
+
+    assert_refused_as_symlink(process, link)
+    assert snapshot_tree(decoy) == before
+    assert link.is_symlink()
+    assert not registry_path().exists()  # no entry was created
+
+
+def test_an_env_file_in_a_directory_that_is_a_link_is_refused(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, decoy: Path
+) -> None:
+    worktree = add_worktree(repo, "feature-x", "feature-x")
+    write_config(worktree, 'env_file = "config/.env.local"\n')
+    (worktree / "config").symlink_to(decoy)
+    before = snapshot_tree(decoy)
+
+    process = run_wtenv(["up", "--json"], worktree)
+
+    assert_refused_as_symlink(process, worktree / "config")  # the link, not the file below it
+    assert snapshot_tree(decoy) == before  # no `.env.local` was written into the decoy
+    assert not registry_path().exists()
+
+
+def test_an_env_file_two_directories_down_a_link_is_refused_at_the_link(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, decoy: Path
+) -> None:
+    worktree = add_worktree(repo, "feature-x", "feature-x")
+    write_config(worktree, 'env_file = "config/sub/.env.local"\n')
+    (worktree / "config").symlink_to(decoy)  # `sub` exists in the decoy
+    before = snapshot_tree(decoy)
+
+    process = run_wtenv(["up", "--json"], worktree)
+
+    assert_refused_as_symlink(process, worktree / "config")
+    assert snapshot_tree(decoy) == before
+    assert not registry_path().exists()
+
+
+def test_a_sqlite_directory_that_is_a_link_to_another_worktrees_copy_is_refused(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree
+) -> None:
+    other = sqlite_worktree(repo, add_worktree, "other")
+    up(run_wtenv, other)
+    worktree = sqlite_worktree(repo, add_worktree, "feature-x")
+    (worktree / ".wtenv").symlink_to(other / ".wtenv")
+    other_before = snapshot_tree(other / ".wtenv")
+    registry_before = registry_path().read_bytes()
+
+    process = run_wtenv(["up", "--json"], worktree)
+
+    assert_refused_as_symlink(process, worktree / ".wtenv")
+    assert snapshot_tree(other / ".wtenv") == other_before
+    assert registry_path().read_bytes() == registry_before
+    assert not (worktree / ".env.local").exists()
+
+
+@pytest.mark.parametrize("dangling", [False, True], ids=["to-a-file", "dangling"])
+def test_a_sqlite_copy_that_is_a_link_is_refused_and_its_target_is_left_alone(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, decoy: Path, dangling: bool
+) -> None:
+    worktree = sqlite_worktree(repo, add_worktree, "feature-x")
+    (worktree / ".wtenv").mkdir()
+    copy = worktree / ".wtenv" / "dev.sqlite3"
+    copy.symlink_to(decoy / ("new.sqlite3" if dangling else "notes.txt"))
+    before = snapshot_tree(decoy)
+
+    process = run_wtenv(["up", "--json"], worktree)
+
+    assert_refused_as_symlink(process, copy)
+    assert snapshot_tree(decoy) == before
+    assert not registry_path().exists()
+    assert not (worktree / ".env.local").exists()
+
+
+def test_a_repeat_up_refuses_an_env_file_that_has_become_a_link(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, decoy: Path
+) -> None:
+    worktree = add_worktree(repo, "feature-x", "feature-x")
+    up(run_wtenv, worktree)
+    env_file = worktree / ".env.local"
+    env_file.unlink()
+    env_file.symlink_to(decoy / "shared.env")
+    decoy_before = snapshot_tree(decoy)
+    registry_before = registry_path().read_bytes()
+
+    process = run_wtenv(["up", "--json"], worktree)
+
+    assert_refused_as_symlink(process, env_file)
+    assert snapshot_tree(decoy) == decoy_before
+    assert registry_path().read_bytes() == registry_before
+    assert env_file.is_symlink()
+
+
+def test_a_changed_env_file_does_not_remove_a_section_through_a_link(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, decoy: Path
+) -> None:
+    worktree = add_worktree(repo, "feature-x", "feature-x")
+    up(run_wtenv, worktree)
+    old = worktree / ".env.local"
+    old.unlink()
+    old.symlink_to(decoy / "shared.env")  # holds a wtenv section that a removal would take out
+    write_config(worktree, 'env_file = ".env.dev"\n')
+    decoy_before = snapshot_tree(decoy)
+    registry_before = registry_path().read_bytes()
+
+    process = run_wtenv(["up", "--json"], worktree)
+
+    assert_refused_as_symlink(process, old)
+    assert snapshot_tree(decoy) == decoy_before
+    assert registry_path().read_bytes() == registry_before
+    assert not (worktree / ".env.dev").exists()  # nothing was written for the new file either
+
+
+def test_a_compose_override_that_is_a_link_is_refused_before_anything_changes(
+    run_wtenv: Run,
+    repo: Path,
+    add_worktree: AddWorktree,
+    compose_projects: ComposeProjects,
+    decoy: Path,
+) -> None:
+    worktree = provisioned_compose_worktree(run_wtenv, repo, add_worktree, compose_projects)
+    override = worktree / "compose.override.yaml"
+    override.unlink()
+    override.symlink_to(decoy / "notes.txt")
+    decoy_before = snapshot_tree(decoy)
+    registry_before = registry_path().read_bytes()
+    env_before = (worktree / ".env.local").read_bytes()
+
+    process = run_wtenv(["up", "--json"], worktree)
+
+    assert_refused_as_symlink(process, override)
+    assert snapshot_tree(decoy) == decoy_before
+    assert registry_path().read_bytes() == registry_before
+    assert (worktree / ".env.local").read_bytes() == env_before
+
+
+def test_a_compose_override_that_is_a_link_is_refused_on_a_first_up_too(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, compose_docker: None, decoy: Path
+) -> None:
+    worktree = compose_worktree(repo, add_worktree)
+    override = worktree / "compose.override.yaml"
+    override.symlink_to(decoy / "new.override.yaml")  # dangling: a write would create it
+    decoy_before = snapshot_tree(decoy)
+
+    process = run_wtenv(["up", "--json"], worktree)
+
+    assert_refused_as_symlink(process, override)
+    assert snapshot_tree(decoy) == decoy_before
+    assert not registry_path().exists()
+
+
+def test_removing_compose_does_not_remove_an_override_that_is_a_link(
+    run_wtenv: Run,
+    repo: Path,
+    add_worktree: AddWorktree,
+    compose_projects: ComposeProjects,
+    decoy: Path,
+) -> None:
+    worktree = provisioned_compose_worktree(run_wtenv, repo, add_worktree, compose_projects)
+    override = worktree / "compose.override.yaml"
+    override.unlink()
+    override.symlink_to(decoy / "notes.txt")
+    write_config(worktree, 'ports = ["PORT", "CACHE_PORT"]\n')  # no [compose]: the override goes
+    decoy_before = snapshot_tree(decoy)
+    registry_before = registry_path().read_bytes()
+
+    process = run_wtenv(["up", "--json"], worktree)
+
+    assert_refused_as_symlink(process, override)
+    assert snapshot_tree(decoy) == decoy_before
+    assert registry_path().read_bytes() == registry_before
+    assert override.is_symlink()
+
+
+def test_a_new_compose_file_does_not_remove_the_old_override_through_a_link(
+    run_wtenv: Run,
+    repo: Path,
+    add_worktree: AddWorktree,
+    compose_projects: ComposeProjects,
+    decoy: Path,
+) -> None:
+    worktree = provisioned_compose_worktree(run_wtenv, repo, add_worktree, compose_projects)
+    old = worktree / "compose.override.yaml"
+    old.unlink()
+    old.symlink_to(decoy / "notes.txt")
+    (worktree / "docker-compose.yml").write_text(COMPOSE_STACK, encoding="utf-8")
+    write_config(worktree, COMPOSE_TOML.replace("compose.yaml", "docker-compose.yml"))
+    decoy_before = snapshot_tree(decoy)
+    registry_before = registry_path().read_bytes()
+
+    process = run_wtenv(["up", "--json"], worktree)
+
+    assert_refused_as_symlink(process, old)
+    assert snapshot_tree(decoy) == decoy_before
+    assert registry_path().read_bytes() == registry_before
+    assert not (worktree / "docker-compose.override.yml").exists()

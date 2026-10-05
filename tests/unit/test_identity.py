@@ -5,7 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from wtenv.identity import WorktreeIdentity, parse_identity, points_to, short_id, slug
+from wtenv.identity import (
+    WorktreeIdentity,
+    parse_identity,
+    points_to,
+    short_id,
+    slug,
+    symlinked_part,
+)
 
 # --- points_to ------------------------------------------------------------------------
 
@@ -206,3 +213,91 @@ def test_slug_is_always_valid_and_never_empty(length: int, separator: str) -> No
     assert 0 < len(result) <= 40
     assert result[0] not in "_-"
     assert result[-1] not in "_-"
+
+
+# --- symlinked_part (FR-086) ----------------------------------------------------------
+
+
+def test_symlinked_part_is_none_for_a_plain_file(tmp_path: Path) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / ".env.local").write_text("A=1\n")
+
+    assert symlinked_part(tmp_path, "config/.env.local") is None
+
+
+def test_symlinked_part_is_none_for_a_path_that_does_not_exist_with_no_link_on_the_way(
+    tmp_path: Path,
+) -> None:
+    assert symlinked_part(tmp_path, ".env.local") is None
+    assert symlinked_part(tmp_path, "missing/dir/.env.local") is None
+
+
+def test_symlinked_part_is_the_path_itself_when_it_is_a_link(tmp_path: Path) -> None:
+    decoy = tmp_path / "decoy.env"
+    decoy.write_text("A=1\n")
+    root = tmp_path / "wt"
+    root.mkdir()
+    (root / ".env.local").symlink_to(decoy)
+
+    assert symlinked_part(root, ".env.local") == root / ".env.local"
+
+
+def test_symlinked_part_counts_a_dangling_link(tmp_path: Path) -> None:
+    root = tmp_path / "wt"
+    root.mkdir()
+    (root / ".env.local").symlink_to(tmp_path / "does-not-exist")
+
+    assert symlinked_part(root, ".env.local") == root / ".env.local"
+
+
+def test_symlinked_part_is_a_directory_below_the_root_that_is_a_link(tmp_path: Path) -> None:
+    decoy = tmp_path / "decoy"
+    decoy.mkdir()
+    root = tmp_path / "wt"
+    root.mkdir()
+    (root / "config").symlink_to(decoy)
+
+    assert symlinked_part(root, "config/.env.local") == root / "config"
+
+
+def test_symlinked_part_is_the_first_link_from_the_root_down(tmp_path: Path) -> None:
+    decoy = tmp_path / "decoy"
+    (decoy / "inner").mkdir(parents=True)
+    root = tmp_path / "wt"
+    root.mkdir()
+    (root / "outer").symlink_to(decoy)
+    (decoy / "inner" / "file").symlink_to(tmp_path / "elsewhere")
+
+    assert symlinked_part(root, "outer/inner/file") == root / "outer"
+
+
+def test_symlinked_part_finds_a_link_under_a_directory_that_is_missing_below_it(
+    tmp_path: Path,
+) -> None:
+    decoy = tmp_path / "decoy"
+    decoy.mkdir()
+    root = tmp_path / "wt"
+    root.mkdir()
+    (root / "config").symlink_to(decoy)
+
+    assert symlinked_part(root, "config/missing/.env.local") == root / "config"
+
+
+def test_symlinked_part_is_the_root_when_the_root_is_a_link(tmp_path: Path) -> None:
+    decoy = tmp_path / "decoy"
+    decoy.mkdir()
+    (decoy / ".env.local").write_text("A=1\n")
+    root = tmp_path / "wt"
+    root.symlink_to(decoy)
+
+    assert symlinked_part(root, ".env.local") == root
+
+
+def test_a_link_above_the_root_does_not_count(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    (real / "wt").mkdir(parents=True)
+    (real / "wt" / ".env.local").write_text("A=1\n")
+    above = tmp_path / "above"
+    above.symlink_to(real)
+
+    assert symlinked_part(above / "wt", ".env.local") is None

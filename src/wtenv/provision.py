@@ -25,7 +25,7 @@ from wtenv.config import CONFIG_FILE_NAME, Config, load_config
 from wtenv.database import PostgresTarget
 from wtenv.errors import ErrorCode, WtenvError
 from wtenv.gitutil import git_path, is_tracked
-from wtenv.identity import WorktreeIdentity, current_worktree
+from wtenv.identity import WorktreeIdentity, current_worktree, symlinked_part
 from wtenv.listing import database_view, port_views
 from wtenv.locks import WORKTREE_LOCK_TIMEOUT, registry_lock, worktree_lock
 from wtenv.output import (
@@ -114,9 +114,12 @@ def _provision(identity: WorktreeIdentity) -> UpResult:
     section = _read_section_or_none(env_path)  # also the markers check of step 4
     with registry_lock():
         known = registry.load().worktrees.get(identity.git_dir)
+    _check_recorded_env_file(root, config, known)  # step 4, for a file `up` would remove
+    _check_override_links(root, config, known)  # step 5, before the ownership check
     compose_plan = _compose_plan(root, identity, config, known)  # step 5
     _check_block_size(config, compose_plan)  # step 6
     plan = _database_plan(root, identity, config, known)  # step 7
+    _check_sqlite_links(root, plan)  # step 7
     warnings = _warnings(identity, known, config, env_path, compose_plan)
     exclude_path = git_path(root, "info/exclude")
 
@@ -179,12 +182,24 @@ def _variables(assigned: list[VariablePort], plan: _DatabasePlan | None) -> list
 # --- checks that change nothing (steps 4 and 6) -----------------------------------------------
 
 
+def _refuse_symlink(root: Path, relative: str) -> None:
+    """Raise `env_file_unusable`, reason `symlink`, when `relative` is or sits under a link.
+
+    The parts checked are those of `identity.symlinked_part`: every directory from the worktree
+    root down to the path, and the path itself. `details.path` is the link found (FR-086).
+    """
+    link = symlinked_part(root, relative)
+    if link is not None:
+        raise envfile.unusable(link, "symlink")
+
+
 def _check_env_file(root: Path, env_rel: str) -> None:
-    """Raise `env_file_unusable` unless the env file can be written (FR-081, FR-018).
+    """Raise `env_file_unusable` unless the env file can be written (FR-081, FR-018, FR-086).
 
     Damaged markers are found when the section is read, right after this.
     """
     path = root / env_rel
+    _refuse_symlink(root, env_rel)
     if not path.parent.is_dir():
         raise envfile.unusable(path, "parent_missing")
     if path.is_dir():
@@ -197,6 +212,39 @@ def _check_env_file(root: Path, env_rel: str) -> None:
         writable = os.access(path.parent, os.W_OK | os.X_OK)
     if not writable:
         raise envfile.unusable(path, "not_writable")
+
+
+def _check_recorded_env_file(root: Path, config: Config, known: WorktreeEntry | None) -> None:
+    """Raise `env_file_unusable` when a changed `env_file` would remove a section through a link.
+
+    A recorded env file other than the configured one has its section removed by this `up`
+    (FR-065), so its path gets the same check as the new one (FR-086).
+    """
+    if known is not None and known.env_file is not None and known.env_file.path != config.env_file:
+        _refuse_symlink(root, known.env_file.path)
+
+
+def _check_override_links(root: Path, config: Config, known: WorktreeEntry | None) -> None:
+    """Raise `env_file_unusable` when an override file `up` would write or remove is a link.
+
+    That is the override beside the configured compose file, and a recorded one that differs
+    from it, or that `up` removes because `[compose]` is gone (FR-086). Without either, the
+    compose module is not loaded (NFR-001).
+    """
+    recorded = None if known is None or known.compose is None else known.compose.override
+    if config.compose is not None:
+        from wtenv import compose  # only now: the module is not loaded without `[compose]`
+
+        _refuse_symlink(root, compose.override_path(config.compose.file))
+    if recorded is not None:
+        _refuse_symlink(root, recorded)
+
+
+def _check_sqlite_links(root: Path, plan: _DatabasePlan | None) -> None:
+    """Raise `env_file_unusable` when `.wtenv/` or the SQLite copy is a link (FR-086)."""
+    if plan is not None and plan.kind == "sqlite":
+        assert plan.path is not None
+        _refuse_symlink(root, plan.path)
 
 
 def _read_section_or_none(path: Path) -> list[tuple[str, str]] | None:

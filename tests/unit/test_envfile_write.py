@@ -1,12 +1,12 @@
 """Writing and reading wtenv's section of the env file (files.md, Env file section; FR-016, FR-017,
 FR-019, FR-079, FR-081; reading R1)."""
 
-import os
 import stat
 from pathlib import Path
 
 import pytest
 
+from wtenv import envfile
 from wtenv.envfile import read_section, write_section
 from wtenv.errors import ErrorCode, WtenvError
 
@@ -277,19 +277,17 @@ def test_a_value_with_a_single_quote_or_a_line_break_is_refused(tmp_path: Path, 
 # --- links ----------------------------------------------------------------------------
 
 
-def test_a_symbolic_link_stays_a_link_and_its_target_is_written(tmp_path: Path) -> None:
-    target = tmp_path / "shared" / "real.env"
-    target.parent.mkdir()
-    target.write_text("A=1\n", encoding="utf-8")
+def test_a_symbolic_link_is_refused_with_the_reason_symlink_naming_the_link(
+    tmp_path: Path,
+) -> None:
     link = tmp_path / ".env.local"
-    link.symlink_to(target)
 
-    write_section(link, PORTS)
+    error = envfile.unusable(link, "symlink")
 
-    assert link.is_symlink()
-    assert os.readlink(link) == str(target)
-    assert target.read_text(encoding="utf-8") == f"A=1\n{SECTION}"
-    assert sorted(entry.name for entry in target.parent.iterdir()) == ["real.env"]
+    assert error.code is ErrorCode.ENV_FILE_UNUSABLE
+    assert error.details == {"path": str(link), "reason": "symlink"}
+    assert str(link) in error.message
+    assert error.hint is not None
 
 
 # --- reading (reading R1) --------------------------------------------------------------

@@ -8,6 +8,7 @@ are here, and not with the databases or compose, because both use them to name t
 import hashlib
 import os
 import re
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -88,6 +89,28 @@ def points_to(path: str | Path) -> str | None:
     if not first_line.startswith(prefix):
         return None
     return os.path.realpath(os.path.join(path, first_line[len(prefix) :].rstrip("\r\n")))
+
+
+def symlinked_part(root: str | Path, relative: str | Path) -> Path | None:
+    """Return the first symbolic link on the way from `root` down to `relative`, or None (FR-086).
+
+    The parts checked are the root itself, each directory below it, and the path itself, in that
+    order. A dangling link counts. Nothing is resolved: each part is looked at with `os.lstat`,
+    so a link is found and never followed. A part that does not exist ends the walk, because
+    nothing below it can be a link. A link above the root does not count: the identity of a
+    worktree is resolved first (FR-006), so `root` is the place the worktree really is.
+    """
+    current = Path(root)
+    if current.is_symlink():
+        return current
+    for part in Path(relative).parts:
+        current = current / part
+        try:
+            if stat.S_ISLNK(os.lstat(current).st_mode):
+                return current
+        except (FileNotFoundError, NotADirectoryError):
+            return None
+    return None
 
 
 def short_id(git_dir: str, length: int) -> str:
