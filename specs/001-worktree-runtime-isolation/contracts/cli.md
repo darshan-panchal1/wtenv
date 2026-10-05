@@ -129,16 +129,18 @@ resource. Nothing is changed unless all of them pass.
    *From here on, `up` changes things, in this order:*
 8. Registry: create the entry, or record a new location (FR-084); allocate a block when the
    entry has none or the block size changed (`no_free_block` if none is free); assign
-   ports; add the worktree's patterns to `.git/info/exclude`.
-9. Database: create it from the template if it is not recorded. Failures here are
-   `template_missing`, `template_in_use`, `ownership_conflict`, or `dependency_unavailable`.
-10. Compose: write the override file and verify it.
-11. Env file: write wtenv's section.
-12. Run the post-up commands in order. The first non-zero exit stops `up` with
+   ports. Save the entry as `incomplete` with its block, ports, `exclude_patterns`, and the
+   env-file record in state `creating`.
+9. Exclude block: write the worktree's patterns to `.git/info/exclude`.
+10. Database: create it from the template if it is not recorded. Failures here are
+    `template_missing`, `template_in_use`, `ownership_conflict`, or `dependency_unavailable`.
+11. Compose: write the override file and verify it.
+12. Env file: write wtenv's section.
+13. Run the post-up commands in order. The first non-zero exit stops `up` with
     `post_up_failed`.
-13. Registry: mark the worktree `provisioned`.
+14. Registry: mark the worktree `provisioned`.
 
-A failure in steps 8 to 12 leaves what was created in place and recorded, with the worktree
+A failure in steps 8 to 13 leaves what was created in place and recorded, with the worktree
 `incomplete`. Running `up` again continues from there (FR-069).
 
 **Post-up commands** run through `sh -c`, from the worktree root, with the worktree's
