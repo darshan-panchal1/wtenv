@@ -103,8 +103,9 @@ def slug(name: str, separator: Literal["_", "-"]) -> str:
     """Return a worktree directory's name in the form used inside database and compose names.
 
     Lowercased, with every run of characters outside `a-z` and `0-9` replaced by one
-    `separator` (`_` for databases, `-` for compose), trimmed of separators at both ends, and
-    cut to 40 characters, in that order. An empty result becomes `wt`.
+    `separator` (`_` for databases, `-` for compose), trimmed of separators at both ends, cut to
+    40 characters, and trimmed again, because the cut can land just after a separator. An empty
+    result becomes `wt`.
     """
     text = _NOT_ALPHANUMERIC.sub(separator, name.lower()).strip(separator)
-    return text[:SLUG_LENGTH] or "wt"
+    return text[:SLUG_LENGTH].rstrip(separator) or "wt"

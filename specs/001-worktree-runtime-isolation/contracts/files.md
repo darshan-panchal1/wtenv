@@ -10,8 +10,8 @@ load them. The registry file is described in [data-model.md](../data-model.md#re
 `<id8>` is the first 8 hexadecimal digits of the SHA-256 of the worktree's git directory
 path. `<slug>` is the worktree directory's name when the worktree was first provisioned,
 lowercased, with every run of characters outside `a–z` and `0–9` replaced by one `_` (for
-databases) or `-` (for compose), trimmed of those characters at both ends, and cut to 40
-characters. An empty slug becomes `wt`. Both are recorded at creation and never recomputed,
+databases) or `-` (for compose), trimmed of those characters at both ends, cut to 40
+characters, and trimmed again at the end. An empty slug becomes `wt`. Both are recorded at creation and never recomputed,
 so they survive a move (FR-022, FR-084).
 
 | What | Name | Example |

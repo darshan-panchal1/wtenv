@@ -177,10 +177,32 @@ def test_an_empty_slug_becomes_wt(name: str, separator: str) -> None:
 def test_slug_is_cut_to_40_characters() -> None:
     assert slug("a" * 60, "_") == "a" * 40
     assert slug("a" * 40, "_") == "a" * 40
-    assert len(slug("word-" * 20, "-")) == 40
+    # The cut at 40 lands right after a "-"; the trim after the cut removes it.
+    assert slug("word-" * 20, "-") == "word-" * 7 + "word"
 
 
-def test_slug_is_cut_after_it_is_trimmed() -> None:
-    # The order in files.md is: lowercase, replace, trim, cut. A cut that lands just after a
-    # separator therefore leaves it at the end.
-    assert slug("a" * 39 + "-b", "_") == "a" * 39 + "_"
+def test_slug_is_trimmed_again_after_the_cut() -> None:
+    # The cut can land right after a separator; that separator is removed too.
+    assert slug("a" * 39 + "-b", "_") == "a" * 39
+    assert slug("a" * 39 + "-b", "-") == "a" * 39
+
+
+@pytest.mark.parametrize("separator", ["_", "-"])
+def test_slug_cut_after_a_run_of_separators_has_no_trailing_separator(separator: str) -> None:
+    # Name characters other than a-z and 0-9 collapse to one separator, so the cut can land
+    # on that one separator only; the result must still end in a letter or digit.
+    result = slug("a" * 39 + " /// cd", separator)
+
+    assert result == "a" * 39
+    assert not result.endswith(separator)
+
+
+@pytest.mark.parametrize("separator", ["_", "-"])
+@pytest.mark.parametrize("length", range(1, 60))
+def test_slug_is_always_valid_and_never_empty(length: int, separator: str) -> None:
+    name = "x" * length + "-" + "y" * 5
+    result = slug(name, separator)
+
+    assert 0 < len(result) <= 40
+    assert result[0] not in "_-"
+    assert result[-1] not in "_-"
