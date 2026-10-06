@@ -7,6 +7,7 @@ are here, and not with the databases or compose, because both use them to name t
 
 import hashlib
 import os
+import posixpath
 import re
 import stat
 from dataclasses import dataclass
@@ -110,6 +111,24 @@ def symlinked_part(root: str | Path, relative: str | Path) -> Path | None:
                 return current
         except (FileNotFoundError, NotADirectoryError):
             return None
+    return None
+
+
+def recorded_path_problem(path: str) -> str | None:
+    """Return the rule a recorded path breaks, or None when it has the form wtenv records.
+
+    The registry is a file a person can edit. `down` and `gc` use a recorded env file, SQLite copy,
+    or override only when it is relative to the worktree root, unchanged by `posixpath.normpath`,
+    and has no `..` part, which is the form `up` records (the rule of `config.py`'s `env_file`).
+    """
+    if not path:
+        return "an empty path"
+    if posixpath.isabs(path):
+        return "an absolute path"
+    if ".." in path.split("/"):
+        return "a path with a `..` part"
+    if posixpath.normpath(path) != path or path == ".":
+        return "a path that is not in its plain form"
     return None
 
 

@@ -34,6 +34,7 @@ from helpers import (
     parse_gc,
     parse_up,
     project_resources,
+    snapshot_tree,
 )
 
 from wtenv.identity import current_worktree, short_id
@@ -143,6 +144,126 @@ def files_of(*paths: Path) -> dict[Path, bytes | None]:
 
 def expected_status(mode: str, *, failed: bool) -> int:
     return 13 if failed and mode != "dry-run" else 0
+
+
+# === T176: recorded paths ===
+
+
+@dataclass
+class PathCase:
+    """One hand edit of a recorded path, the decoys it points at, and what `down` should say."""
+
+    edit: Callable[[Case], None]
+    decoys: Callable[[Case], list[Path]]
+    kind: str | None  # the `failed` item kind; None when the value has a valid form
+    modes: tuple[str, ...] = MODES
+
+
+def _edit_env(path: Callable[[Case], str], *, created_file: bool = False) -> Callable[[Case], None]:
+    def edit(case: Case) -> None:
+        def change(entry: dict[str, object]) -> None:
+            record = entry["env_file"]
+            assert isinstance(record, dict)
+            record["path"] = path(case)
+            record["created_file"] = created_file
+
+        hand_edit(case, change)
+
+    return edit
+
+
+def _edit_sqlite(path: Callable[[Case], str]) -> Callable[[Case], None]:
+    def edit(case: Case) -> None:
+        def change(entry: dict[str, object]) -> None:
+            records = entry["databases"]
+            assert isinstance(records, list)
+            records[0]["path"] = path(case)
+
+        hand_edit(case, change)
+
+    return edit
+
+
+def _database_with_sides(path: Path) -> list[Path]:
+    return [path, Path(f"{path}-wal"), Path(f"{path}-shm")]
+
+
+PATH_CASES = {
+    "env file is a developer file in the worktree": PathCase(
+        _edit_env(lambda case: "src/main.py", created_file=True),
+        lambda case: [case.worktree / "src" / "main.py"],
+        None,  # it has the form of a recorded path, and holds no section
+        MODES_WITH_A_WORKTREE,
+    ),
+    "env file is outside the worktree, by `..`": PathCase(
+        _edit_env(lambda case: "../outside.env"),
+        lambda case: [case.worktree.parent / "outside.env"],
+        "env_section",
+    ),
+    "env file is an absolute path": PathCase(
+        _edit_env(lambda case: str(case.worktree.parent.parent / "absolute.env")),
+        lambda case: [case.worktree.parent.parent / "absolute.env"],
+        "env_section",
+    ),
+    "sqlite copy is outside the worktree, by `..`": PathCase(
+        _edit_sqlite(lambda case: "../../notes.db"),
+        lambda case: _database_with_sides(case.worktree.parent.parent / "notes.db"),
+        "sqlite_file",
+    ),
+    "sqlite copy is an absolute path": PathCase(
+        _edit_sqlite(lambda case: str(case.worktree.parent.parent / "absolute.db")),
+        lambda case: _database_with_sides(case.worktree.parent.parent / "absolute.db"),
+        "sqlite_file",
+    ),
+    "sqlite copy is inside the worktree but not under .wtenv": PathCase(
+        _edit_sqlite(lambda case: "data/notes.db"),
+        lambda case: _database_with_sides(case.worktree / "data" / "notes.db"),
+        "sqlite_file",
+        MODES_WITH_A_WORKTREE,
+    ),
+}
+
+
+def _write_decoys(paths: list[Path]) -> None:
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.suffix == ".env" or path.name == "main.py":
+            path.write_bytes(SECTION if path.suffix == ".env" else b"print('mine')\n")
+        else:
+            path.write_bytes(f"a file wtenv did not create: {path.name}\n".encode())
+
+
+@pytest.mark.parametrize(
+    ("name", "mode"),
+    [(name, mode) for name, case in PATH_CASES.items() for mode in case.modes],
+    ids=[f"{name}-{mode}" for name, case in PATH_CASES.items() for mode in case.modes],
+)
+def test_a_recorded_path_of_a_form_wtenv_never_records_is_left_alone(
+    name: str,
+    mode: str,
+    run_wtenv: Run,
+    make_repo: MakeRepo,
+    add_worktree: AddWorktree,
+    tmp_path: Path,
+) -> None:
+    case_definition = PATH_CASES[name]
+    case = provision(run_wtenv, make_repo, add_worktree, tmp_path, toml=SQLITE_TOML)
+    case_definition.edit(case)
+    decoys = case_definition.decoys(case)
+    _write_decoys(decoys)
+    before = files_of(*decoys)
+
+    status, failed, already_absent, _ = execute(mode, case, run_wtenv)
+
+    assert files_of(*decoys) == before  # byte for byte, and still there
+    if case_definition.kind is None:
+        assert status == 0
+        assert [item.kind.value for item in already_absent if item.kind.value == "env_section"]
+        assert is_recorded(case) is (mode == "dry-run")
+        return
+    assert status == expected_status(mode, failed=True)
+    assert case_definition.kind in [item.kind.value for item in failed]
+    assert is_recorded(case)  # the entry and the record stay
 
 
 # === T177a: the compose project ===
@@ -311,6 +432,132 @@ def test_a_recorded_project_that_is_not_the_worktrees_own_is_never_listed_or_rem
         assert override.read_bytes() == override_before
     entry = load().worktrees[case.git_dir]
     assert entry.compose is not None and entry.compose.project == name
+
+
+# === T177b: the recorded override ===
+
+
+@dataclass
+class OverrideCase:
+    """A hand edit of `compose.override`, or of the file it names, and where the decoy is."""
+
+    edit: Callable[[Case], None]
+    decoy: Callable[[Case], Path]
+    modes: tuple[str, ...] = MODES
+
+
+def _set_override(value: Callable[[Case], str]) -> Callable[[Case], None]:
+    def edit(case: Case) -> None:
+        hand_edit(case, lambda entry: entry["compose"].update(override=value(case)))  # type: ignore[attr-defined]
+
+    return edit
+
+
+def _developers_override(case: Case) -> None:
+    """The file stays where it was recorded, but a developer wrote it: no wtenv header."""
+    (case.worktree / "compose.override.yaml").write_text("services: {}\n", encoding="utf-8")
+
+
+OVERRIDE_CASES = {
+    "override is a developer file in the worktree": OverrideCase(
+        _set_override(lambda case: "src/main.py"),
+        lambda case: case.worktree / "src" / "main.py",
+        MODES_WITH_A_WORKTREE,
+    ),
+    "override is outside the worktree, by `..`": OverrideCase(
+        _set_override(lambda case: "../compose.override.yaml"),
+        lambda case: case.worktree.parent / "compose.override.yaml",
+    ),
+    "override is an absolute path": OverrideCase(
+        _set_override(lambda case: str(case.worktree.parent.parent / "absolute.override.yaml")),
+        lambda case: case.worktree.parent.parent / "absolute.override.yaml",
+    ),
+    "override is a compose.override.yaml without wtenv's header": OverrideCase(
+        _developers_override,
+        lambda case: case.worktree / "compose.override.yaml",
+        MODES_WITH_A_WORKTREE,
+    ),
+}
+
+
+def _plant_override(case: Case, definition: OverrideCase) -> Path:
+    decoy = definition.decoy(case)
+    if decoy.name != "compose.override.yaml" or decoy.parent != case.worktree:
+        decoy.parent.mkdir(parents=True, exist_ok=True)
+        text = "# mine\n" if decoy.name == "main.py" else OVERRIDE_HEADER + 'name: "x"\n'
+        decoy.write_text(text, encoding="utf-8")
+    return decoy
+
+
+@pytest.mark.parametrize(
+    ("name", "mode"),
+    [(name, mode) for name, case in OVERRIDE_CASES.items() for mode in case.modes],
+    ids=[f"{name}-{mode}" for name, case in OVERRIDE_CASES.items() for mode in case.modes],
+)
+def test_a_recorded_override_that_is_not_wtenvs_is_never_deleted_by_down_or_gc(
+    name: str,
+    mode: str,
+    compose_image: str,
+    run_wtenv: Run,
+    make_repo: MakeRepo,
+    add_worktree: AddWorktree,
+    tmp_path: Path,
+) -> None:
+    definition = OVERRIDE_CASES[name]
+    case = provision(
+        run_wtenv,
+        make_repo,
+        add_worktree,
+        tmp_path,
+        toml=COMPOSE_TOML,
+        files={"compose.yaml": stack_file(compose_image)},
+    )
+    definition.edit(case)
+    decoy = _plant_override(case, definition)
+    before = files_of(decoy)
+
+    status, failed, _, _ = execute(mode, case, run_wtenv)
+
+    assert files_of(decoy) == before
+    assert status == expected_status(mode, failed=True)
+    assert "compose_override" in [item.kind.value for item in failed]
+    assert is_recorded(case)
+
+
+@pytest.mark.parametrize("name", OVERRIDE_CASES)
+def test_up_refuses_a_recorded_override_that_is_not_wtenvs_before_changing_anything(
+    name: str,
+    compose_image: str,
+    run_wtenv: Run,
+    make_repo: MakeRepo,
+    add_worktree: AddWorktree,
+    tmp_path: Path,
+) -> None:
+    definition = OVERRIDE_CASES[name]
+    case = provision(
+        run_wtenv,
+        make_repo,
+        add_worktree,
+        tmp_path,
+        toml=COMPOSE_TOML,
+        files={"compose.yaml": stack_file(compose_image)},
+    )
+    definition.edit(case)
+    decoy = _plant_override(case, definition)
+    (case.worktree / "wtenv.toml").write_text('ports = ["CACHE_PORT"]\nblock_size = 10\n')
+    tree_before = snapshot_tree(case.worktree)
+    decoy_before = files_of(decoy)
+    registry_before = registry_path().read_bytes()
+
+    process = run_wtenv(["up", "--json"], case.worktree)
+
+    assert process.returncode == 11, process.stdout + process.stderr
+    document = json.loads(process.stdout)
+    assert document["error"]["code"] == "ownership_conflict"
+    assert document["error"]["details"]["kind"] == "compose_override"
+    assert snapshot_tree(case.worktree) == tree_before
+    assert files_of(decoy) == decoy_before
+    assert registry_path().read_bytes() == registry_before
 
 
 # === T178b: volume names ===

@@ -25,7 +25,12 @@ from wtenv.config import CONFIG_FILE_NAME, Config, load_config
 from wtenv.database import PostgresTarget
 from wtenv.errors import ErrorCode, WtenvError
 from wtenv.gitutil import git_path, is_tracked
-from wtenv.identity import WorktreeIdentity, current_worktree, symlinked_part
+from wtenv.identity import (
+    WorktreeIdentity,
+    current_worktree,
+    recorded_path_problem,
+    symlinked_part,
+)
 from wtenv.listing import database_view, port_views
 from wtenv.locks import WORKTREE_LOCK_TIMEOUT, registry_lock, worktree_lock
 from wtenv.output import (
@@ -221,7 +226,30 @@ def _check_recorded_env_file(root: Path, config: Config, known: WorktreeEntry | 
     (FR-065), so its path gets the same check as the new one (FR-086).
     """
     if known is not None and known.env_file is not None and known.env_file.path != config.env_file:
+        _refuse_recorded_form(root, known.env_file.path, ItemKind.ENV_SECTION)
         _refuse_symlink(root, known.env_file.path)
+
+
+def _refuse_recorded_form(root: Path, relative: str, kind: ItemKind) -> None:
+    """Raise `ownership_conflict` when a recorded path that `up` would remove is not of the form
+    wtenv records (cli.md, `wtenv down`, "Recorded values"); nothing has changed yet.
+
+    The registry is a file a person can edit. `details.kind` is the kind of the item that would be
+    removed, and `name` is the recorded path.
+    """
+    problem = recorded_path_problem(relative)
+    if problem is not None:
+        raise _recorded_value_conflict(kind, root / relative, f"is {problem}")
+
+
+def _recorded_value_conflict(kind: ItemKind, path: Path, why: str) -> WtenvError:
+    return WtenvError(
+        ErrorCode.OWNERSHIP_CONFLICT,
+        f"the registry records {path}, which {why}, so wtenv will not remove it",
+        hint="Fix or remove the entry in the registry by hand, or run `wtenv down` and read "
+        "`failed`. Nothing was changed.",
+        details={"kind": kind.value, "name": str(path)},
+    )
 
 
 def _check_override_links(root: Path, config: Config, known: WorktreeEntry | None) -> None:
@@ -232,12 +260,27 @@ def _check_override_links(root: Path, config: Config, known: WorktreeEntry | Non
     compose module is not loaded (NFR-001).
     """
     recorded = None if known is None or known.compose is None else known.compose.override
+    new_override = None
     if config.compose is not None:
         from wtenv import compose  # only now: the module is not loaded without `[compose]`
 
-        _refuse_symlink(root, compose.override_path(config.compose.file))
-    if recorded is not None:
+        new_override = compose.override_path(config.compose.file)
+        _refuse_symlink(root, new_override)
+    if recorded is None:
+        return
+    if recorded == new_override:
         _refuse_symlink(root, recorded)
+        return
+    # `up` removes this file, so it must have the form and the contents wtenv gave it (T184).
+    from wtenv import compose
+
+    _refuse_recorded_form(root, recorded, ItemKind.COMPOSE_OVERRIDE)
+    _refuse_symlink(root, recorded)
+    not_wtenvs = compose.override_problem(root, recorded)
+    if not_wtenvs is not None:
+        raise _recorded_value_conflict(
+            ItemKind.COMPOSE_OVERRIDE, root / recorded, f"is not wtenv's: {not_wtenvs}"
+        )
 
 
 def _check_sqlite_links(root: Path, plan: _DatabasePlan | None) -> None:

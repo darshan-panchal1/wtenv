@@ -1400,18 +1400,18 @@ exit status is 13 (0 for a dry run). Every test removes its decoys.
 
 **H2. Recorded paths and the override file**
 
-- [ ] T181 Add failing tests for the recorded path guard to `tests/unit/test_teardown_paths.py`
+- [X] T181 Add failing tests for the recorded path guard to `tests/unit/test_teardown_paths.py`
   - H2, FR-039, FR-086: for `env_file.path`, `databases[sqlite].path`, and
     `compose.override`, each of an absolute path, a path with a `..` part, and a path that
     `posixpath.normpath` changes (`./a`, `a//b`) is one item under `failed` with a reason
     naming the rule; nothing is unlinked or rewritten; the record stays. A SQLite path that
     is not exactly `.wtenv/<file name>` (`data/x.db`, `.wtenv/sub/x.db`) fails the same way,
     and its side files are neither listed nor touched. The same with `dry_run=True`.
-- [ ] T182 Check recorded paths before using them, in `src/wtenv/identity.py` and `src/wtenv/teardown.py`
+- [X] T182 Check recorded paths before using them, in `src/wtenv/identity.py` and `src/wtenv/teardown.py`
   - One helper beside `symlinked_part`, used for all three paths: relative, unchanged by
     `normpath`, no `..` part (the rule of `config.py`'s `env_file` check). The SQLite form
     is checked in `teardown.py`.
-- [ ] T183 Add failing tests for the override name and header to `tests/unit/test_teardown_paths.py` and `tests/integration/test_us3_compose.py`
+- [X] T183 Add failing tests for the override name and header to `tests/unit/test_teardown_paths.py` and `tests/integration/test_us3_compose.py`
   - H2, FR-039: a recorded override whose file name
     is not one of the four in files.md, Names, or whose first line is not wtenv's header,
     is `failed` in `down` and `gc` and is not deleted. In `up` with `[compose]` removed, or
@@ -1419,7 +1419,7 @@ exit status is 13 (0 for a dry run). Every test removes its decoys.
     `ownership_conflict` (`details.kind` `compose_override`, `name` the path) before step 8;
     nothing changes. The same for a recorded env file that fails T181's checks when
     `env_file` changed.
-- [ ] T184 Check the override's name and header before deleting it, in `src/wtenv/teardown.py`, `src/wtenv/provision.py`, and `src/wtenv/compose.py`
+- [X] T184 Check the override's name and header before deleting it, in `src/wtenv/teardown.py`, `src/wtenv/provision.py`, and `src/wtenv/compose.py`
   - cli.md, `wtenv up`, step 4, and `wtenv down`, "Recorded values". `up` runs the checks
     with its link checks, before anything changes (provision.py's check of the old
     override and old env file).

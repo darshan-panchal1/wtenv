@@ -26,6 +26,7 @@ of them. The compose module is imported only when a compose project is recorded 
 """
 
 import os
+import posixpath
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,7 +36,7 @@ from wtenv import database, envfile, exclude, registry
 from wtenv.config import load_config
 from wtenv.database import PostgresTarget, Removal
 from wtenv.errors import EXIT_STATUS, ErrorCode, WtenvError
-from wtenv.identity import WorktreeIdentity, current_worktree, symlinked_part
+from wtenv.identity import WorktreeIdentity, current_worktree, recorded_path_problem, symlinked_part
 from wtenv.locks import WORKTREE_LOCK_TIMEOUT, registry_lock, worktree_lock
 from wtenv.output import (
     DownResult,
@@ -55,6 +56,9 @@ ItemT = TypeVar("ItemT", bound=Item)
 # The `reason` of an item left alone because it, or a directory above it, is a symbolic link
 # (FR-086).
 SYMLINK_REASON = "symlink"
+
+# Where `up` puts a SQLite copy: exactly `.wtenv/<file name>` (files.md, Names).
+SQLITE_DIRECTORY = ".wtenv"
 
 
 @dataclass
@@ -154,8 +158,16 @@ def _compose_step(entry: WorktreeEntry, root: Path, release: Release, dry_run: b
     project_failed = len(release.failed) > failures_before
     override = root / record.override
     item = Item(kind=ItemKind.COMPOSE_OVERRIDE, name=str(override))
+    form = _form_reason(record.override)
+    if form is not None:
+        release.failed.append(FailedItem(kind=item.kind, name=item.name, reason=form))
+        return
     if symlinked_part(root, record.override) is not None:
         release.failed.append(FailedItem(kind=item.kind, name=item.name, reason=SYMLINK_REASON))
+        return
+    not_wtenvs = compose.override_problem(root, record.override)
+    if not_wtenvs is not None:
+        release.failed.append(FailedItem(kind=item.kind, name=item.name, reason=not_wtenvs))
         return
     if not os.path.lexists(override):
         release.already_absent.append(item)
@@ -173,6 +185,32 @@ def _compose_step(entry: WorktreeEntry, root: Path, release: Release, dry_run: b
         release.removed.append(item)
     if not dry_run and not project_failed:
         _update(entry.git_dir, _drop_compose_record)
+
+
+def _form_reason(path: str) -> str | None:
+    """Return the reason a recorded path is left alone because of its form, or None (H2).
+
+    The registry is a file a person can edit, so a path is used only when it has the form `up`
+    records (`identity.recorded_path_problem`). The check runs before the file is looked at.
+    """
+    problem = recorded_path_problem(path)
+    if problem is None:
+        return None
+    return f"the recorded path {path!r} is {problem}, not a path wtenv records; it was left alone"
+
+
+def _sqlite_form_reason(path: str) -> str | None:
+    """Like `_form_reason`, and the copy must be exactly `.wtenv/<file name>`."""
+    problem = _form_reason(path)
+    if problem is not None:
+        return problem
+    directory, name = posixpath.split(path)
+    if directory == SQLITE_DIRECTORY and name:
+        return None
+    return (
+        f"the recorded path {path!r} is not `{SQLITE_DIRECTORY}/<file name>`, "
+        "where wtenv puts a SQLite copy; it was left alone"
+    )
 
 
 def _drop_compose_record(entry: WorktreeEntry) -> None:
@@ -197,6 +235,13 @@ def _database_step(
     for record in entry.databases:
         if record.kind == "sqlite":
             assert record.path is not None
+            form = _sqlite_form_reason(record.path)
+            if form is not None:
+                # No side file is looked for, and the record is not marked `removing`.
+                release.failed.append(
+                    FailedItem(kind=ItemKind.SQLITE_FILE, name=str(root / record.path), reason=form)
+                )
+                continue
             if symlinked_part(root, record.path) is not None:
                 release.failed.append(
                     FailedItem(
@@ -257,6 +302,10 @@ def _env_step(entry: WorktreeEntry, root: Path, release: Release, dry_run: bool)
         return
     path = root / record.path
     section = Item(kind=ItemKind.ENV_SECTION, name=str(path))
+    form = _form_reason(record.path)
+    if form is not None:
+        release.failed.append(FailedItem(kind=section.kind, name=section.name, reason=form))
+        return
     if symlinked_part(root, record.path) is not None:
         release.failed.append(
             FailedItem(kind=section.kind, name=section.name, reason=SYMLINK_REASON)

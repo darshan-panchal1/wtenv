@@ -394,6 +394,32 @@ def check_project_is_unused(
         )
 
 
+def override_problem(root: Path, relative: str) -> str | None:
+    """Return why the recorded override is not a file wtenv wrote, or None when it may be deleted.
+
+    The registry is a file a person can edit (cli.md, `wtenv down`, "Recorded values"). The file
+    name must be one of the four in files.md, Names, and an existing file must start with wtenv's
+    header line (files.md, Compose override file). A file that does not exist has no problem: it
+    is already gone. The path form and symbolic links are checked before this.
+    """
+    name = posixpath.basename(relative)
+    if name not in OVERRIDE_FILE_NAMES:
+        return (
+            f"the file name {name!r} is not one of {', '.join(OVERRIDE_FILE_NAMES)}; "
+            "it was left alone"
+        )
+    try:
+        with open(root / relative, "rb") as file:
+            first_line = file.readline(len(_OVERRIDE_HEADER) + 1)
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        return f"{relative} cannot be read ({error.strerror or type(error).__name__}); it was left alone"
+    if first_line != _OVERRIDE_HEADER.encode("utf-8"):
+        return f"{relative} does not start with wtenv's header line, so it is not wtenv's; it was left alone"
+    return None
+
+
 def check_override_files(root: Path, compose_file: str, recorded_override: str | None) -> None:
     """Raise `ownership_conflict` for an override file beside the compose file that is not wtenv's.
 
