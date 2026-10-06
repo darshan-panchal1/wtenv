@@ -1333,14 +1333,14 @@ first: they fail until the pairs they name are done, and T211 closes them.
 
 **Contract**
 
-- [ ] T174 Add failing contract tests for readings R8 and R9 to `tests/contract/test_models_match_contract.py`
+- [X] T174 Add failing contract tests for readings R8 and R9 to `tests/contract/test_models_match_contract.py`
   - Reading R8, reading R9, FR-058: as T172, `KeptVolume.reason` accepts `fixed_name` and
     `unlabelled` and nothing else; `WarningCode.COMPOSE_FIXED_VOLUME_NAME` is
     `compose_fixed_volume_name`; `UnverifiableReason.PARENT_MISSING` is `parent_missing`;
     the schemas of `KeptVolume`, `WarningInfo`, `KeptEntry`, `WorktreeView`, `DownResult`,
     and `GcResult` equal the contract's. The existing schema comparisons already fail once
     `json_models.py` has the new members; this task adds the explicit member checks.
-- [ ] T175 Port the new members from `json_models.py` to `src/wtenv/output.py`
+- [X] T175 Port the new members from `json_models.py` to `src/wtenv/output.py`
   - As T173. T174 and the existing contract tests pass. Comes before every task below that
     emits `fixed_name`, `compose_fixed_volume_name`, or `parent_missing`.
 

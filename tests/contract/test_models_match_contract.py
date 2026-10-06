@@ -91,3 +91,37 @@ def test_down_and_gc_results_have_empty_kept_volumes_by_default(contract: Module
 def test_kept_volumes_take_only_the_reason_unlabelled() -> None:
     with pytest.raises(ValidationError):
         output.KeptVolume(name="data", project="p", reason="in-use")  # type: ignore[arg-type]
+
+
+def test_kept_volumes_take_the_reasons_unlabelled_and_fixed_name_and_nothing_else() -> None:
+    # Reading R8 (T174).
+    for reason in ("unlabelled", "fixed_name"):
+        assert output.KeptVolume(name="v", project="p", reason=reason).reason == reason  # type: ignore[arg-type]
+    with pytest.raises(ValidationError):
+        output.KeptVolume(name="v", project="p", reason="other")  # type: ignore[arg-type]
+
+
+def test_the_fixed_volume_name_warning_code_exists() -> None:
+    # Reading R8 (T174).
+    assert output.WarningCode.COMPOSE_FIXED_VOLUME_NAME.value == "compose_fixed_volume_name"
+
+
+def test_the_parent_missing_reason_exists() -> None:
+    # Reading R9 (T174).
+    assert output.UnverifiableReason.PARENT_MISSING.value == "parent_missing"
+
+
+def test_the_models_that_carry_the_new_members_match_the_contracts_schemas(
+    contract: ModuleType,
+) -> None:
+    # Reading R8, reading R9, FR-058 (T174).
+    for name in (
+        "KeptVolume",
+        "WarningInfo",
+        "KeptEntry",
+        "WorktreeView",
+        "DownResult",
+        "GcResult",
+    ):
+        actual = getattr(output, name).model_json_schema()
+        assert actual == getattr(contract, name).model_json_schema(), name
