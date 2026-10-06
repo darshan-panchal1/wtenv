@@ -1353,7 +1353,7 @@ every run the decoy is unchanged (same bytes, same containers, same database). A
 form wtenv never records is under `failed` with its record kept, the entry stays, and the
 exit status is 13 (0 for a dry run). Every test removes its decoys.
 
-- [ ] T176 Write failing hand-edited-registry tests for recorded paths in `tests/integration/test_hand_edited_registry.py`
+- [X] T176 Write failing hand-edited-registry tests for recorded paths in `tests/integration/test_hand_edited_registry.py`
   - FR-039, FR-044, FR-086: SQLite only, no Docker. `env_file.path` set to a developer file
     in the worktree (`src/main.py`), to `../outside.env`, and to an absolute path;
     `databases[sqlite].path` set to `../../notes.db` (with `notes.db-wal` and
@@ -1361,7 +1361,7 @@ exit status is 13 (0 for a dry run). Every test removes its decoys.
     worktree. `src/main.py` has the form of a recorded path but holds no wtenv section, so
     it is reported under `already_absent` and left byte for byte, even with
     `created_file` true. Passes after T182.
-- [ ] T177 Write failing hand-edited-registry tests for the compose project and the override in `tests/integration/test_hand_edited_registry.py`
+- [X] T177 Write failing hand-edited-registry tests for the compose project and the override in `tests/integration/test_hand_edited_registry.py`
   - FR-028, FR-039, FR-040: Docker; skips with a clear message without it. The decoy is a
     project `decoy-<random>` started with `docker compose -p decoy-<random> up -d`: one
     container, one network, one labelled named volume holding a file. `compose.project` set
@@ -1372,7 +1372,7 @@ exit status is 13 (0 for a dry run). Every test removes its decoys.
     unchanged. The override cases also through `up` with `[compose]` removed from
     `wtenv.toml`: exit 11, `ownership_conflict`, nothing changed. Passes after T180, T182,
     and T184.
-- [ ] T178 Write failing hand-edited-registry tests for the Postgres record and for volume names in `tests/integration/test_hand_edited_registry.py`
+- [X] T178 Write failing hand-edited-registry tests for the Postgres record and for volume names in `tests/integration/test_hand_edited_registry.py`
   - FR-025, FR-039, FR-070: Postgres; skips with a clear message without it. Decoy
     databases `precious` and `wtenv_other_<id8 of another git directory>`, each created by
     the test. `databases[postgres].name` set to each: not dropped; `host` set to a host
@@ -1536,7 +1536,7 @@ exit status is 13 (0 for a dry run). Every test removes its decoys.
 
 **Closing the group**
 
-- [ ] T211 Run T176–T178 and make them pass
+- [X] T211 Run T176–T178 and make them pass
   - Done when every hand-edited-registry case passes with T180, T182, T184, and T208 in
     place. A field still found unguarded is not fixed here: stop and ask, and add a task
     pair for it.
