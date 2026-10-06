@@ -1645,6 +1645,10 @@ Runs after group 9S.
   - The ubuntu jobs have Docker, so the Docker and Postgres integration tests run there
     with nothing skipped.
   - Pin each action to a full commit SHA with its version in a comment, as the uv guide does.
+  - Added at the maintainer's request (2026-10-06): a `minimums` job that builds git 2.31.0 and
+    installs Compose 2.24.4 from pinned, checksummed downloads and runs both suites against them;
+    on every Ubuntu job `lsof` is installed so no port-holder test skips, and no integration
+    test may skip (the minimums job allows only the `--orphan` skip of T224).
 - [X] T142 Add the NFR-003 coverage check to `.github/workflows/ci.yml`
   - In one ubuntu job: `uv run pytest --cov=wtenv`, then one
     `uv run coverage report --fail-under=80 --include=<modules>` per row of plan.md's
@@ -1667,13 +1671,20 @@ Runs after group 9S.
     `publish` job with `environment: pypi` and `permissions: id-token: write` running
     `uv publish` with PyPI trusted publishing; no stored credentials (plan.md; research.md
     §5, §11). The first release uses a "pending" publisher.
-- [ ] T145 [P] Write `README.md` and add `readme = "README.md"` to `pyproject.toml`
+- [X] T145 [P] Write `README.md` and add `readme = "README.md"` to `pyproject.toml`
   - Install (`uv tool install wtenv` or `pipx install wtenv`); the nine commands with one
     example each; `wtenv.toml` (config.md); `--json` and exit statuses (cli.md); platforms
     (macOS, Linux, WSL2); limits (research.md §1, §4); working with Claude Code
     (quickstart.md: the `CLAUDE.md` line, no env file in `.worktreeinclude`, `gc` after
     removal). No feature beyond the spec.
-- [ ] T146 Check `docs/roadmap.md` against the code
+  - Added at the maintainer's request (2026-10-06): the problem in three lines; a 60-second demo
+    with three parallel worktrees, using real output; install by `uv tool install wtenv` and
+    `pipx install wtenv`; the known limits (anonymous volumes stay on disk, the fixed-volume-name
+    warning fires only for a volume a service mounts, compose limits, no Windows, Postgres local
+    TCP only); an honest comparison with dev containers, hand-rolled scripts, and cloud preview
+    environments. Also `LICENSE` (Apache-2.0), `CHANGELOG.md`, and `license` metadata in
+    `pyproject.toml`.
+- [X] T146 Check `docs/roadmap.md` against the code
   - The command surface matches cli.md (T130); nothing on the roadmap was built; every idea
     noted during implementation is added with its source (FR-001, Principle X).
 - [ ] T147 Run quickstart.md end to end and fix what it finds

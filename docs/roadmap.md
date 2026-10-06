@@ -100,3 +100,13 @@ did not.
 | Idea | Why it is not in v1 |
 |------|---------------------|
 | **Remaining LOW findings of review 3**: (1) recorded `exclude_patterns` are added to the exclude block unchecked, and a hand-edited pattern can hide untracked files or raise `ValueError`; (2) `_finish` trusts the recorded `repository` for the exclude path; (3) `check_sqlite_target` then `os.replace` leaves a millisecond race (use `os.link`); (4) lines a developer writes between the markers are dropped without a warning (`env_section_edited`); (5) `gc` treats a worktree whose parent directory is an unmounted mount point or was renamed by hand as an orphan once git has pruned it (treat an empty parent as `parent_missing`, document `git worktree lock`); (6) the `<project>_` prefix rule covers volumes but not networks with a fixed `name:`; (7) `down` and `gc` do not check that the Docker endpoint is local; (8) `gc --dry-run` takes no worktree lock, so it can list an entry that a real run reports as `skipped_busy`, and run-time failures show as `would_remove`. | Each needs a hand-edited registry, a race of milliseconds, or an unusual setup, and none removes a resource wtenv did not create without that. Items 4 and 8 follow from documented behaviour (FR-076). Add the ones the maintainer picks as task pairs. |
+
+## From the release work (2026-10-06)
+
+Source: T141, T144, and T145, while writing CI and checking `uv build`.
+
+| Idea | Why it is not in v1 |
+|------|---------------------|
+| **Keep the source distribution small.** `uv build` puts `.claude/`, `.specify/`, `specs/`, and `tests/` in the sdist, because hatchling includes every file git does not ignore. A `[tool.hatch.build.targets.sdist]` `include` list would limit it to the source, the license, the README, the changelog, and `pyproject.toml`. The wheel holds only `wtenv/` and its metadata. | Packaging beyond T144 and T145 (Principle X). Nothing breaks: the sdist builds a correct wheel. |
+| **Keep the pins in CI current.** The actions in `.github/workflows/` are pinned to full commit SHAs, and the `minimums` job pins git 2.31.0 and Compose 2.24.4 by SHA-256. Dependabot (`github-actions` ecosystem) would propose new action SHAs. The two downloads would still be updated by hand. | A new file and a policy decision outside T141. The pins are what make the workflows reproducible, so they change only on purpose. |
+| **Run the suite against Compose 2.24.4 on the machine that supports it.** The `minimums` job runs on x86-64 Linux only; wtenv's own Docker tests have not been run on an Arm host with Compose 2.24.4. | No such runner is in the CI plan (plan.md, Build, CI and release). |
