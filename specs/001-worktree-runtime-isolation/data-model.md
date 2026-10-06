@@ -186,7 +186,7 @@ ever unrecorded) and FR-069 (recovery without manual repair).
 |-------|---------|-----------|-----------------|
 | `creating` | Recorded **before** creating. It may or may not exist. | If it exists, keep it and mark `created`; otherwise create it | Remove it if it exists |
 | `created` | Exists, as far as wtenv knows | Keep it. If it has gone missing, create it again and report that | Remove it |
-| `removing` | Recorded **before** removing. It may be gone, or half gone. | If it is still there and usable, keep it and mark `created`. If it is gone, create it again. If it is half removed (a Postgres database the server marks invalid), fail with `unsupported`, reason `interrupted_removal`, and ask for `wtenv down` | Remove it |
+| `removing` | Recorded **before** removing. It may be gone, or half gone. | If it is gone, create it again. If it is still there (a SQLite copy), or half removed (a Postgres database the server marks invalid), do not reuse it: fail with `unsupported` (exit 19), reason `interrupted_removal`, and ask for `wtenv down`, which finishes the removal (FR-088) | Remove it |
 
 Before recording `creating`, wtenv checks, under the worktree lock, that nothing exists at
 the target name. Something found then belongs to someone else and is an
