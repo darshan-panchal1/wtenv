@@ -1615,11 +1615,13 @@ exit status is 13 (0 for a dry run). Every test removes its decoys.
 
 Runs after group 9S.
 
-- [ ] T136 [P] Write a local-only test in `tests/unit/test_local_only.py`
+- [X] T136 [P] Write a local-only test in `tests/unit/test_local_only.py`
   - Principle I, FR-071: parse every module under `src/wtenv/` with `ast`; no `import` or
     `from … import` names a top-level module in this closed list: `urllib`, `urllib3`,
     `http`, `requests`, `httpx`, `aiohttp`, `ftplib`, `smtplib`, `poplib`, `imaplib`,
     `xmlrpc`, `socketserver`, `ssl`.
+    `urllib.parse` is allowed: it only splits strings, and `config.py`, `database.py`, and
+    `compose.py` use it (maintainer decision, 2026-10-06).
   - `socket` is imported only by `ports.py` and `doctor.py`, for `bind`.
 - [ ] T137 [P] Create the sample app in `tests/fixtures/sample_app/app.py`, `tests/fixtures/sample_app/compose.yaml`, `tests/fixtures/sample_app/wtenv.toml`
   - Exactly as quickstart.md, "The sample app fixture".
