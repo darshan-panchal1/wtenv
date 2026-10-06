@@ -1638,19 +1638,19 @@ Runs after group 9S.
   - Machine model, OS version, wtenv version, both means (NFR-001, SC-004). Needs
     `hyperfine`; ask the maintainer if it is missing. If a mean fails, stop and ask: the
     contingency in research.md §8 changes the dependency list.
-- [ ] T141 [P] Write the CI workflow `.github/workflows/ci.yml`
+- [X] T141 [P] Write the CI workflow `.github/workflows/ci.yml`
   - On pushes and pull requests. Matrix `ubuntu-latest` and `macos-latest`, Python 3.11 and
     3.12, with `astral-sh/setup-uv` and `uv sync --locked`. Each job runs the five gates
     (plan.md, Build, CI and release; NFR-004); on macOS the Docker tests skip themselves.
   - The ubuntu jobs have Docker, so the Docker and Postgres integration tests run there
     with nothing skipped.
   - Pin each action to a full commit SHA with its version in a comment, as the uv guide does.
-- [ ] T142 Add the NFR-003 coverage check to `.github/workflows/ci.yml`
+- [X] T142 Add the NFR-003 coverage check to `.github/workflows/ci.yml`
   - In one ubuntu job: `uv run pytest --cov=wtenv`, then one
     `uv run coverage report --fail-under=80 --include=<modules>` per row of plan.md's
     coverage map: `registry.py` with `locks.py`; `ports.py`; `identity.py`; `config.py`;
     `database.py`; `compose.py`; `orphans.py`; `envfile.py`. Each row measured on its own.
-- [ ] T143 Run the coverage check locally with Docker available and add tests in `tests/unit/` or `tests/integration/` for any area under 80%
+- [X] T143 Run the coverage check locally with Docker available and add tests in `tests/unit/` or `tests/integration/` for any area under 80%
   - Done when all eight core-area rows of T142 report 80% or more.
 - [ ] T144 [P] Write the release workflow `.github/workflows/release.yml`
   - On `v*` tags: a `build` job running `uv build` and uploading `dist/`, and a separate
