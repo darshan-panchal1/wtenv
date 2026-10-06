@@ -42,7 +42,7 @@ from helpers import (
     sqlite_rows,
 )
 
-from wtenv import orphans, teardown
+from wtenv import cli, orphans, teardown
 from wtenv.database import postgres_database_name
 from wtenv.errors import ErrorCode
 from wtenv.gitutil import WorktreeRecord
@@ -2490,3 +2490,71 @@ def test_down_dry_run_fails_a_compose_project_it_cannot_check_when_the_engine_do
     assert keys(planned.would_remove) == keys(real.removed)
     assert keys(planned.failed) == keys(real.failed)
     assert is_recorded(worktree)
+
+
+# --- `gc --release` on a moved entry whose new location the listing does not give (T166; LOW-5) --
+#
+# `classify` says `moved` with a `current_path` only when `git worktree list` has the worktree. If
+# the listing does not, but `<git_dir>/gitdir` still names a `.git` file that exists, the worktree
+# is there, and a release would delete the entry, the block, and the database of a live worktree.
+
+
+def test_a_moved_entry_with_no_listed_location_is_refused_when_git_dir_names_a_live_worktree(
+    run_wtenv: Run,
+    repo: Path,
+    add_worktree: AddWorktree,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    worktree = add_worktree(repo, "one", "one")
+    up(run_wtenv, worktree)
+    git_dir = git_dir_of(worktree)
+    moved_to = worktree.parent / "two"
+    git(repo, "worktree", "move", str(worktree), str(moved_to))
+    moved_to = moved_to.resolve()
+    # The state of the finding: `moved`, and nothing in the listing says where.
+    monkeypatch.setattr(
+        orphans,
+        "classify",
+        lambda entry, listing: Classification(Status.UNVERIFIABLE, UnverifiableReason.MOVED, None),
+    )
+    registry_before = registry_path().read_bytes()
+    worktree_before = snapshot_tree(moved_to)
+    capsys.readouterr()
+
+    status = cli.main(["gc", "--release", str(worktree), "--json"])
+
+    result = GcResult.model_validate_json(capsys.readouterr().out)
+    assert status == 18 and not result.ok and result.error is not None
+    assert result.error.code is ErrorCode.WORKTREE_EXISTS
+    assert result.error.details == {"path": str(worktree), "current_path": str(moved_to)}
+    assert result.released == [] and result.removed == [] and result.failed == []
+    assert registry_path().read_bytes() == registry_before  # nothing changed
+    assert snapshot_tree(moved_to) == worktree_before
+    assert git_dir in load().worktrees and (moved_to / ".env.local").exists()
+
+
+def test_a_moved_entry_whose_git_dir_names_nothing_that_exists_can_still_be_released(
+    run_wtenv: Run,
+    repo: Path,
+    add_worktree: AddWorktree,
+    outside: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The check refuses only what exists: a `gitdir` file that names a place with no `.git` file
+    is the worktree moved by hand and never repaired, and its entry may still be released."""
+    worktree = add_worktree(repo, "one", "one")
+    up(run_wtenv, worktree)
+    git_dir = git_dir_of(worktree)
+    shutil.move(worktree, tmp_path / "elsewhere")  # git is not told: `gitdir` names a missing file
+    monkeypatch.setattr(
+        orphans,
+        "classify",
+        lambda entry, listing: Classification(Status.UNVERIFIABLE, UnverifiableReason.MOVED, None),
+    )
+
+    result = orphans.gc_release([str(worktree)])
+
+    assert result.ok and result.released == [str(worktree)]
+    assert git_dir not in load().worktrees

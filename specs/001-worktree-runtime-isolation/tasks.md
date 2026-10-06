@@ -1352,12 +1352,12 @@ after groups 3F and 6G, and before T146–T148. Each pair is a failing test, the
     name. Resources with the label `com.docker.compose.project=<name>` and no compose record
     → `ownership_conflict`. A record in state `creating` is an interrupted run and adopts
     them (FR-067).
-- [ ] T166 Add a failing test for `gc --release` on a moved entry with no known location to `tests/integration/test_us4_lifecycle.py`
+- [X] T166 Add a failing test for `gc --release` on a moved entry with no known location to `tests/integration/test_us4_lifecycle.py`
   - LOW-5, FR-073: an entry classified `moved` with `current_path` None, whose
     `<git_dir>/gitdir` names a `.git` file that exists → exit 18, `details.current_path`
     that file's directory; nothing changed. If real git commands cannot produce this state,
     patch the classification in-process, as T105 does.
-- [ ] T167 Refuse such an entry in `_refuse_if_it_exists` in `src/wtenv/orphans.py`
+- [X] T167 Refuse such an entry in `_refuse_if_it_exists` in `src/wtenv/orphans.py`
 - [ ] T168 Add failing tests for the Postgres drop guard to `tests/unit/test_database_remove.py`
   - LOW-6, FR-025, FR-039: a recorded name that does not match
     `^wtenv_[a-z0-9_]{1,40}_[0-9a-f]{8}$` (files.md, Names), or a recorded host that is not

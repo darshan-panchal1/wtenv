@@ -177,7 +177,8 @@ def _refuse_if_it_exists(entry: WorktreeEntry) -> None:
     A directory whose `.git` names a git directory that exists is a worktree, even when that git
     directory is not the entry's: the repository was moved and repaired, or another worktree took
     the path (reading R5). One whose `.git` names a git directory that no longer exists is not a
-    worktree (reading R3), so its entry can be released.
+    worktree (reading R3), so its entry can be released. A `moved` entry is refused too, at the
+    location git lists or else the one `<git_dir>/gitdir` names, if a `.git` file is there.
     """
     live = points_to(entry.path)
     if live is not None and os.path.isdir(live):
@@ -188,13 +189,34 @@ def _refuse_if_it_exists(entry: WorktreeEntry) -> None:
             details={"path": entry.path},
         )
     found = classify(entry, git_listing(entry.repository))
-    if found.reason is UnverifiableReason.MOVED and found.current_path is not None:
-        raise WtenvError(
-            ErrorCode.WORKTREE_EXISTS,
-            f"the worktree recorded at {entry.path} still exists at {found.current_path}",
-            hint="Run `wtenv down` in that worktree instead.",
-            details={"path": entry.path, "current_path": found.current_path},
-        )
+    if found.reason is UnverifiableReason.MOVED:
+        # Where git lists it; failing that, where the git directory itself says the worktree is.
+        current_path = found.current_path or _location_named_by_git_dir(entry)
+        if current_path is not None:
+            raise WtenvError(
+                ErrorCode.WORKTREE_EXISTS,
+                f"the worktree recorded at {entry.path} still exists at {current_path}",
+                hint="Run `wtenv down` in that worktree instead.",
+                details={"path": entry.path, "current_path": current_path},
+            )
+
+
+def _location_named_by_git_dir(entry: WorktreeEntry) -> str | None:
+    """Return the directory of the `.git` file that `<git_dir>/gitdir` names, if that file exists.
+
+    Git writes that file when it adds or moves a worktree. A `moved` entry that the listing gives
+    no location for can still have a live worktree there (LOW-5, FR-073). A `gitdir` file that is
+    missing, unreadable, or names no existing `.git` file gives None: nothing is known to be there.
+    """
+    try:
+        with open(os.path.join(entry.git_dir, "gitdir"), encoding="utf-8") as file:
+            named = file.readline().rstrip("\r\n")
+    except (OSError, UnicodeDecodeError):
+        return None
+    dot_git = os.path.realpath(os.path.join(entry.git_dir, named))
+    if not named or not os.path.isfile(dot_git):
+        return None
+    return os.path.dirname(dot_git)
 
 
 def _kept(entry: WorktreeEntry, found: Classification) -> KeptEntry:
