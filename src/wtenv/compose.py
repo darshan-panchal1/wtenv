@@ -475,6 +475,26 @@ def check_override_files(root: Path, compose_file: str, recorded_override: str |
             )
 
 
+def check_recorded_override(root: Path, relative: str) -> None:
+    """Raise `ownership_conflict` when the recorded override exists and does not start with the header.
+
+    `up` rewrites the recorded override, so a file there that is not wtenv's is the developer's
+    and is left as it is (FR-087). A file that keeps the header line is only stale and passes; a
+    file that does not exist passes, and `up` creates it again. The path form and symbolic links
+    are checked before this.
+    """
+    problem = override_problem(root, relative)
+    if problem is not None:
+        path = root / relative
+        raise WtenvError(
+            ErrorCode.OWNERSHIP_CONFLICT,
+            f"{path} is recorded as wtenv's override, but {problem}",
+            hint="Move your changes into the compose file, or remove the override, then run "
+            "`wtenv up` again. Nothing was changed.",
+            details={"kind": ItemKind.COMPOSE_OVERRIDE.value, "name": str(path)},
+        )
+
+
 def check_environment(root: Path, compose_file: str, environ: Mapping[str, str]) -> None:
     """Raise `unsupported` when `COMPOSE_PROJECT_NAME` or `COMPOSE_FILE` would beat the override.
 

@@ -1543,14 +1543,14 @@ exit status is 13 (0 for a dry run). Every test removes its decoys.
 
 **Found after the close**
 
-- [ ] T212 Add failing tests for `up` over a changed override to `tests/unit/test_compose_checks.py` and `tests/integration/test_us3_compose.py`
+- [X] T212 Add failing tests for `up` over a changed override to `tests/unit/test_compose_checks.py` and `tests/integration/test_us3_compose.py`
   - FR-087: a temp repository and a temp state directory. The recorded override replaced by
     developer content with no header → `up` exits 11, `ownership_conflict`,
     `details.kind` `compose_override`, `details.name` the override path; the file is
     byte-identical afterwards and the registry is unchanged. The header line edited → the
     same. A stale file that still starts with the header → rewritten with the current text.
     A recorded override that is missing → created again.
-- [ ] T213 Check that a recorded override that exists starts with wtenv's header before `up` rewrites it, in `src/wtenv/compose.py` and `src/wtenv/provision.py`
+- [X] T213 Check that a recorded override that exists starts with wtenv's header before `up` rewrites it, in `src/wtenv/compose.py` and `src/wtenv/provision.py`
   - FR-087, cli.md, `wtenv up`, step 5. Runs in `_compose_plan`, before anything changes.
     Reuses `override_problem`. After it, mutation-check "`up` never overwrites a file
     without wtenv's header": break the check, see T212 fail, restore it byte for byte.

@@ -833,6 +833,74 @@ def test_up_refuses_a_recorded_override_that_is_not_wtenvs_before_changing_anyth
     assert registry_path().read_bytes() == registry_before
 
 
+# --- the recorded override that `up` is about to rewrite (FR-087; T212) ---------------------------
+
+EDITED_OVERRIDES = {
+    "developer content": "services:\n  web:\n    ports: []\n",
+    "empty": "",
+    "altered header": OWN_HEADER.replace("Generated", "Written") + 'name: "mine"\n',
+}
+
+
+@pytest.mark.parametrize("name", EDITED_OVERRIDES)
+def test_up_leaves_a_recorded_override_that_lost_the_header_byte_identical(
+    name: str,
+    compose_docker: None,
+    run_wtenv: Run,
+    repo: Path,
+    add_worktree: AddWorktree,
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "one")
+    up(run_wtenv, worktree)
+    override = worktree / "compose.override.yaml"
+    override.write_bytes(EDITED_OVERRIDES[name].encode())
+    tree_before = snapshot_tree(worktree)
+    registry_before = registry_path().read_bytes()
+
+    status, error = failed_up(run_wtenv, worktree)
+
+    assert (status, error["code"]) == (11, "ownership_conflict")
+    assert error["details"] == {"kind": "compose_override", "name": str(override)}
+    assert str(override) in error["message"]
+    assert override.read_bytes() == EDITED_OVERRIDES[name].encode()
+    assert snapshot_tree(worktree) == tree_before
+    assert registry_path().read_bytes() == registry_before
+
+
+def test_up_rewrites_a_stale_override_that_still_has_the_header(
+    compose_docker: None,
+    run_wtenv: Run,
+    repo: Path,
+    add_worktree: AddWorktree,
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "one")
+    up(run_wtenv, worktree)
+    override = worktree / "compose.override.yaml"
+    wrote = override.read_bytes()
+    override.write_text(OWN_HEADER + 'name: "stale"\n', encoding="utf-8")
+
+    up(run_wtenv, worktree)
+
+    assert override.read_bytes() == wrote
+
+
+def test_up_creates_a_recorded_override_that_is_missing_again(
+    compose_docker: None,
+    run_wtenv: Run,
+    repo: Path,
+    add_worktree: AddWorktree,
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "one")
+    up(run_wtenv, worktree)
+    override = worktree / "compose.override.yaml"
+    wrote = override.read_bytes()
+    override.unlink()
+
+    up(run_wtenv, worktree)
+
+    assert override.read_bytes() == wrote
+
+
 @pytest.mark.parametrize("name", ["outside by ..", "absolute", "a part that is `..`"])
 def test_up_refuses_a_recorded_env_file_of_a_form_wtenv_never_records_when_env_file_changed(
     name: str,

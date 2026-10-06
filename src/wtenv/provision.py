@@ -339,6 +339,8 @@ def _compose_plan(
     compose.check_override_files(
         root, settings.file, None if recorded is None else recorded.override
     )
+    if recorded is not None and recorded.override == compose.override_path(settings.file):
+        compose.check_recorded_override(root, recorded.override)  # FR-087: step 11 rewrites it
     compose.check_environment(root, settings.file, os.environ)
     model = compose.resolve_model(root / settings.file, config.ports)
     return _ComposePlan(
