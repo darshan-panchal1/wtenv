@@ -1,0 +1,10 @@
+ports = ["PORT", "CACHE_PORT"]
+block_size = 10
+
+[database]
+type = "postgres"
+template = "app_template"
+url = "postgresql://postgres:{env:QS_PG_PASSWORD}@localhost:15432/{name}"
+
+[compose]
+file = "compose.yaml"

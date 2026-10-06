@@ -1623,9 +1623,9 @@ Runs after group 9S.
     `urllib.parse` is allowed: it only splits strings, and `config.py`, `database.py`, and
     `compose.py` use it (maintainer decision, 2026-10-06).
   - `socket` is imported only by `ports.py` and `doctor.py`, for `bind`.
-- [ ] T137 [P] Create the sample app in `tests/fixtures/sample_app/app.py`, `tests/fixtures/sample_app/compose.yaml`, `tests/fixtures/sample_app/wtenv.toml`
+- [X] T137 [P] Create the sample app in `tests/fixtures/sample_app/app.py`, `tests/fixtures/sample_app/compose.yaml`, `tests/fixtures/sample_app/wtenv.toml`
   - Exactly as quickstart.md, "The sample app fixture".
-- [ ] T138 Write the provisioning-time test in `tests/integration/test_up_time.py`
+- [X] T138 Write the provisioning-time test in `tests/integration/test_up_time.py`
   - NFR-002, SC-002 on the sample app (URL rewritten to the `postgres_server` port): (a) a
     first `up` with `[database]` and `post_up` removed; (b) a repeat `up` in a provisioned
     worktree with the full configuration and `post_up` removed; each under 5 s.
