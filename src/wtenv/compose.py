@@ -564,6 +564,26 @@ def write_and_verify_override(
 
 PROJECT_LABEL = "com.docker.compose.project"
 
+# The form of a project name wtenv generates (files.md, Names): `wtenv-<slug>-<id8>`.
+_GENERATED_PROJECT = re.compile(r"wtenv-[a-z0-9-]{1,40}-[0-9a-f]{8}")
+
+
+def project_problem(project: str, git_dir: str) -> str | None:
+    """Return why `project` is not a name wtenv generated for `git_dir`, or None when it is.
+
+    The registry is a file a person can edit, so `down` and `gc` check a recorded project before
+    anything is listed, inspected, or removed (cli.md, `wtenv down`, "Recorded values"): the name
+    has the form `wtenv-<slug>-<id8>` in full, and its `<id8>` is that of the entry's own git
+    directory, which is the registry key and never changes.
+    """
+    if _GENERATED_PROJECT.fullmatch(project) and project.endswith(f"-{short_id(git_dir, 8)}"):
+        return None
+    return (
+        "not a project name wtenv generates (wtenv-<name>-<id> of this worktree's git directory); "
+        "it was left alone"
+    )
+
+
 # Per kind of resource: the listing command (the label filter and the format are added), the
 # format that prints what a removal command names and then the display name, and the removal.
 _RESOURCE_KINDS = (
@@ -660,6 +680,7 @@ def _unlabelled_mounts(
 
 def remove_project(
     project: str,
+    git_dir: str,
     *,
     dry_run: bool = False,
     run: Runner = run_command,
@@ -680,10 +701,16 @@ def remove_project(
     passed on, so they cannot point Compose at another project or file. With `dry_run` only the
     listings and the inspection run, and the same items are returned. When Docker cannot be asked,
     the project is `failed`, in a dry run as in a real one, and is not listed as removed.
+
+    `git_dir` is the entry's git directory. A `project` that is not the name wtenv generates for
+    it is `failed` at once: no `docker` command is run, not even a listing (`project_problem`).
     """
+    project_item = Item(kind=ItemKind.COMPOSE_PROJECT, name=project)
+    problem = project_problem(project, git_dir)
+    if problem is not None:
+        return Removal(failed=[FailedItem(kind=project_item.kind, name=project, reason=problem)])
     base = os.environ if environ is None else environ
     env = {name: value for name, value in base.items() if not name.startswith("COMPOSE_")}
-    project_item = Item(kind=ItemKind.COMPOSE_PROJECT, name=project)
     try:
         before = _list_project(project, run, env)
         if not before:

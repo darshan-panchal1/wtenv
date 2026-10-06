@@ -43,6 +43,7 @@ from helpers import (
 )
 
 from wtenv import cli, orphans, teardown
+from wtenv.compose import project_name
 from wtenv.database import postgres_database_name
 from wtenv.errors import ErrorCode
 from wtenv.gitutil import WorktreeRecord
@@ -2473,7 +2474,7 @@ def test_down_dry_run_fails_a_compose_project_it_cannot_check_when_the_engine_do
 ) -> None:
     worktree = add_worktree(repo, "one", "one")
     up(run_wtenv, worktree)
-    project = "wtenv-one-aabbccdd"
+    project = project_name("one", git_dir_of(worktree))  # a record is always of this form (T180)
     record_compose_project(git_dir_of(worktree), project)
     dead_engine = {"DOCKER_HOST": f"tcp://127.0.0.1:{closed_port()}"}
 

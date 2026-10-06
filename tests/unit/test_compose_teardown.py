@@ -13,10 +13,15 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from wtenv import compose
-from wtenv.output import Item, ItemKind, KeptVolume
+import pytest
 
-PROJECT = "wtenv-app-91c2d0aa"
+from wtenv import compose, registry, teardown
+from wtenv.identity import short_id
+from wtenv.output import Item, ItemKind, KeptVolume, ResourceState
+from wtenv.registry import ComposeRecord, PortBlock, WorktreeEntry
+
+GIT_DIR = "/repos/app/.git/worktrees/app"
+PROJECT = compose.project_name("app", GIT_DIR)
 OTHER = "wtenv-other-12345678"
 LABEL = "com.docker.compose.project"
 DOWN = ["docker", "compose", "-p", PROJECT, "down", "--remove-orphans"]
@@ -176,7 +181,7 @@ def names(pool: list[Resource]) -> list[str]:
 def test_the_project_is_taken_down_and_each_removed_resource_is_an_item() -> None:
     docker = stack()
 
-    result = compose.remove_project(PROJECT, run=docker, environ={})
+    result = compose.remove_project(PROJECT, GIT_DIR, run=docker, environ={})
 
     assert result.removed == REMOVED
     assert result.already_absent == [] and result.failed == []
@@ -196,7 +201,7 @@ def test_the_resources_are_listed_before_and_after_the_down_from_a_directory_wit
 ) -> None:
     docker = stack()
 
-    compose.remove_project(PROJECT, run=docker, environ={})
+    compose.remove_project(PROJECT, GIT_DIR, run=docker, environ={})
 
     commands = [words for words, _, _ in docker.calls]
     down_at = commands.index(DOWN)
@@ -212,7 +217,7 @@ def test_a_compose_environment_variable_is_not_passed_on() -> None:
     docker = stack()
     environ = {"PATH": "/usr/bin", "COMPOSE_FILE": "other.yaml", "COMPOSE_PROJECT_NAME": OTHER}
 
-    compose.remove_project(PROJECT, run=docker, environ=environ)
+    compose.remove_project(PROJECT, GIT_DIR, run=docker, environ=environ)
 
     assert all(
         "COMPOSE_FILE" not in env and "COMPOSE_PROJECT_NAME" not in env
@@ -224,7 +229,7 @@ def test_a_compose_environment_variable_is_not_passed_on() -> None:
 def test_a_project_with_nothing_left_is_already_absent_and_nothing_is_run() -> None:
     docker = FakeDocker(containers=[Resource("c9", "other-web-1", OTHER)])
 
-    result = compose.remove_project(PROJECT, run=docker, environ={})
+    result = compose.remove_project(PROJECT, GIT_DIR, run=docker, environ={})
 
     assert result.removed == [] and result.failed == []
     assert result.already_absent == [item(ItemKind.COMPOSE_PROJECT, PROJECT)]
@@ -239,7 +244,7 @@ def test_no_removal_command_names_a_resource_of_another_project_or_one_with_no_l
     docker = stack()
     docker.down_leaves = {"app-web-1", "app_default", "app_data"}  # force the one-by-one removal
 
-    compose.remove_project(PROJECT, run=docker, environ={})
+    compose.remove_project(PROJECT, GIT_DIR, run=docker, environ={})
 
     mine = {"app-web-1", "c1", "app_default", "n1", "app_data", "v1"}
     for words in docker.removals():
@@ -259,7 +264,7 @@ def test_a_project_not_in_the_registry_is_not_touched_because_only_the_given_nam
 ):
     docker = stack()
 
-    compose.remove_project(PROJECT, run=docker, environ={})
+    compose.remove_project(PROJECT, GIT_DIR, run=docker, environ={})
 
     assert [r.id for r in docker.containers if r.project == OTHER] == ["c9"]
     assert [r.id for r in docker.networks if r.project == OTHER] == ["n9"]
@@ -275,7 +280,7 @@ def test_labelled_resources_that_remain_are_removed_one_by_one() -> None:
     docker = stack()
     docker.down_leaves = {"app-web-1", "app_default", "app_data"}
 
-    result = compose.remove_project(PROJECT, run=docker, environ={})
+    result = compose.remove_project(PROJECT, GIT_DIR, run=docker, environ={})
 
     assert result.removed == REMOVED
     assert ["docker", "rm", "c1"] in docker.removals()
@@ -289,7 +294,7 @@ def test_what_cannot_be_removed_is_failed_with_a_reason_and_the_rest_is_removed(
     docker.down_leaves = {"app_default"}
     docker.undeletable = {"app_default"}
 
-    result = compose.remove_project(PROJECT, run=docker, environ={})
+    result = compose.remove_project(PROJECT, GIT_DIR, run=docker, environ={})
 
     assert [(f.kind, f.name) for f in result.failed] == [(ItemKind.COMPOSE_NETWORK, "app_default")]
     assert "in use" in result.failed[0].reason
@@ -303,8 +308,8 @@ def test_listing_only_returns_the_items_a_removal_would_and_runs_no_removal() ->
     listed = stack()
     real = stack()
 
-    planned = compose.remove_project(PROJECT, dry_run=True, run=listed, environ={})
-    actual = compose.remove_project(PROJECT, run=real, environ={})
+    planned = compose.remove_project(PROJECT, GIT_DIR, dry_run=True, run=listed, environ={})
+    actual = compose.remove_project(PROJECT, GIT_DIR, run=real, environ={})
 
     assert planned.removed == actual.removed == REMOVED
     assert listed.removals() == []
@@ -314,7 +319,7 @@ def test_listing_only_returns_the_items_a_removal_would_and_runs_no_removal() ->
 def test_listing_only_for_a_project_with_nothing_left_is_already_absent() -> None:
     docker = FakeDocker()
 
-    result = compose.remove_project(PROJECT, dry_run=True, run=docker, environ={})
+    result = compose.remove_project(PROJECT, GIT_DIR, dry_run=True, run=docker, environ={})
 
     assert result.already_absent == [item(ItemKind.COMPOSE_PROJECT, PROJECT)]
     assert docker.removals() == []
@@ -326,7 +331,7 @@ def test_listing_only_for_a_project_with_nothing_left_is_already_absent() -> Non
 def test_docker_compose_down_runs_without_volumes() -> None:
     docker = stack()
 
-    compose.remove_project(PROJECT, run=docker, environ={})
+    compose.remove_project(PROJECT, GIT_DIR, run=docker, environ={})
 
     downs = [words for words, _, _ in docker.calls if words[:3] == ["docker", "compose", "-p"]]
     assert downs == [DOWN]
@@ -336,7 +341,7 @@ def test_docker_compose_down_runs_without_volumes() -> None:
 def test_a_labelled_volume_is_removed_by_name_as_its_own_item() -> None:
     docker = stack()
 
-    result = compose.remove_project(PROJECT, run=docker, environ={})
+    result = compose.remove_project(PROJECT, GIT_DIR, run=docker, environ={})
 
     assert item(ItemKind.COMPOSE_VOLUME, "app_data") in result.removed
     assert ["docker", "volume", "rm", "app_data"] in docker.removals()
@@ -346,7 +351,7 @@ def test_a_labelled_volume_is_removed_by_name_as_its_own_item() -> None:
 def test_a_mounted_volume_without_the_label_is_kept_reported_and_never_removed() -> None:
     docker = stack()
 
-    result = compose.remove_project(PROJECT, run=docker, environ={})
+    result = compose.remove_project(PROJECT, GIT_DIR, run=docker, environ={})
 
     assert result.kept_volumes == KEPT  # in name order, with the recorded project name
     assert result.failed == []
@@ -363,7 +368,7 @@ def test_a_mounted_volume_without_the_label_is_kept_reported_and_never_removed()
 def test_a_volume_that_no_container_of_the_project_mounts_is_not_reported() -> None:
     docker = stack()
 
-    result = compose.remove_project(PROJECT, run=docker, environ={})
+    result = compose.remove_project(PROJECT, GIT_DIR, run=docker, environ={})
 
     reported = {k.name for k in result.kept_volumes}
     assert "stray-data" not in reported  # unlabelled, but nothing ties it to the project
@@ -377,7 +382,7 @@ def test_a_volume_that_no_container_of_the_project_mounts_is_not_reported() -> N
 def test_the_mounts_are_inspected_before_the_down_while_the_containers_exist() -> None:
     docker = stack()
 
-    compose.remove_project(PROJECT, run=docker, environ={})
+    compose.remove_project(PROJECT, GIT_DIR, run=docker, environ={})
 
     commands = [words for words, _, _ in docker.calls]
     inspections = [i for i, words in enumerate(commands) if words[:3] == INSPECT]
@@ -390,7 +395,7 @@ def test_the_mounts_are_inspected_before_the_down_while_the_containers_exist() -
 def test_listing_only_reports_the_same_kept_volumes_and_removes_nothing() -> None:
     docker = stack()
 
-    planned = compose.remove_project(PROJECT, dry_run=True, run=docker, environ={})
+    planned = compose.remove_project(PROJECT, GIT_DIR, dry_run=True, run=docker, environ={})
 
     assert planned.kept_volumes == KEPT
     assert planned.removed == REMOVED
@@ -404,7 +409,7 @@ def test_a_project_with_no_container_has_nothing_to_inspect() -> None:
         volumes=[Resource("v1", "app_data", PROJECT), Resource("v2", "0123456789abcdef", None)]
     )
 
-    result = compose.remove_project(PROJECT, run=docker, environ={})
+    result = compose.remove_project(PROJECT, GIT_DIR, run=docker, environ={})
 
     assert result.removed == [item(ItemKind.COMPOSE_VOLUME, "app_data")]
     assert result.kept_volumes == []
@@ -416,7 +421,7 @@ def test_a_volume_that_cannot_be_removed_is_failed_and_the_kept_ones_are_still_r
     docker = stack()
     docker.undeletable = {"app_data"}
 
-    result = compose.remove_project(PROJECT, run=docker, environ={})
+    result = compose.remove_project(PROJECT, GIT_DIR, run=docker, environ={})
 
     assert [(f.kind, f.name) for f in result.failed] == [(ItemKind.COMPOSE_VOLUME, "app_data")]
     assert result.kept_volumes == KEPT
@@ -435,7 +440,7 @@ def test_when_the_mounts_cannot_be_inspected_the_project_is_failed_and_nothing_i
             return _done("", returncode=1, stderr="Error: cannot connect to the daemon")
         return real(command, environ, cwd)
 
-    result = compose.remove_project(PROJECT, run=inspect_fails, environ={})
+    result = compose.remove_project(PROJECT, GIT_DIR, run=inspect_fails, environ={})
 
     assert [(f.kind, f.name) for f in result.failed] == [(ItemKind.COMPOSE_PROJECT, PROJECT)]
     assert "inspect" in result.failed[0].reason
@@ -453,7 +458,7 @@ def not_installed(
 
 
 def test_without_docker_the_project_is_failed_and_stays_recorded() -> None:
-    result = compose.remove_project(PROJECT, run=not_installed, environ={})
+    result = compose.remove_project(PROJECT, GIT_DIR, run=not_installed, environ={})
 
     assert result.removed == [] and result.already_absent == []
     assert [(f.kind, f.name) for f in result.failed] == [(ItemKind.COMPOSE_PROJECT, PROJECT)]
@@ -462,7 +467,7 @@ def test_without_docker_the_project_is_failed_and_stays_recorded() -> None:
 
 def test_listing_only_without_docker_fails_the_project_and_does_not_list_it() -> None:
     """LOW-2, FR-040: a dry run that cannot ask Docker must not promise a removal."""
-    result = compose.remove_project(PROJECT, dry_run=True, run=not_installed, environ={})
+    result = compose.remove_project(PROJECT, GIT_DIR, dry_run=True, run=not_installed, environ={})
 
     assert result.removed == [] and result.already_absent == []
     assert [(f.kind, f.name) for f in result.failed] == [(ItemKind.COMPOSE_PROJECT, PROJECT)]
@@ -478,7 +483,7 @@ def engine_down(
 
 
 def test_listing_only_with_an_engine_that_does_not_answer_fails_the_project() -> None:
-    result = compose.remove_project(PROJECT, dry_run=True, run=engine_down, environ={})
+    result = compose.remove_project(PROJECT, GIT_DIR, dry_run=True, run=engine_down, environ={})
 
     assert result.removed == [] and result.already_absent == []
     assert [(f.kind, f.name) for f in result.failed] == [(ItemKind.COMPOSE_PROJECT, PROJECT)]
@@ -486,7 +491,93 @@ def test_listing_only_with_an_engine_that_does_not_answer_fails_the_project() ->
 
 
 def test_listing_only_gives_the_same_failure_as_the_real_run_when_docker_is_not_there() -> None:
-    planned = compose.remove_project(PROJECT, dry_run=True, run=engine_down, environ={})
-    actual = compose.remove_project(PROJECT, run=engine_down, environ={})
+    planned = compose.remove_project(PROJECT, GIT_DIR, dry_run=True, run=engine_down, environ={})
+    actual = compose.remove_project(PROJECT, GIT_DIR, run=engine_down, environ={})
 
     assert planned.failed == actual.failed and planned.removed == actual.removed == []
+
+
+# --- the recorded project must be a name wtenv generates, for the entry's own git directory (T179) --
+
+NOT_GENERATED = "not a project name wtenv generates"
+HEADER = "# Generated by wtenv for this worktree. Do not edit or commit; `wtenv up` rewrites it.\n"
+OTHERS_ID = short_id("/repos/other/.git/worktrees/other", 8)
+BAD_PROJECTS = [
+    "decoy-1a2b3c4d",  # another project altogether
+    "wtenv-app",  # no id
+    f"wtenv-app-{OTHERS_ID}",  # the right form, with the id of another git directory
+    f"wtenv-app-{short_id(GIT_DIR, 8).upper()}",  # id in upper case
+    f"wtenv-{'a' * 41}-{short_id(GIT_DIR, 8)}",  # slug too long
+    f"wtenv-app-{short_id(GIT_DIR, 8)}\n",  # trailing line break
+    f"xwtenv-app-{short_id(GIT_DIR, 8)}",  # not at the start
+    "",
+]
+
+
+@pytest.mark.parametrize("project", BAD_PROJECTS)
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_a_project_that_is_not_the_entrys_own_runs_no_docker_command_at_all(
+    project: str, dry_run: bool
+) -> None:
+    docker = stack()
+
+    result = compose.remove_project(project, GIT_DIR, dry_run=dry_run, run=docker, environ={})
+
+    assert docker.calls == []  # not even a listing
+    assert result.removed == [] and result.already_absent == [] and result.kept_volumes == []
+    assert [(f.kind, f.name) for f in result.failed] == [(ItemKind.COMPOSE_PROJECT, project)]
+    assert NOT_GENERATED in result.failed[0].reason
+    assert names(docker.containers) == ["app-web-1", "other-web-1", "postgres-local"]
+
+
+def test_a_project_of_the_right_form_for_its_own_git_directory_is_removed_as_before() -> None:
+    docker = stack()
+
+    result = compose.remove_project(PROJECT, GIT_DIR, run=docker, environ={})
+
+    assert result.failed == [] and result.removed == REMOVED
+
+
+def entry_recording(project: str, root: Path) -> WorktreeEntry:
+    """An entry of `GIT_DIR` at `root` that records `project` and an override file wtenv wrote."""
+    (root / "compose.override.yaml").write_text(HEADER + 'name: "x"\n', encoding="utf-8")
+    return WorktreeEntry(
+        git_dir=GIT_DIR,
+        path=str(root),
+        repository="/repos/app/.git",
+        state="provisioned",
+        block=PortBlock(start=20000, size=10),
+        compose=ComposeRecord(
+            project=project,
+            file="compose.yaml",
+            override="compose.override.yaml",
+            override_state=ResourceState.CREATED,
+        ),
+    )
+
+
+@pytest.mark.parametrize("project", BAD_PROJECTS)
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_teardown_keeps_the_override_and_the_compose_record_of_a_project_it_did_not_name(
+    project: str, dry_run: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_docker(*args: object, **kwargs: object) -> None:
+        raise AssertionError(f"a command was run: {args}")
+
+    monkeypatch.setattr(compose.subprocess, "run", no_docker)
+    entry = entry_recording(project, tmp_path)
+    with registry.transaction() as reg:
+        reg.worktrees[GIT_DIR] = entry
+    override = tmp_path / "compose.override.yaml"
+    before = override.read_bytes()
+
+    release = teardown.plan_release(entry) if dry_run else teardown.release_entry(entry)
+
+    compose_failures = [f for f in release.failed if f.kind is ItemKind.COMPOSE_PROJECT]
+    assert [f.name for f in compose_failures] == [project]
+    assert NOT_GENERATED in compose_failures[0].reason
+    assert release.released is False
+    assert not any(i.kind is ItemKind.COMPOSE_OVERRIDE for i in release.removed)  # not even listed
+    assert override.read_bytes() == before
+    recorded = registry.load().worktrees[GIT_DIR]
+    assert recorded.compose is not None and recorded.compose.project == project

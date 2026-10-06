@@ -142,8 +142,15 @@ def _compose_step(entry: WorktreeEntry, root: Path, release: Release, dry_run: b
         return
     from wtenv import compose  # only now: the module is not loaded without a compose project
 
+    problem = compose.project_problem(record.project, entry.git_dir)
+    if problem is not None:
+        # Nothing of the project is listed or removed, and its override and record are kept.
+        release.failed.append(
+            FailedItem(kind=ItemKind.COMPOSE_PROJECT, name=record.project, reason=problem)
+        )
+        return
     failures_before = len(release.failed)
-    release.add(compose.remove_project(record.project, dry_run=dry_run))
+    release.add(compose.remove_project(record.project, entry.git_dir, dry_run=dry_run))
     project_failed = len(release.failed) > failures_before
     override = root / record.override
     item = Item(kind=ItemKind.COMPOSE_OVERRIDE, name=str(override))

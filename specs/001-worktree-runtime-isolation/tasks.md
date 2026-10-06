@@ -1386,7 +1386,7 @@ exit status is 13 (0 for a dry run). Every test removes its decoys.
 
 **H1. The compose project name**
 
-- [ ] T179 Add failing tests for the compose project guard to `tests/unit/test_compose_teardown.py`
+- [X] T179 Add failing tests for the compose project guard to `tests/unit/test_compose_teardown.py`
   - H1, FR-028, FR-039: with a fake engine that records every command. A recorded project
     that does not match `^wtenv-[a-z0-9-]{1,40}-[0-9a-f]{8}$` in full, or whose last 8
     digits are not `short_id(entry.git_dir, 8)`, gives one `compose_project` item under
@@ -1394,7 +1394,7 @@ exit status is 13 (0 for a dry run). Every test removes its decoys.
     run, not even a listing; the override file is kept; the compose record stays. The same
     with `dry_run=True`. A record of the right form for its own git directory is removed as
     before.
-- [ ] T180 Check the recorded project name before any Docker call, in `src/wtenv/compose.py` and `src/wtenv/teardown.py`
+- [X] T180 Check the recorded project name before any Docker call, in `src/wtenv/compose.py` and `src/wtenv/teardown.py`
   - cli.md, `wtenv down`, "Recorded values". `teardown` passes the entry's git directory.
     The git directory is the registry key and never changes, so real records always pass.
 
