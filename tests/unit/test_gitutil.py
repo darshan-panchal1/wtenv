@@ -224,6 +224,11 @@ def test_the_scrub_list_names_the_variables_the_design_documents_name() -> None:
     )
 
 
+def test_the_scrub_list_names_a_variable_that_git_2_31_prints_and_later_gits_do_not() -> None:
+    """`git rev-parse --local-env-vars` on 2.31.0 includes this one (T223)."""
+    assert "GIT_INTERNAL_SUPER_PREFIX" in GIT_LOCAL_ENV_VARS
+
+
 def test_the_environment_given_to_git_lacks_every_repository_local_variable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

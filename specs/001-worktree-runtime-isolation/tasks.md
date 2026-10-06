@@ -1652,6 +1652,16 @@ Runs after group 9S.
     `database.py`; `compose.py`; `orphans.py`; `envfile.py`. Each row measured on its own.
 - [X] T143 Run the coverage check locally with Docker available and add tests in `tests/unit/` or `tests/integration/` for any area under 80%
   - Done when all eight core-area rows of T142 report 80% or more.
+- [X] T223 Scrub `GIT_INTERNAL_SUPER_PREFIX` too: failing test in `tests/unit/test_gitutil.py`, then `GIT_LOCAL_ENV_VARS` in `src/wtenv/gitutil.py`
+  - Found by the T141 minimums job on 2026-10-06 (maintainer approved adding it). `git rev-parse
+    --local-env-vars` on git 2.31.0, the minimum, also prints `GIT_INTERNAL_SUPER_PREFIX`; git 2.54
+    does not. `tests/integration/test_identity_git.py::test_every_variable_git_calls_repository_local_is_scrubbed`
+    fails on 2.31.0 for that reason alone (FR-086).
+  - Done when the unit test names it and passes, and the integration test passes on 2.31.0.
+- [X] T224 Skip the `--orphan` case of `test_worktree_add_without_a_checkout_runs_no_hook_and_is_silent` below git 2.42, in `tests/integration/test_us5_hook_exec.py`
+  - Found by the T141 minimums job on 2026-10-06 (maintainer approved). `git worktree add --orphan`
+    exists from git 2.42, so on 2.31.0 git exits 129 before any hook could run. The skip names the
+    reason. The minimums job allows this one skip; the other jobs allow none.
 - [X] T144 [P] Write the release workflow `.github/workflows/release.yml`
   - On `v*` tags: a `build` job running `uv build` and uploading `dist/`, and a separate
     `publish` job with `environment: pypi` and `permissions: id-token: write` running

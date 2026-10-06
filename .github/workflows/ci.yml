@@ -32,6 +32,9 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           enable-cache: true
+      - name: Install lsof (the port-holder tests need it)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y --no-install-recommends lsof
       - run: uv sync --locked
       - run: uv run ruff check .
       - run: uv run ruff format --check .
@@ -67,6 +70,9 @@ jobs:
         with:
           python-version: "3.12"
           enable-cache: true
+      - name: Install lsof (the port-holder tests need it)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y --no-install-recommends lsof
       - run: uv sync --locked
       - name: Pull the images the Docker tests use
         run: |
@@ -111,7 +117,7 @@ jobs:
       - name: Build git ${{ env.GIT_VERSION }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends make gcc zlib1g-dev
+          sudo apt-get install -y --no-install-recommends make gcc zlib1g-dev lsof
           curl -fsSL -o git.tar.xz \
             "https://mirrors.edge.kernel.org/pub/software/scm/git/git-${GIT_VERSION}.tar.xz"
           echo "${GIT_SHA256}  git.tar.xz" | sha256sum --check
@@ -137,8 +143,12 @@ jobs:
           docker pull postgres:17
           docker pull valkey/valkey:latest
       - run: uv run pytest -m "not integration"
-      - name: Integration tests, none skipped
+      - name: Integration tests, none skipped but the one that needs a newer git
         run: |
           set -o pipefail
           uv run pytest -m integration -rs | tee integration.log
-          ! grep -q '^SKIPPED' integration.log
+          # `git worktree add --orphan` exists from git 2.42 (T224); nothing else may skip.
+          if grep '^SKIPPED' integration.log | grep -v -- '--orphan'; then
+            echo "an integration test was skipped although Docker is available" >&2
+            exit 1
+          fi

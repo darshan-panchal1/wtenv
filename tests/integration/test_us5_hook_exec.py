@@ -13,7 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from helpers import commit_all, git, make_sqlite_template, snapshot_tree
+from helpers import commit_all, git, git_version, make_sqlite_template, snapshot_tree
 
 from wtenv.errors import ErrorCode
 from wtenv.hooks import BLOCK
@@ -234,6 +234,8 @@ def test_worktree_add_without_a_checkout_runs_no_hook_and_is_silent(
     run_wtenv: Run, repo: Path, option: str
 ) -> None:
     """Git runs no `post-checkout` for `--no-checkout` and `--orphan` (research.md, section 1)."""
+    if option == "--orphan" and git_version() < (2, 42):
+        pytest.skip("`git worktree add --orphan` needs git 2.42 or later")
     install(run_wtenv, repo)
     before = registry_bytes()
 

@@ -26,6 +26,14 @@ def git(cwd: Path, *args: str) -> str:
     return result.stdout
 
 
+def git_version() -> tuple[int, int]:
+    """Return `(major, minor)` of the `git` on `PATH`, from `git --version`."""
+    output = subprocess.run(["git", "--version"], check=True, capture_output=True, text=True)
+    match = re.search(r"git version (\d+)\.(\d+)", output.stdout)
+    assert match is not None, output.stdout
+    return int(match.group(1)), int(match.group(2))
+
+
 def commit_all(cwd: Path, message: str = "add files") -> None:
     """Commit every file under `cwd` (a worktree) on its current branch."""
     git(cwd, "add", "-A")
