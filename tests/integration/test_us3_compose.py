@@ -30,10 +30,11 @@ from helpers import (
     project_resources,
 )
 
+from wtenv.compose import project_name
 from wtenv.envfile import read_section
 from wtenv.identity import current_worktree
-from wtenv.output import ItemKind, UpResult
-from wtenv.registry import WorktreeEntry, load
+from wtenv.output import ItemKind, ResourceState, UpResult
+from wtenv.registry import WorktreeEntry, load, transaction
 
 pytestmark = pytest.mark.integration
 
@@ -655,3 +656,104 @@ def test_adding_compose_to_a_provisioned_worktree_creates_the_override(
     assert (worktree / "compose.override.yaml").exists()
     overrides = [c for c in result.changes if c.item.kind is ItemKind.COMPOSE_OVERRIDE]
     assert [c.action for c in overrides] == ["created"]
+
+
+# --- a compose project that already exists is not adopted (T164; LOW-4; FR-024, FR-039) ----------
+#
+# The project name is generated from the worktree, so containers started by hand under that name
+# are not wtenv's. `up` must not record the project and later remove it on `down`: with resources
+# already carrying the project label and no compose record, it stops with `ownership_conflict`.
+# An entry that already records the project is wtenv's, and `up` keeps working on a running stack.
+
+QUIET_STACK = f"""\
+services:
+  cache:
+    image: {COMPOSE_IMAGE}
+    pull_policy: never
+"""
+QUIET_TOML = 'ports = ["PORT"]\n\n[compose]\nfile = "compose.yaml"\n'
+
+
+def start_by_hand(worktree: Path, project: str) -> None:
+    """Start the stack of `worktree` under `project`, as a developer would, outside wtenv."""
+    subprocess.run(
+        ["docker", "compose", "-p", project, "up", "-d"],
+        cwd=worktree,
+        env=clean_environment(),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+
+def generated_project(worktree: Path) -> str:
+    """The project name `up` would generate for `worktree`."""
+    return project_name(worktree.name, current_worktree(worktree).git_dir)
+
+
+def test_up_refuses_a_compose_project_that_was_started_before_it_and_down_leaves_it_alone(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+    compose_image: str,
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "one", toml=QUIET_TOML, stack=QUIET_STACK)
+    project = compose_projects.track(generated_project(worktree))
+    start_by_hand(worktree, project)
+    containers_before = project_resources(project)["containers"]
+    assert containers_before
+
+    status, error = failed_up(run_wtenv, worktree)
+
+    assert status == 11 and error["code"] == "ownership_conflict"
+    assert error["details"] == {"kind": "compose_project", "name": project}
+    assert not is_recorded(worktree)  # nothing recorded, for compose or anything else
+    assert not (worktree / "compose.override.yaml").exists()
+
+    process = run_wtenv(["down", "--json"], worktree)  # wtenv has no record: it removes nothing
+    assert process.returncode == 0, process.stderr
+    assert project_resources(project)["containers"] == containers_before
+
+
+def test_up_keeps_working_on_a_running_stack_it_already_records(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+    compose_image: str,
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "one", toml=QUIET_TOML, stack=QUIET_STACK)
+    project = compose_projects.track(generated_project(worktree))
+    up(run_wtenv, worktree)  # records the project
+    assert project_of(worktree) == project
+    start_by_hand(worktree, project)
+
+    again = up(run_wtenv, worktree)  # the project is recorded, so its resources are wtenv's
+
+    assert again.worktree is not None and again.worktree.compose_project == project
+    assert project_resources(project)["containers"]
+
+
+def test_a_record_that_was_left_creating_adopts_the_resources_of_an_interrupted_run(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+    compose_image: str,
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "one", toml=QUIET_TOML, stack=QUIET_STACK)
+    project = compose_projects.track(generated_project(worktree))
+    up(run_wtenv, worktree)
+    start_by_hand(worktree, project)
+    git_dir = current_worktree(worktree).git_dir
+    with transaction() as registry:  # the state an `up` that was interrupted would have left
+        entry = registry.worktrees[git_dir]
+        assert entry.compose is not None
+        entry.compose = entry.compose.model_copy(update={"override_state": ResourceState.CREATING})
+        entry.state = "incomplete"
+
+    result = up(run_wtenv, worktree)
+
+    assert result.worktree is not None and result.worktree.compose_project == project
+    assert entry_of(worktree).state == "provisioned"

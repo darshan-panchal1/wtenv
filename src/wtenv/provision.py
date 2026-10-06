@@ -273,7 +273,8 @@ def _compose_plan(
     """Step 5: check the compose limits and have Compose resolve the compose file.
 
     Returns None without `[compose]`. Raises `dependency_unavailable` (Docker, or Compose older
-    than 2.24.4, or a remote engine), `ownership_conflict` (an override file that is not wtenv's),
+    than 2.24.4, or a remote engine), `ownership_conflict` (an override file that is not wtenv's,
+    or resources already labelled with the project name while the worktree records no project),
     `unsupported` (`COMPOSE_PROJECT_NAME` or `COMPOSE_FILE`, a published range), or
     `config_invalid` (Compose cannot resolve the file). Nothing is changed. The project name is
     the recorded one, and never changes (data-model.md, Compose record).
@@ -285,6 +286,11 @@ def _compose_plan(
 
     compose.check_docker()
     recorded = None if known is None or known.compose is None else known.compose
+    if recorded is None:
+        # Before anything is recorded, nothing may exist under the name (data-model.md, Resource
+        # states): resources found there are not wtenv's, and `down` would remove them.
+        generated = compose.project_name(Path(identity.path).name, identity.git_dir)
+        compose.check_project_is_unused(generated)
     compose.check_override_files(
         root, settings.file, None if recorded is None else recorded.override
     )

@@ -366,6 +366,34 @@ def _docker_unavailable(reason: str, message: str, **extra: str) -> WtenvError:
     )
 
 
+def check_project_is_unused(
+    project: str, *, run: Runner = run_command, environ: Mapping[str, str] | None = None
+) -> None:
+    """Raise `ownership_conflict` when resources labelled with `project` already exist.
+
+    `up` calls it for a worktree with no compose record: the name is generated from the worktree,
+    but nothing wtenv recorded created what carries it, so it must not be recorded as wtenv's and
+    removed by a later `down` (data-model.md, Resource states; FR-024, FR-039). A worktree that
+    records the project is not checked: its resources are wtenv's, and an interrupted run adopts
+    them (FR-067). `details.kind` is `compose_project`. Raises `dependency_unavailable` when Docker
+    cannot be asked.
+    """
+    base = os.environ if environ is None else environ
+    env = {name: value for name, value in base.items() if not name.startswith("COMPOSE_")}
+    try:
+        found = _list_project(project, run, env)
+    except _DockerFailed as error:
+        raise _docker_unavailable("not_running", str(error)) from None
+    if found:
+        raise WtenvError(
+            ErrorCode.OWNERSHIP_CONFLICT,
+            f"the compose project {project} already has resources, and wtenv did not create them",
+            hint="Take the project down yourself, or rename the worktree's directory; wtenv will "
+            "not touch resources it has no record of.",
+            details={"kind": ItemKind.COMPOSE_PROJECT.value, "name": project},
+        )
+
+
 def check_override_files(root: Path, compose_file: str, recorded_override: str | None) -> None:
     """Raise `ownership_conflict` for an override file beside the compose file that is not wtenv's.
 

@@ -1343,11 +1343,11 @@ after groups 3F and 6G, and before T146–T148. Each pair is a failing test, the
   - Known limit (cli.md, `wtenv down`): an anonymous volume of a removed project stays on
     disk. docs/roadmap.md has an entry for an opt-in cleanup.
 
-- [ ] T164 Add a failing Docker-backed test for a compose project that already exists to `tests/integration/test_us3_compose.py`
+- [X] T164 Add a failing Docker-backed test for a compose project that already exists to `tests/integration/test_us3_compose.py`
   - LOW-4, FR-024, FR-039: containers started with `docker compose -p <generated name>
     up -d` before the first `up` → `up` exits 11, `ownership_conflict`, `details.kind`
     `compose_project`; nothing recorded for compose; a later `down` leaves those containers.
-- [ ] T165 Refuse an existing, unrecorded compose project in the compose check of `up`, in `src/wtenv/compose.py` and `src/wtenv/provision.py`
+- [X] T165 Refuse an existing, unrecorded compose project in the compose check of `up`, in `src/wtenv/compose.py` and `src/wtenv/provision.py`
   - data-model.md, Resource states: before recording `creating`, nothing may exist at the
     name. Resources with the label `com.docker.compose.project=<name>` and no compose record
     → `ownership_conflict`. A record in state `creating` is an interrupted run and adopts

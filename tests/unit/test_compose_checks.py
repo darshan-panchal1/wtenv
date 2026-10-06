@@ -299,3 +299,63 @@ def test_the_environment_is_reported_before_dot_env(tmp_path: Path) -> None:
     error = env_override(tmp_path, {"COMPOSE_PROJECT_NAME": "x"})
 
     assert "file" not in error.details
+
+
+# --- a project name that already has resources is not wtenv's (T164, T165; LOW-4) ----------------
+
+PROJECT_NAME = "wtenv-app-91c2d0aa"
+
+
+class ProjectListing:
+    """A runner that answers the three label listings of `docker`, one line per resource."""
+
+    def __init__(self, *, containers: Sequence[str] = (), fail: bool = False) -> None:
+        self.containers = list(containers)
+        self.fail = fail
+        self.calls: list[tuple[list[str], dict[str, str]]] = []
+
+    def __call__(
+        self, command: Sequence[str], environ: Mapping[str, str], cwd: Path | None
+    ) -> "subprocess.CompletedProcess[str]":
+        words = list(command)
+        self.calls.append((words, dict(environ)))
+        assert f"label=com.docker.compose.project={PROJECT_NAME}" in words
+        if self.fail:
+            return _done("", returncode=1)
+        lines = self.containers if words[:2] == ["docker", "ps"] else []
+        return _done("".join(f"{line}\n" for line in lines))
+
+
+def test_a_project_with_no_resources_is_unused() -> None:
+    compose.check_project_is_unused(PROJECT_NAME, run=ProjectListing(), environ={})
+
+
+@pytest.mark.parametrize("found", ["abc123 app-web-1"])
+def test_a_project_with_a_container_is_an_ownership_conflict_naming_the_project(
+    found: str,
+) -> None:
+    with pytest.raises(WtenvError) as raised:
+        compose.check_project_is_unused(
+            PROJECT_NAME, run=ProjectListing(containers=[found]), environ={}
+        )
+
+    assert raised.value.code is ErrorCode.OWNERSHIP_CONFLICT
+    assert raised.value.details == {"kind": "compose_project", "name": PROJECT_NAME}
+
+
+def test_the_listing_does_not_pass_compose_variables_on() -> None:
+    runner = ProjectListing()
+
+    compose.check_project_is_unused(
+        PROJECT_NAME, run=runner, environ={"COMPOSE_PROJECT_NAME": "other", "PATH": "/bin"}
+    )
+
+    assert runner.calls and all(env == {"PATH": "/bin"} for _, env in runner.calls)
+
+
+def test_a_listing_that_fails_is_dependency_unavailable_and_not_a_free_name() -> None:
+    with pytest.raises(WtenvError) as raised:
+        compose.check_project_is_unused(PROJECT_NAME, run=ProjectListing(fail=True), environ={})
+
+    assert raised.value.code is ErrorCode.DEPENDENCY_UNAVAILABLE
+    assert raised.value.details["dependency"] == "docker"
