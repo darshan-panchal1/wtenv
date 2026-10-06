@@ -83,6 +83,9 @@ def gc(*, dry_run: bool = False) -> GcResult:
     (FR-046). A dry run takes no worktree lock, changes nothing, and lists what a real run would
     remove (FR-075).
 
+    An error that stops the release of one entry, such as `registry_busy`, stops `gc` there: the
+    result holds what was released before it, and `error` holds the error (M3).
+
     `gc` reads no `wtenv.toml`: a Postgres drop takes its password from the libpq sources (cli.md,
     `wtenv gc`, Credentials). No git command that changes a repository is run (FR-075).
     """
@@ -97,10 +100,15 @@ def gc(*, dry_run: bool = False) -> GcResult:
         if found.status is Status.UNVERIFIABLE:
             result.kept.append(_kept(entry, found))
         elif found.status is Status.ORPHANED:
-            if dry_run:
-                _add(result, entry, teardown.plan_release(entry))
-            else:
-                _release(result, entry, only_if_orphaned=True)
+            try:
+                if dry_run:
+                    _add(result, entry, teardown.plan_release(entry))
+                else:
+                    _release(result, entry, only_if_orphaned=True)
+            except WtenvError as error:
+                # Anything that stops this entry stops the run, with what was done so far (M3).
+                _stopped(result, error)
+                break
     return _finished(result)
 
 
@@ -113,7 +121,8 @@ def gc_release(paths: Sequence[str], *, dry_run: bool = False) -> GcResult:
     reported under `no_entry`, so the command can be repeated. Each named entry is then released
     as `down` would release it, with the lock rule of plain `gc` (`skipped_busy`), after the check
     is repeated under the lock; a worktree that has appeared since stops the command at that
-    entry with `worktree_exists` in `error`. Nothing else is swept. A dry run takes no worktree
+    entry with `worktree_exists` in `error`, and any other error stops the command the same way.
+    Nothing else is swept. A dry run takes no worktree
     lock and changes nothing.
     """
     from wtenv import teardown  # only now; see the module docstring
@@ -139,21 +148,24 @@ def gc_release(paths: Sequence[str], *, dry_run: bool = False) -> GcResult:
         try:
             _release(result, entry, only_if_orphaned=False)
         except WtenvError as error:
-            if error.code is not ErrorCode.WORKTREE_EXISTS:
-                raise
-            # A worktree appeared after the step-1 check (reading R7): this entry is stopped with
-            # nothing changed, and so is every entry after it. What was released before it stays
-            # released and is reported.
-            result.ok = False
-            result.error = ErrorInfo(
-                code=error.code,
-                exit_status=EXIT_STATUS[error.code],
-                message=error.message,
-                hint=error.hint,
-                details=error.details,
-            )
+            # A worktree appeared after the step-1 check (reading R7), or something else stopped
+            # this entry: it is stopped with nothing of it changed, and so is every entry after
+            # it. What was released before it stays released and is reported.
+            _stopped(result, error)
             break
     return _finished(result)
+
+
+def _stopped(result: GcResult, error: WtenvError) -> None:
+    """Record the error that stopped `gc` in `result`, which keeps what was done before it."""
+    result.ok = False
+    result.error = ErrorInfo(
+        code=error.code,
+        exit_status=EXIT_STATUS[error.code],
+        message=error.message,
+        hint=error.hint,
+        details=error.details,
+    )
 
 
 def _entries() -> list[WorktreeEntry]:

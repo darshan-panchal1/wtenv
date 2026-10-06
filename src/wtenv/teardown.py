@@ -326,6 +326,12 @@ def _env_step(entry: WorktreeEntry, root: Path, release: Release, dry_run: bool)
             FailedItem(kind=section.kind, name=section.name, reason=error.message)
         )
         return
+    except OSError as error:
+        # The file cannot be deleted or rewritten (M3): the same, with the path and the error.
+        release.failed.append(
+            FailedItem(kind=section.kind, name=section.name, reason=_os_reason(path, error))
+        )
+        return
     if removal.removed:
         release.removed.append(section)
     else:
@@ -334,6 +340,23 @@ def _env_step(entry: WorktreeEntry, root: Path, release: Release, dry_run: bool)
         release.removed.append(Item(kind=ItemKind.ENV_FILE, name=str(path)))
     if not dry_run:
         _update(entry.git_dir, _drop_env_record)
+
+
+def _os_reason(path: Path, error: OSError) -> str:
+    """Say which file a step could not change and why, for the reason of a failed item."""
+    return f"{path}: {error.strerror or type(error).__name__}"
+
+
+class _ExcludeFailed(Exception):
+    """The exclude file could not be changed; the message becomes the reason of a failed item."""
+
+
+def _remove_exclude_block(path: Path, *, dry_run: bool) -> bool:
+    """Remove wtenv's block from the exclude file; an `OSError` becomes `_ExcludeFailed`."""
+    try:
+        return exclude.remove_block(path, dry_run=dry_run)
+    except OSError as error:
+        raise _ExcludeFailed(_os_reason(path, error)) from error
 
 
 def _drop_env_record(entry: WorktreeEntry) -> None:
@@ -366,12 +389,18 @@ def _finish(entry: WorktreeEntry, release: Release, dry_run: bool) -> None:
         if dry_run:
             with registry_lock():
                 last = _is_last(registry.load().worktrees, entry)
-                block_there = exclude.remove_block(exclude_path, dry_run=True) if last else None
+                block_there = _remove_exclude_block(exclude_path, dry_run=True) if last else None
         else:
             with registry.transaction() as reg:
                 last = _is_last(reg.worktrees, entry)
-                block_there = exclude.remove_block(exclude_path) if last else None
+                block_there = _remove_exclude_block(exclude_path, dry_run=False) if last else None
                 reg.worktrees.pop(entry.git_dir, None)
+    except _ExcludeFailed as error:
+        # The transaction ended with an exception, so nothing was saved: the entry stays.
+        release.failed.append(
+            FailedItem(kind=exclude_item.kind, name=exclude_item.name, reason=str(error))
+        )
+        return
     except WtenvError as error:
         if error.code is not ErrorCode.UNSUPPORTED:
             raise  # a busy or unreadable registry is not an item

@@ -1464,18 +1464,18 @@ exit status is 13 (0 for a dry run). Every test removes its decoys.
 
 **M3. Errors in the middle of a release**
 
-- [ ] T191 Add failing tests for an `OSError` in the env and exclude steps to `tests/unit/test_teardown_errors.py`
+- [X] T191 Add failing tests for an `OSError` in the env and exclude steps to `tests/unit/test_teardown_errors.py`
   - M3, FR-041, FR-042: `os.unlink` or the atomic write patched to raise `PermissionError`
     for the env file, and the same for `.git/info/exclude` → the `env_section` (or
     `env_file`) item, and the `exclude_entries` item, are under `failed` with a reason
     naming the path and the error; the entry stays `incomplete`; `down` exits 13, not 1.
-- [ ] T192 Turn an `OSError` in a file step into a failed item, in `src/wtenv/teardown.py`
-- [ ] T193 Add failing tests for an error during one entry of `gc` to `tests/unit/test_teardown_errors.py`
+- [X] T192 Turn an `OSError` in a file step into a failed item, in `src/wtenv/teardown.py`
+- [X] T193 Add failing tests for an error during one entry of `gc` to `tests/unit/test_teardown_errors.py`
   - M3, FR-041, FR-073: three orphaned entries, the second's release patched to raise
     `registry_busy`. Plain `gc` and `gc --release` print a `GcResult` whose `released` and
     `removed` hold the first entry, whose `error.code` is `registry_busy` with its exit
     status 14, and in which the third entry is not touched.
-- [ ] T194 Catch a `WtenvError` per entry in `gc` and `gc --release`, stop, and return the partial result, in `src/wtenv/orphans.py`
+- [X] T194 Catch a `WtenvError` per entry in `gc` and `gc --release`, stop, and return the partial result, in `src/wtenv/orphans.py`
   - As is already done for `worktree_exists` (cli.md, `wtenv gc`).
 
 **L1–L8**
