@@ -131,6 +131,11 @@ resource. Nothing is changed unless all of them pass.
    that no override file of the developer's exists, and that `COMPOSE_PROJECT_NAME` and
    `COMPOSE_FILE` are not set. Resolve the compose file and count the ports it publishes.
    The override path must not be a symbolic link or sit under one (step 4).
+   An override file that is recorded and exists must start with wtenv's header line
+   (files.md, Compose override file); otherwise `ownership_conflict`, with `details.kind`
+   `compose_override` and `name` the override path, and nothing changes (FR-087). A file
+   that has the header and is only out of date passes, and step 11 rewrites it. A recorded
+   override that is missing passes, and step 11 creates it again.
 6. Check that the block holds all port variables and published ports. Otherwise
    `config_invalid` with `details.min_block_size` (FR-014, FR-032).
 7. If a database is configured: check that the URL pattern resolves and names a local host.

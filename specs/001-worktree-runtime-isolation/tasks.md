@@ -1218,7 +1218,7 @@ nothing. Automated by T124–T125 and T130–T134.
 **Purpose**: performance, coverage, CI, release, documentation, and the end-to-end run.
 
 **Order**: part 1, the findings of the first review of the destructive paths (T158–T173);
-then group 9S, the safety fixes from the second review (T174–T211); then part 2, polish,
+then group 9S, the safety fixes from the second review (T174–T213); then part 2, polish,
 CI, and release (T136–T148). Part 2 runs after group 9S.
 
 ### Part 1: findings of the review of the destructive paths (2026-10-05)
@@ -1541,6 +1541,20 @@ exit status is 13 (0 for a dry run). Every test removes its decoys.
     place. A field still found unguarded is not fixed here: stop and ask, and add a task
     pair for it.
 
+**Found after the close**
+
+- [ ] T212 Add failing tests for `up` over a changed override to `tests/unit/test_compose_checks.py` and `tests/integration/test_us3_compose.py`
+  - FR-087: a temp repository and a temp state directory. The recorded override replaced by
+    developer content with no header → `up` exits 11, `ownership_conflict`,
+    `details.kind` `compose_override`, `details.name` the override path; the file is
+    byte-identical afterwards and the registry is unchanged. The header line edited → the
+    same. A stale file that still starts with the header → rewritten with the current text.
+    A recorded override that is missing → created again.
+- [ ] T213 Check that a recorded override that exists starts with wtenv's header before `up` rewrites it, in `src/wtenv/compose.py` and `src/wtenv/provision.py`
+  - FR-087, cli.md, `wtenv up`, step 5. Runs in `_compose_plan`, before anything changes.
+    Reuses `override_problem`. After it, mutation-check "`up` never overwrites a file
+    without wtenv's header": break the check, see T212 fail, restore it byte for byte.
+
 ### Part 2: polish, CI, and release
 
 Runs after group 9S.
@@ -1620,9 +1634,10 @@ Runs after group 9S.
   command delivered so far.
 - **Review follow-ups (2026-10-05)**: groups 3F and 6G (FR-086) run after Phase 7, 3F
   first. The review tasks T158–T173 in Phase 9 (part 1) follow them.
-- **Review 2 (2026-10-06)**: group 9S (T174–T211) follows part 1. T174 and T175 come
+- **Review 2 (2026-10-06)**: group 9S (T174–T213) follows part 1. T174 and T175 come
   first; T176–T178 are written next and fail until the pairs they name are done; T211
-  closes the group. The pairs run in ID order where they share a file.
+  closes the group. The pairs run in ID order where they share a file. T212 and T213 were
+  added after T211 (FR-087).
 - **Polish (Phase 9, part 2: T136–T148)**: after group 9S. T141, T144, and T145 depend
   only on Setup; they were open to being pulled forward for an early MVP release, and now
   wait for group 9S too. T141 must be done before anything merges to `main` (Working

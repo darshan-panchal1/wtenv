@@ -619,6 +619,13 @@ reported with its own code and that `doctor` changed nothing.
 - **FR-034**: `up` MUST NOT start containers. Starting them is left to the developer or to a
   post-up command.
 - **FR-035**: wtenv MUST talk only to the Docker engine on the local machine.
+- **FR-087**: `up` MUST rewrite a recorded override file only while the file still starts
+  with wtenv's header line. When the file exists and does not start with that header line
+  (the developer replaced it, or edited the header), `up` MUST fail with the stable
+  ownership-conflict error, reason naming the override path, and MUST change nothing; the
+  file stays byte for byte as it was. A file that still starts with the header line and
+  differs from what `up` would write is stale, and `up` rewrites it as before. A recorded
+  override that does not exist is created again.
 
 **Post-up commands**
 
