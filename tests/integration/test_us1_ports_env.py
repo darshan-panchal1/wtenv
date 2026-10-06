@@ -250,7 +250,9 @@ def test_a_block_avoids_a_port_in_use(
 
     assert 20003 not in ports_of(result)
     assert result.worktree is not None and result.worktree.block is not None
-    assert result.worktree.block.start == 20010
+    block = result.worktree.block
+    assert not block.start <= 20003 <= block.end  # the block does not hold the busy port
+    assert block.start > 20000  # and it is not the first candidate, which does
 
 
 # --- scenario 5 (FR-014) ----------------------------------------------------------------

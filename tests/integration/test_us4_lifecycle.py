@@ -63,6 +63,7 @@ from wtenv.output import (
     ResourceState,
     Status,
     UnverifiableReason,
+    UpResult,
 )
 from wtenv.registry import WorktreeEntry, load, registry_path
 
@@ -108,11 +109,24 @@ def is_recorded(worktree: Path) -> bool:
     return current_worktree(worktree).git_dir in load().worktrees
 
 
-def up(run_wtenv: Run, worktree: Path, env: dict[str, str] | None = None) -> None:
-    """Run `wtenv up` in `worktree`; it must succeed."""
+def up(run_wtenv: Run, worktree: Path, env: dict[str, str] | None = None) -> UpResult:
+    """Run `wtenv up` in `worktree`; it must succeed. Return its result."""
     process = run_wtenv(["up", "--json"], worktree, env)
     assert process.returncode == 0, process.stdout + process.stderr
-    parse_up(process)
+    return parse_up(process)
+
+
+def block_of(result: UpResult) -> BlockView:
+    """The port block `up` gave the worktree. Tests read it from here and never assume
+    `20000-20009`: a port in the first candidate that something else holds moves the block."""
+    assert result.worktree is not None and result.worktree.block is not None
+    return result.worktree.block
+
+
+def block_name(result: UpResult) -> str:
+    """The block as `down` and `gc` name it in a `port_block` item: `<start>-<end>`."""
+    block = block_of(result)
+    return f"{block.start}-{block.end}"
 
 
 def down(
@@ -135,7 +149,7 @@ def test_down_releases_everything_and_lists_each_item_under_removed(
     run_wtenv: Run, repo: Path, add_worktree: AddWorktree
 ) -> None:
     worktree = add_worktree(repo, "feature-x", "feature-x")
-    up(run_wtenv, worktree)
+    block = block_name(up(run_wtenv, worktree))
     git_dir = current_worktree(worktree).git_dir
     env_file = worktree / ".env.local"
     assert env_file.exists() and is_recorded(worktree)
@@ -148,7 +162,7 @@ def test_down_releases_everything_and_lists_each_item_under_removed(
     assert keys(result.removed) == [
         ("env_section", str(env_file)),
         ("env_file", str(env_file)),  # wtenv created the file and nothing else is in it
-        ("port_block", "20000-20009"),
+        ("port_block", block),
         ("registry_entry", git_dir),
         ("exclude_entries", str(exclude_file(repo))),  # the last registered worktree (FR-085)
     ]
@@ -164,12 +178,12 @@ def test_the_block_that_down_released_is_given_to_the_next_worktree(
 ) -> None:
     first = add_worktree(repo, "one", "one")
     second = add_worktree(repo, "two", "two")
-    up(run_wtenv, first)
+    released = block_of(up(run_wtenv, first))
     down(run_wtenv, first)
 
-    up(run_wtenv, second)
+    given = block_of(up(run_wtenv, second))
 
-    assert entry_of(second).block.start == 20000
+    assert given == released
 
 
 @pytest.mark.parametrize("original", [b"SECRET=abc", b"SECRET=abc\n", b"# mine\n\nA=1\nB=2\n\n"])
@@ -207,14 +221,14 @@ def test_the_text_output_names_what_was_removed(
     run_wtenv: Run, repo: Path, add_worktree: AddWorktree
 ) -> None:
     worktree = add_worktree(repo, "feature-x", "feature-x")
-    up(run_wtenv, worktree)
+    block = block_name(up(run_wtenv, worktree))
 
     dry = run_wtenv(["down", "--dry-run"], worktree)
     real = run_wtenv(["down"], worktree)
 
     assert dry.returncode == 0 and real.returncode == 0
-    assert "would remove" in dry.stdout and "port_block 20000-20009" in dry.stdout
-    assert "removed" in real.stdout and "port_block 20000-20009" in real.stdout
+    assert "would remove" in dry.stdout and f"port_block {block}" in dry.stdout
+    assert "removed" in real.stdout and f"port_block {block}" in real.stdout
     assert not real.stdout.lstrip().startswith("{")
 
 
@@ -392,7 +406,7 @@ def test_damaged_markers_fail_the_section_keep_the_file_and_the_entry_until_repa
     run_wtenv: Run, repo: Path, add_worktree: AddWorktree
 ) -> None:
     worktree = add_worktree(repo, "feature-x", "feature-x")
-    up(run_wtenv, worktree)
+    block = block_name(up(run_wtenv, worktree))
     env_file = worktree / ".env.local"
     good = env_file.read_bytes()
     damaged = good.replace(f"{END}\n".encode(), b"")
@@ -409,7 +423,7 @@ def test_damaged_markers_fail_the_section_keep_the_file_and_the_entry_until_repa
     assert env_file.read_bytes() == damaged  # FR-081: left unchanged
     entry = entry_of(worktree)
     assert entry.state == "incomplete" and entry.env_file is not None  # still recorded
-    assert ("port_block", "20000-20009") not in keys(result.removed)
+    assert ("port_block", block) not in keys(result.removed)
     assert BEGIN in exclude_text(repo)  # the entry stays, so the exclude lines stay
 
     env_file.write_bytes(good)  # repaired by hand
@@ -944,8 +958,8 @@ def test_ls_lists_the_entries_of_two_repositories_from_anywhere_with_everything_
     commit_all(first_repo)
     first = add_worktree(first_repo, "feature-a", "feature-a")
     second = add_worktree(make_repo("other"), "feature-b", "feature-b")
-    up(run_wtenv, first)
-    up(run_wtenv, second)
+    first_block = block_of(up(run_wtenv, first))
+    second_block = block_of(up(run_wtenv, second))
     plain = tmp_path / "plain"
     plain.mkdir()
 
@@ -958,10 +972,10 @@ def test_ls_lists_the_entries_of_two_repositories_from_anywhere_with_everything_
     assert (a.repository, a.git_dir) == (entry_of(first).repository, entry_of(first).git_dir)
     assert b.repository != a.repository  # two repositories, listed together
     assert a.status is Status.PROVISIONED and a.reason is None and a.current_path is None
-    assert a.block == BlockView(start=20000, end=20009, size=10)
+    assert a.block == first_block and first_block.size == 10
     assert a.ports == [
-        PortView(port=20000, variable="PORT"),
-        PortView(port=20001, variable="API_PORT"),
+        PortView(port=first_block.start, variable="PORT"),
+        PortView(port=first_block.start + 1, variable="API_PORT"),
     ]
     assert a.databases == [
         DatabaseView(
@@ -969,8 +983,8 @@ def test_ls_lists_the_entries_of_two_repositories_from_anywhere_with_everything_
         )
     ]
     assert a.compose_project is None and a.env_file == ".env.local"
-    assert b.block == BlockView(start=20010, end=20019, size=10)
-    assert b.ports == [PortView(port=20010, variable="PORT")] and b.databases == []
+    assert b.block == second_block and second_block != first_block  # blocks never overlap
+    assert b.ports == [PortView(port=second_block.start, variable="PORT")] and b.databases == []
 
 
 def test_inside_a_repository_ls_adds_its_worktrees_that_have_no_entry_as_unprovisioned(
@@ -1085,7 +1099,7 @@ def test_the_text_table_has_the_columns_of_cli_md_and_names_the_reason(
     ok = add_worktree(repo, "ok", "ok")
     gone = add_worktree(repo, "gone", "gone")
     write_config(ok, 'ports = ["PORT", "API_PORT"]\n')
-    up(run_wtenv, ok)
+    ok_block = block_of(up(run_wtenv, ok))
     up(run_wtenv, gone)
     shutil.rmtree(gone)
 
@@ -1095,8 +1109,10 @@ def test_the_text_table_has_the_columns_of_cli_md_and_names_the_reason(
     header, *rows = process.stdout.splitlines()
     assert header.split() == ["STATUS", "PORTS", "VARIABLES", "DATABASE", "COMPOSE", "PATH"]
     by_path = {row.split()[-1] if "(" not in row else row.split()[-2]: row for row in rows}
-    assert "provisioned" in by_path[str(ok)] and "20000-20009" in by_path[str(ok)]
-    assert "PORT=20000 API_PORT=20001" in by_path[str(ok)]
+    assert (
+        "provisioned" in by_path[str(ok)] and f"{ok_block.start}-{ok_block.end}" in by_path[str(ok)]
+    )
+    assert f"PORT={ok_block.start} API_PORT={ok_block.start + 1}" in by_path[str(ok)]
     assert "unverifiable" in by_path[str(gone)] and "(git_still_lists)" in by_path[str(gone)]
     assert any("unprovisioned" in row and str(repo) in row for row in rows)
     assert not process.stdout.lstrip().startswith("{")
@@ -1204,8 +1220,7 @@ def test_gc_releases_worktrees_removed_with_git_worktree_remove_and_lists_each_i
     first = add_worktree(repo, "one", "one")
     second = add_worktree(repo, "two", "two")
     kept = add_worktree(repo, "three", "three")
-    for worktree in (first, second, kept):
-        up(run_wtenv, worktree)
+    first_block, second_block, _ = (block_name(up(run_wtenv, w)) for w in (first, second, kept))
     first_dir = remove_with_git(repo, first)
     second_dir = remove_with_git(repo, second)
 
@@ -1215,9 +1230,9 @@ def test_gc_releases_worktrees_removed_with_git_worktree_remove_and_lists_each_i
     assert result.ok and result.error is None and not result.dry_run
     assert result.released == [str(first), str(second)]
     assert keys(result.removed) == [
-        ("port_block", "20000-20009"),
+        ("port_block", first_block),
         ("registry_entry", first_dir),
-        ("port_block", "20010-20019"),
+        ("port_block", second_block),
         ("registry_entry", second_dir),
     ]
     assert [item.worktree for item in result.removed] == [str(first)] * 2 + [str(second)] * 2
@@ -1336,7 +1351,7 @@ def test_the_gc_text_output_names_what_was_released_and_what_was_kept(
 ) -> None:
     orphan = add_worktree(repo, "orphan", "orphan")
     deleted = add_worktree(repo, "deleted", "deleted")
-    up(run_wtenv, orphan)
+    orphan_block = block_name(up(run_wtenv, orphan))
     up(run_wtenv, deleted)
     remove_with_git(repo, orphan)
     shutil.rmtree(deleted)
@@ -1345,8 +1360,8 @@ def test_the_gc_text_output_names_what_was_released_and_what_was_kept(
     real = run_wtenv(["gc"], outside)
 
     assert dry.returncode == 0 and real.returncode == 0
-    assert "would remove" in dry.stdout and "port_block 20000-20009" in dry.stdout
-    assert "removed" in real.stdout and "port_block 20000-20009" in real.stdout
+    assert "would remove" in dry.stdout and f"port_block {orphan_block}" in dry.stdout
+    assert "removed" in real.stdout and f"port_block {orphan_block}" in real.stdout
     assert f"kept {deleted} (git_still_lists)" in " ".join(real.stdout.split())
     assert not real.stdout.lstrip().startswith("{")
 
@@ -1479,6 +1494,8 @@ def test_gc_release_releases_an_entry_whose_repository_was_deleted_and_can_be_re
 ) -> None:
     stray, stray_dir = stray_of_a_deleted_repository(run_wtenv, make_repo, add_worktree)
     env_file = stray / ".env.local"
+    block = load().worktrees[stray_dir].block  # what `up` recorded for it
+    block_text = f"{block.start}-{block.start + block.size - 1}"
 
     status, result = gc(run_wtenv, outside, "--release", str(stray))
 
@@ -1487,7 +1504,7 @@ def test_gc_release_releases_an_entry_whose_repository_was_deleted_and_can_be_re
     assert keys(result.removed) == [
         ("env_section", str(env_file)),
         ("env_file", str(env_file)),
-        ("port_block", "20000-20009"),
+        ("port_block", block_text),
         ("registry_entry", stray_dir),
     ]
     assert all(item.worktree == str(stray) for item in result.removed)
@@ -2018,7 +2035,8 @@ def test_down_reports_an_env_file_that_is_a_link_as_failed_and_leaves_it_and_its
 
     # Once the link is a regular file, the next `down` finishes the job (FR-042).
     env_file.unlink()
-    env_file.write_bytes(f"MINE=1\n{BEGIN}\nPORT=20000\n{END}\n".encode())
+    port = entry_of(worktree).ports[0].port
+    env_file.write_bytes(f"MINE=1\n{BEGIN}\nPORT={port}\n{END}\n".encode())
 
     status, done = down(run_wtenv, worktree)
 
