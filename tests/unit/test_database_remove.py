@@ -157,6 +157,58 @@ def test_a_side_file_that_cannot_be_removed_is_failed_and_the_copy_is_kept(
     assert stuck.is_dir()
 
 
+# --- a side file that is a link (T209; L8; FR-039, FR-086) ---------------------------------------------
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("suffix", SIDE_SUFFIXES)
+def test_a_side_file_that_is_a_link_fails_the_copy_and_every_side_file_and_nothing_is_unlinked(
+    tmp_path: Path, suffix: str, dry_run: bool
+) -> None:
+    copy = make_copy(tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    target = elsewhere / "somebody-elses"
+    target.write_bytes(b"not wtenv's")
+    side = Path(f"{copy}{suffix}")
+    side.unlink()
+    side.symlink_to(target)
+    files_before = listing(tmp_path)
+    links_before = {p: p.readlink() for p in tmp_path.rglob("*") if p.is_symlink()}
+
+    result = remove_sqlite_copy(copy, dry_run=dry_run)
+
+    expected = sorted(str(p) for p in (copy, *(Path(f"{copy}{x}") for x in SIDE_SUFFIXES)))
+    assert sorted(f.name for f in result.failed) == expected
+    assert {(f.kind, f.reason) for f in result.failed} == {(ItemKind.SQLITE_FILE, "symlink")}
+    assert result.removed == [] and result.already_absent == []
+    assert listing(tmp_path) == files_before  # nothing was unlinked
+    assert {p: p.readlink() for p in tmp_path.rglob("*") if p.is_symlink()} == links_before
+    assert side.is_symlink() and target.read_bytes() == b"not wtenv's"
+
+
+def test_only_the_side_files_that_exist_are_named_when_one_is_a_link(tmp_path: Path) -> None:
+    copy = make_copy(tmp_path, sides=("-wal",))
+    other = tmp_path / "other"
+    other.write_bytes(b"x")
+    Path(f"{copy}-wal").unlink()
+    Path(f"{copy}-wal").symlink_to(other)
+
+    result = remove_sqlite_copy(copy)
+
+    assert sorted(f.name for f in result.failed) == sorted([str(copy), f"{copy}-wal"])
+    assert other.read_bytes() == b"x"
+
+
+def test_a_dangling_side_link_counts_too(tmp_path: Path) -> None:
+    copy = make_copy(tmp_path, sides=())
+    Path(f"{copy}-shm").symlink_to(tmp_path / "nowhere")
+
+    result = remove_sqlite_copy(copy)
+
+    assert {f.reason for f in result.failed} == {"symlink"} and copy.exists()
+
+
 # --- Postgres: failures never carry the password (FR-019) ----------------------------------------
 
 

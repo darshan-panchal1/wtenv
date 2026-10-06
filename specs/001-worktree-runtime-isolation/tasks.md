@@ -1528,11 +1528,11 @@ exit status is 13 (0 for a dry run). Every test removes its decoys.
     git directory → failed item, no connection, nothing dropped; dry run too.
 - [X] T208 Require the entry's own `<id8>` in the drop guard, in `src/wtenv/database.py`
   - Extends T169: `name.endswith("_" + short_id(entry.git_dir, 8))`.
-- [ ] T209 Add failing tests for a SQLite side file that is a link to `tests/unit/test_database_remove.py`
+- [X] T209 Add failing tests for a SQLite side file that is a link to `tests/unit/test_database_remove.py`
   - L8, FR-039, FR-086: `<copy>-wal` is a link to a file elsewhere → the copy and each side
     file are under `failed` with reason `symlink`; nothing is unlinked; the link's target
     is unchanged; the record stays. Dry run too.
-- [ ] T210 Check side files with `lstat` before removing the copy, in `src/wtenv/database.py`
+- [X] T210 Check side files with `lstat` before removing the copy, in `src/wtenv/database.py`
 
 **Closing the group**
 

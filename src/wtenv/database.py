@@ -252,7 +252,9 @@ def remove_sqlite_copy(copy: Path, *, dry_run: bool = False) -> Removal:
     gone it is `already_absent` and its side files are left alone: side files go only together
     with the recorded database file (reading R2). The side files are deleted first and the copy
     last, so a failure leaves the copy in place and recorded, for the next `down` to finish.
-    With `dry_run` nothing is deleted and the same items are returned.
+    With `dry_run` nothing is deleted and the same items are returned. When any side file is a
+    symbolic link, the copy and each side file are `failed` with the reason `symlink` and nothing
+    is unlinked, in a dry run as in a real one (FR-086, L8).
     """
     if not os.path.lexists(copy):
         return Removal(already_absent=[_sqlite_item(copy)])
@@ -262,6 +264,13 @@ def remove_sqlite_copy(copy: Path, *, dry_run: bool = False) -> Removal:
         if os.path.lexists(side)
     ]
     items = [copy, *side_files]
+    if any(os.path.islink(side) for side in side_files):
+        # `islink` is an `lstat`: a link is found, never followed. Nothing is unlinked (L8).
+        return Removal(
+            failed=[
+                FailedItem(kind=ItemKind.SQLITE_FILE, name=str(p), reason="symlink") for p in items
+            ]
+        )
     if dry_run:
         return Removal(removed=[_sqlite_item(path) for path in items])
     deleted: set[Path] = set()

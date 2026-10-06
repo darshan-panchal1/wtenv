@@ -2355,6 +2355,32 @@ def test_up_refuses_a_linked_exclude_file_before_changing_anything(
     assert not is_recorded(worktree)  # and no registry entry
 
 
+def test_down_fails_the_sqlite_copy_and_its_side_files_when_a_side_file_is_a_link(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, decoy: Path
+) -> None:
+    """T209, T210; L8: the copy is a plain file, and `-wal` is a link to a file outside."""
+    make_sqlite_template(repo / "db" / "dev.sqlite3")
+    write_config(repo, SQLITE_TOML)
+    commit_all(repo)
+    worktree = add_worktree(repo, "one", "one")
+    up(run_wtenv, worktree)
+    copy = worktree / ".wtenv" / "dev.sqlite3"
+    side = Path(f"{copy}-wal")
+    side.symlink_to(decoy / "notes.txt")
+    target_before = snapshot_tree(decoy)
+
+    status, result = down(run_wtenv, worktree)
+
+    assert status == 13
+    assert sorted(keys([f for f in result.failed if f.kind is ItemKind.SQLITE_FILE])) == sorted(
+        [("sqlite_file", str(copy)), ("sqlite_file", str(side))]
+    )
+    assert {f.reason for f in result.failed if f.kind is ItemKind.SQLITE_FILE} == {"symlink"}
+    assert copy.exists() and side.is_symlink()
+    assert snapshot_tree(decoy) == target_before
+    assert entry_of(worktree).databases[0].path == ".wtenv/dev.sqlite3"  # the record stays
+
+
 # --- symbolic links in `down` and `gc` (T155, T156; FR-086) --------------------------------------
 #
 # Every case links to a decoy outside the worktree, or to another worktree, and compares it before
