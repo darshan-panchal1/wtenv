@@ -151,6 +151,94 @@ def test_a_missing_git_dir_nothing_at_the_path_and_not_listed_is_orphaned(tmp_pa
     assert result == Classification(Status.ORPHANED, None, None)
 
 
+# --- a missing parent directory: `parent_missing` (T189; reading R9; data-model.md, step 4.3) -------
+
+
+def test_a_missing_git_dir_nothing_at_the_path_and_a_missing_parent_is_parent_missing(
+    tmp_path: Path,
+) -> None:
+    path = (tmp_path / "drive" / "feature").resolve()  # `drive` is not mounted
+    entry = make_entry(path, tmp_path / "gone.git" / "worktrees" / "feature")
+
+    result = classify(entry, listing(tmp_path / "other"))
+
+    assert result == Classification(Status.UNVERIFIABLE, UnverifiableReason.PARENT_MISSING, None)
+
+
+def test_the_same_entry_with_its_parent_present_is_orphaned(tmp_path: Path) -> None:
+    (tmp_path / "drive").mkdir()
+    path = (tmp_path / "drive" / "feature").resolve()
+    entry = make_entry(path, tmp_path / "gone.git" / "worktrees" / "feature")
+
+    result = classify(entry, listing(tmp_path / "other"))
+
+    assert result == Classification(Status.ORPHANED, None, None)
+
+
+def test_a_parent_that_is_a_file_is_a_missing_parent_too(tmp_path: Path) -> None:
+    (tmp_path / "drive").write_text("not a directory\n", encoding="utf-8")
+    path = tmp_path / "drive" / "feature"
+    entry = make_entry(path, tmp_path / "gone.git" / "worktrees" / "feature")
+
+    result = classify(entry, listing())
+
+    assert result == Classification(Status.UNVERIFIABLE, UnverifiableReason.PARENT_MISSING, None)
+
+
+def test_a_parent_that_is_a_dangling_link_is_a_missing_parent_too(tmp_path: Path) -> None:
+    (tmp_path / "drive").symlink_to(tmp_path / "nowhere")
+    path = tmp_path / "drive" / "feature"
+    entry = make_entry(path, tmp_path / "gone.git" / "worktrees" / "feature")
+
+    result = classify(entry, listing())
+
+    assert result == Classification(Status.UNVERIFIABLE, UnverifiableReason.PARENT_MISSING, None)
+
+
+def test_a_missing_parent_does_not_change_repository_not_found(tmp_path: Path) -> None:
+    path = (tmp_path / "drive" / "feature").resolve()
+    entry = make_entry(path, tmp_path / "gone.git" / "worktrees" / "feature")
+
+    assert classify(entry, None) == Classification(
+        Status.UNVERIFIABLE, UnverifiableReason.REPOSITORY_NOT_FOUND, None
+    )
+
+
+def test_a_missing_parent_does_not_change_git_still_lists_for_a_listed_path(
+    tmp_path: Path,
+) -> None:
+    path = (tmp_path / "drive" / "feature").resolve()
+    entry = make_entry(path, tmp_path / "gone.git" / "worktrees" / "feature")
+
+    result = classify(entry, listing(path))
+
+    assert result == Classification(Status.UNVERIFIABLE, UnverifiableReason.GIT_STILL_LISTS, None)
+
+
+def test_a_missing_parent_does_not_change_git_still_lists_while_the_git_dir_is_there(
+    tmp_path: Path,
+) -> None:
+    git_dir = tmp_path / "repo.git" / "worktrees" / "feature"
+    git_dir.mkdir(parents=True)
+    path = (tmp_path / "drive" / "feature").resolve()
+    entry = make_entry(path, git_dir.resolve())
+
+    result = classify(entry, listing(path))
+
+    assert result == Classification(Status.UNVERIFIABLE, UnverifiableReason.GIT_STILL_LISTS, None)
+
+
+def test_a_missing_parent_does_not_change_moved(tmp_path: Path) -> None:
+    git_dir = tmp_path / "repo.git" / "worktrees" / "feature"
+    git_dir.mkdir(parents=True)
+    path = (tmp_path / "drive" / "feature").resolve()
+    entry = make_entry(path, git_dir.resolve())
+
+    result = classify(entry, listing())
+
+    assert result == Classification(Status.UNVERIFIABLE, UnverifiableReason.MOVED, None)
+
+
 @pytest.mark.parametrize("state", ["provisioned", "incomplete"])
 def test_an_orphan_is_orphaned_whatever_the_entry_state(tmp_path: Path, state: str) -> None:
     path = (tmp_path / "feature").resolve()

@@ -61,6 +61,11 @@ def classify(entry: WorktreeEntry, listing: Sequence[WorktreeRecord] | None) -> 
         return Classification(Status.UNVERIFIABLE, UnverifiableReason.PATH_EXISTS)
     if entry.path in listed:
         return Classification(Status.UNVERIFIABLE, UnverifiableReason.GIT_STILL_LISTS)
+    if not os.path.isdir(os.path.dirname(entry.path)):
+        # Step 4.3, reading R9. Git prunes a worktree whose location stays missing, so a drive that
+        # is not mounted, or a renamed directory, reaches here with nothing at the path. A missing
+        # parent says the path may only be out of reach, not that the worktree is gone.
+        return Classification(Status.UNVERIFIABLE, UnverifiableReason.PARENT_MISSING)
     return Classification(Status.ORPHANED)
 
 

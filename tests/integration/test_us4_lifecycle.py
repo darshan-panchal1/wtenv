@@ -2075,6 +2075,60 @@ def test_a_labelled_volume_with_a_fixed_name_is_kept_and_reported_and_the_projec
     untouched()
 
 
+# --- a worktree whose parent directory is missing is not orphaned (T189; reading R9; FR-045) -------
+#
+# A worktree on a drive that is not mounted, or under a directory that was renamed, is pruned by git
+# once `gc.worktreePruneExpire` has passed, and then passes every other check of FR-045. The test
+# renames the directory that holds the worktree and prunes with `--expire now`.
+
+
+def test_a_worktree_whose_parent_directory_is_missing_is_kept_by_gc_and_released_by_name(
+    run_wtenv: Run,
+    repo: Path,
+    tmp_path: Path,
+    outside: Path,
+) -> None:
+    make_sqlite_template(repo / "db" / "dev.sqlite3")
+    write_config(repo, SQLITE_TOML)
+    commit_all(repo)
+    drive = tmp_path.resolve() / "drive"
+    drive.mkdir()
+    worktree = drive / "feature-x"
+    git(repo, "worktree", "add", "-b", "feature-x", str(worktree))
+    up(run_wtenv, worktree)
+    git_dir = git_dir_of(worktree)
+    renamed = tmp_path.resolve() / "drive-renamed"
+    drive.rename(renamed)  # the drive is "unmounted": the recorded path has no parent
+    git(repo, "worktree", "prune", "--expire", "now")
+    assert not os.path.isdir(git_dir)  # git has forgotten the worktree
+    copy = renamed / "feature-x" / ".wtenv" / "dev.sqlite3"
+    copy_before = copy.read_bytes()
+    registry_before = registry_path().read_bytes()
+
+    status, planned = gc(run_wtenv, outside, "--dry-run")
+    status_real, result = gc(run_wtenv, outside)
+
+    for answer in (planned, result):
+        assert [(k.path, k.reason.value) for k in answer.kept] == [
+            (str(worktree), "parent_missing")
+        ]
+    assert (status, status_real) == (0, 0)
+    assert result.released == [] and result.removed == [] and result.failed == []
+    assert registry_path().read_bytes() == registry_before  # nothing dropped
+    assert copy.read_bytes() == copy_before  # the copy is untouched
+    listed = ls(run_wtenv, outside)
+    (view,) = [w for w in listed.worktrees if w.path == str(worktree)]
+    assert (view.status.value, view.reason.value if view.reason else None) == (
+        "unverifiable",
+        "parent_missing",
+    )
+
+    release_status, released = gc(run_wtenv, outside, "--release", str(worktree))
+
+    assert release_status == 0 and released.released == [str(worktree)]
+    assert git_dir not in load().worktrees
+
+
 # --- symbolic links in `down` and `gc` (T155, T156; FR-086) --------------------------------------
 #
 # Every case links to a decoy outside the worktree, or to another worktree, and compares it before

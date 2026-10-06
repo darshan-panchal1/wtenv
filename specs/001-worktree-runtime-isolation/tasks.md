@@ -1449,7 +1449,7 @@ exit status is 13 (0 for a dry run). Every test removes its decoys.
 
 **M2. A missing parent directory (reading R9)**
 
-- [ ] T189 Add failing tests for `parent_missing` to `tests/unit/test_classify.py` and `tests/integration/test_us4_lifecycle.py`
+- [X] T189 Add failing tests for `parent_missing` to `tests/unit/test_classify.py` and `tests/integration/test_us4_lifecycle.py`
   - M2, reading R9, FR-045, FR-046, FR-072: unit, an entry whose git directory is gone,
     which no listing names, and whose recorded path's parent directory is missing →
     `unverifiable`, `parent_missing`; the same entry with the parent present → `orphaned`.
@@ -1458,7 +1458,7 @@ exit status is 13 (0 for a dry run). Every test removes its decoys.
     `<tmp>/drive` renamed, then `git worktree prune --expire now`. `gc` keeps the entry
     under `kept` with `parent_missing`, the copy is untouched, and `ls` shows the reason.
     `gc --release <path>` then releases it.
-- [ ] T190 Classify a missing parent as `parent_missing`, in `src/wtenv/orphans.py`
+- [X] T190 Classify a missing parent as `parent_missing`, in `src/wtenv/orphans.py`
   - data-model.md, "Status and the orphan checks", step 4.3. `doctor` and `ls` show the
     reason without further change.
 
