@@ -1363,12 +1363,12 @@ after groups 3F and 6G, and before T146–T148. Each pair is a failing test, the
     `^wtenv_[a-z0-9_]{1,40}_[0-9a-f]{8}$` (files.md, Names), or a recorded host that is not
     local → failed item, no connection made, nothing dropped.
 - [X] T169 Check the recorded name and host before a drop, in `src/wtenv/database.py`
-- [ ] T170 Add a failing test for a worktree that appears at a `--release` path during `gc` to `tests/integration/test_us4_lifecycle.py`
+- [X] T170 Add a failing test for a worktree that appears at a `--release` path during `gc` to `tests/integration/test_us4_lifecycle.py`
   - LOW-7, FR-073, FR-074: in-process, with a worktree created at the named path after the
     step-1 check and before the release (patched as in T105) → that entry is stopped with
     `worktree_exists`, exit 18, `details.path`; its files, database, and registry entry are
     unchanged (reading R7).
-- [ ] T171 Re-check that the worktree is still gone before each delete, in `src/wtenv/orphans.py`
+- [X] T171 Re-check that the worktree is still gone before each delete, in `src/wtenv/orphans.py`
   - Reading R7 (accepted): under the worktree lock, immediately before each delete of an
     entry, repeat the step-1 check (`_refuse_if_it_exists`) on the re-read entry. If the
     worktree has reappeared, stop that entry with `worktree_exists`, exit 18.

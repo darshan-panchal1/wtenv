@@ -2636,3 +2636,134 @@ def test_a_registry_that_names_another_host_drops_nothing_on_this_server(
     assert "not on this machine" in result.failed[0].reason
     assert keys(planned.failed) == keys(result.failed)
     assert postgres_server.database_exists(name)
+
+
+# --- a worktree that appears at a `--release` path while `gc` runs (T170; LOW-7; R7; FR-073) -----
+#
+# Step 1 of `gc --release` checks every path, and the release happens later, under the entry's
+# lock. A worktree created at the path in between must stop that entry: the check is repeated
+# immediately before each delete. The race is made deterministic with a hook that wraps the check
+# and, after the step-1 call has passed, creates the worktree: a `.git` file that names a git
+# directory that exists.
+
+
+def stray_with_a_database(
+    run_wtenv: Run,
+    make_repo: Callable[[str], Path],
+    add_worktree: AddWorktree,
+    name: str,
+) -> tuple[Path, str]:
+    """A provisioned worktree with an env file and a SQLite copy, whose repository is deleted."""
+    doomed = make_repo(f"doomed-{name}")
+    make_sqlite_template(doomed / "db" / "dev.sqlite3")
+    write_config(doomed, SQLITE_TOML)
+    commit_all(doomed)
+    stray = add_worktree(doomed, name, name)
+    up(run_wtenv, stray)
+    git_dir = git_dir_of(stray)
+    shutil.rmtree(doomed)
+    return stray, git_dir
+
+
+def plant_a_worktree(path: Path, live_git_dir: str) -> None:
+    """Make `path` a worktree of a repository that exists, as `git worktree add` would."""
+    (path / ".git").write_text(f"gitdir: {live_git_dir}\n", encoding="utf-8")
+
+
+def bytes_of(*paths: Path) -> list[bytes]:
+    return [path.read_bytes() for path in paths]
+
+
+def test_a_worktree_that_appears_after_the_check_stops_that_entry_before_anything_is_deleted(
+    run_wtenv: Run,
+    repo: Path,
+    make_repo: Callable[[str], Path],
+    add_worktree: AddWorktree,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    live = add_worktree(repo, "live", "live")
+    up(run_wtenv, live)
+    stray, stray_dir = stray_with_a_database(run_wtenv, make_repo, add_worktree, "stray")
+    files = (stray / ".env.local", stray / ".wtenv" / "dev.sqlite3")
+    files_before = bytes_of(*files)
+    registry_before = registry_path().read_bytes()
+    real_check = orphans._refuse_if_it_exists
+    calls: list[str] = []
+
+    def check_then_create_the_worktree(entry: WorktreeEntry) -> None:
+        calls.append(entry.path)  # recorded first: the second call raises
+        real_check(entry)
+        if len(calls) == 1:  # step 1 has passed; the worktree appears before the release
+            plant_a_worktree(stray, git_dir_of(live))
+
+    monkeypatch.setattr(orphans, "_refuse_if_it_exists", check_then_create_the_worktree)
+    capsys.readouterr()
+
+    status = cli.main(["gc", "--release", str(stray), "--json"])
+
+    result = GcResult.model_validate_json(capsys.readouterr().out)
+    assert calls == [str(stray), str(stray)]  # checked again, with the lock held, before the delete
+    assert status == 18 and not result.ok and result.error is not None
+    assert result.error.code is ErrorCode.WORKTREE_EXISTS and result.error.exit_status == 18
+    assert result.error.details["path"] == str(stray)
+    assert result.released == [] and result.removed == [] and result.failed == []
+    assert bytes_of(*files) == files_before  # the env file and the database copy are untouched
+    assert registry_path().read_bytes() == registry_before  # and so is the registry entry
+    assert stray_dir in load().worktrees
+
+
+def test_the_entries_released_before_a_stopped_one_stay_released_and_the_rest_is_not_touched(
+    run_wtenv: Run,
+    repo: Path,
+    make_repo: Callable[[str], Path],
+    add_worktree: AddWorktree,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    live = add_worktree(repo, "live", "live")
+    up(run_wtenv, live)
+    first, first_dir = stray_with_a_database(run_wtenv, make_repo, add_worktree, "first")
+    second, second_dir = stray_with_a_database(run_wtenv, make_repo, add_worktree, "second")
+    third, third_dir = stray_with_a_database(run_wtenv, make_repo, add_worktree, "third")
+    second_files = (second / ".env.local", second / ".wtenv" / "dev.sqlite3")
+    second_before = bytes_of(*second_files)
+    real_check = orphans._refuse_if_it_exists
+    calls: list[str] = []
+
+    def check_then_create_the_worktree(entry: WorktreeEntry) -> None:
+        calls.append(entry.path)  # recorded first: the second call raises
+        real_check(entry)
+        if len(calls) == 4:  # the release of the first entry has just been checked
+            plant_a_worktree(second, git_dir_of(live))
+
+    monkeypatch.setattr(orphans, "_refuse_if_it_exists", check_then_create_the_worktree)
+    capsys.readouterr()
+
+    status = cli.main(
+        ["gc", "--release", str(first), "--release", str(second), "--release", str(third), "--json"]
+    )
+
+    result = GcResult.model_validate_json(capsys.readouterr().out)
+    assert status == 18 and result.error is not None
+    assert result.error.code is ErrorCode.WORKTREE_EXISTS
+    assert result.error.details["path"] == str(second)
+    assert result.released == [str(first)]  # done before the stop, and reported
+    assert first_dir not in load().worktrees
+    assert second_dir in load().worktrees and bytes_of(*second_files) == second_before
+    assert third_dir in load().worktrees  # the command stopped: nothing after it was touched
+    assert (third / ".wtenv" / "dev.sqlite3").exists()
+
+
+def test_the_recheck_does_not_stop_an_entry_whose_worktree_stays_gone(
+    run_wtenv: Run,
+    make_repo: Callable[[str], Path],
+    add_worktree: AddWorktree,
+    outside: Path,
+) -> None:
+    stray, stray_dir = stray_with_a_database(run_wtenv, make_repo, add_worktree, "stray")
+
+    status, result = gc(run_wtenv, outside, "--release", str(stray))
+
+    assert status == 0 and result.released == [str(stray)]
+    assert stray_dir not in load().worktrees

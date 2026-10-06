@@ -106,8 +106,10 @@ def gc_release(paths: Sequence[str], *, dry_run: bool = False) -> GcResult:
     Every path is checked before anything changes: an entry whose worktree still exists, at the
     path or, moved, at another, stops the command with `worktree_exists`. A path with no entry is
     reported under `no_entry`, so the command can be repeated. Each named entry is then released
-    as `down` would release it, with the lock rule of plain `gc` (`skipped_busy`). Nothing else is
-    swept. A dry run takes no worktree lock and changes nothing.
+    as `down` would release it, with the lock rule of plain `gc` (`skipped_busy`), after the check
+    is repeated under the lock; a worktree that has appeared since stops the command at that
+    entry with `worktree_exists` in `error`. Nothing else is swept. A dry run takes no worktree
+    lock and changes nothing.
     """
     from wtenv import teardown  # only now; see the module docstring
 
@@ -128,8 +130,24 @@ def gc_release(paths: Sequence[str], *, dry_run: bool = False) -> GcResult:
     for entry in named.values():
         if dry_run:
             _add(result, entry, teardown.plan_release(entry))
-        else:
+            continue
+        try:
             _release(result, entry, only_if_orphaned=False)
+        except WtenvError as error:
+            if error.code is not ErrorCode.WORKTREE_EXISTS:
+                raise
+            # A worktree appeared after the step-1 check (reading R7): this entry is stopped with
+            # nothing changed, and so is every entry after it. What was released before it stays
+            # released and is reported.
+            result.ok = False
+            result.error = ErrorInfo(
+                code=error.code,
+                exit_status=EXIT_STATUS[error.code],
+                message=error.message,
+                hint=error.hint,
+                details=error.details,
+            )
+            break
     return _finished(result)
 
 
@@ -152,6 +170,9 @@ def _release(result: GcResult, entry: WorktreeEntry, *, only_if_orphaned: bool) 
     The entry is read again with the lock held, because another process may have changed it.
     With `only_if_orphaned` (plain `gc`) it is also classified again with a fresh listing, and
     released only if it is still orphaned (FR-074); if it is now unverifiable, it is `kept`.
+    Otherwise (`--release`) the step-1 check is repeated on the re-read entry immediately before
+    the delete (reading R7): a worktree that has appeared raises `worktree_exists`, and nothing of
+    the entry is changed.
     """
     from wtenv import teardown  # only now; see the module docstring
 
@@ -168,6 +189,8 @@ def _release(result: GcResult, entry: WorktreeEntry, *, only_if_orphaned: bool) 
                 result.kept.append(_kept(current, again))
             if again.status is not Status.ORPHANED:
                 return
+        else:
+            _refuse_if_it_exists(current)
         _add(result, current, teardown.release_entry(current))
 
 
@@ -251,7 +274,7 @@ def _finished(result: GcResult) -> GcResult:
     The failed items stay recorded; running `gc` again finishes the job (FR-042). A dry run
     reports them under `failed`, but is still `ok`, as for `down`.
     """
-    if result.failed and not result.dry_run:
+    if result.failed and not result.dry_run and result.error is None:
         result.ok = False
         result.error = ErrorInfo(
             code=ErrorCode.PARTIAL_FAILURE,
