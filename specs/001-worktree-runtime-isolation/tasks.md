@@ -1694,7 +1694,7 @@ Runs after group 9S.
   - Found by the run (2026-10-06): the script's `docker rm -f` of its Postgres container left the
     image's anonymous data volume on disk. Both calls now use `docker rm -f -v`. Run twice after
     the fix: `ACCEPTANCE PASSED`, and no container or volume left.
-- [ ] T148 Run the five gates one last time and confirm `CLAUDE.md` still matches the constitution
+- [X] T148 Run the five gates one last time and confirm `CLAUDE.md` still matches the constitution
 
 ---
 
