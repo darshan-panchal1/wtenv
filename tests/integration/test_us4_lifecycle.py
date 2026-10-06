@@ -2129,6 +2129,62 @@ def test_a_worktree_whose_parent_directory_is_missing_is_kept_by_gc_and_released
     assert git_dir not in load().worktrees
 
 
+# --- a dry run counts the entries it would release as gone (T195; L1; FR-040, FR-085) ----------------
+#
+# The last entry of a repository removes the exclude block. A real run releases the entries one by
+# one, so the second of two is the last. A dry run releases nothing, so it has to count the entries
+# it would release as gone, or it never lists the `exclude_entries` item that the real run removes.
+
+
+def exclude_items(items: Sequence[Item]) -> list[Item]:
+    return [item for item in items if item.kind is ItemKind.EXCLUDE_ENTRIES]
+
+
+def test_gc_dry_run_lists_the_exclude_item_once_and_the_real_run_removes_the_same_items(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, outside: Path
+) -> None:
+    first = add_worktree(repo, "one", "one")
+    second = add_worktree(repo, "two", "two")
+    up(run_wtenv, first)
+    up(run_wtenv, second)
+    remove_with_git(repo, first)
+    remove_with_git(repo, second)
+    assert BEGIN in exclude_text(repo)
+
+    status, planned = gc(run_wtenv, outside, "--dry-run")
+    real_status, real = gc(run_wtenv, outside)
+
+    assert (status, real_status) == (0, 0) and planned.would_release == real.released
+    assert len(exclude_items(planned.would_remove)) == 1
+    assert keys(planned.would_remove) == keys(real.removed)
+    assert BEGIN not in exclude_text(repo)
+
+
+def test_gc_release_dry_run_lists_the_exclude_item_once_for_the_last_two_named_entries(
+    run_wtenv: Run, repo: Path, tmp_path: Path, outside: Path
+) -> None:
+    """Two worktrees under a directory that is renamed are `parent_missing`: unverifiable, with the
+    repository still there, so the exclude block is too."""
+    drive = tmp_path.resolve() / "drive"
+    drive.mkdir()
+    paths = [drive / "one", drive / "two"]
+    for path in paths:
+        git(repo, "worktree", "add", "-b", path.name, str(path))
+        up(run_wtenv, path)
+    drive.rename(tmp_path.resolve() / "drive-renamed")
+    git(repo, "worktree", "prune", "--expire", "now")
+    named = [arg for path in paths for arg in ("--release", str(path))]
+
+    status, planned = gc(run_wtenv, outside, *named, "--dry-run")
+    real_status, real = gc(run_wtenv, outside, *named)
+
+    assert (status, real_status) == (0, 0)
+    assert real.released == [str(path) for path in paths]
+    assert len(exclude_items(planned.would_remove)) == 1
+    assert keys(planned.would_remove) == keys(real.removed)
+    assert BEGIN not in exclude_text(repo)
+
+
 # --- symbolic links in `down` and `gc` (T155, T156; FR-086) --------------------------------------
 #
 # Every case links to a decoy outside the worktree, or to another worktree, and compares it before

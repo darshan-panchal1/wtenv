@@ -10,6 +10,7 @@ listing, and the entries are bare.
 
 import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -265,11 +266,11 @@ def test_a_dry_run_that_meets_an_error_stops_and_returns_what_it_had_listed(
     real = teardown.plan_release
     planned: list[str] = []
 
-    def plan_release(entry: WorktreeEntry, *, password: str | None = None) -> teardown.Release:
+    def plan_release(entry: WorktreeEntry, **kwargs: Any) -> teardown.Release:
         planned.append(entry.path)
         if entry.git_dir == second.git_dir:
             raise WtenvError(ErrorCode.REGISTRY_BUSY, "the registry is busy")
-        return real(entry, password=password)
+        return real(entry, **kwargs)
 
     monkeypatch.setattr(teardown, "plan_release", plan_release)
 

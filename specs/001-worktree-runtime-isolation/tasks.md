@@ -1480,11 +1480,11 @@ exit status is 13 (0 for a dry run). Every test removes its decoys.
 
 **L1–L8**
 
-- [ ] T195 Add a failing test for the exclude item in a `gc` dry run to `tests/integration/test_us4_lifecycle.py`
+- [X] T195 Add a failing test for the exclude item in a `gc` dry run to `tests/integration/test_us4_lifecycle.py`
   - L1, FR-040, FR-085: the last two entries of a repository, both orphaned. `gc --dry-run`
     lists the `exclude_entries` item once, and its items equal the real run's `removed`.
     The same with both named to `gc --release --dry-run`.
-- [ ] T196 Count the entries a dry run would release as gone when deciding the last entry, in `src/wtenv/teardown.py` and `src/wtenv/orphans.py`
+- [X] T196 Count the entries a dry run would release as gone when deciding the last entry, in `src/wtenv/teardown.py` and `src/wtenv/orphans.py`
   - Pass the git directories the dry run already plans to release completely to `_finish`
     and leave them out of `_is_last`.
 - [ ] T197 Add a failing test for the paths `gc --release` did not attempt to `tests/integration/test_us4_lifecycle.py`

@@ -89,9 +89,9 @@ def gc(*, dry_run: bool = False) -> GcResult:
     `gc` reads no `wtenv.toml`: a Postgres drop takes its password from the libpq sources (cli.md,
     `wtenv gc`, Credentials). No git command that changes a repository is run (FR-075).
     """
-    from wtenv import teardown  # only now; see the module docstring
 
     result = GcResult(ok=True, dry_run=dry_run)
+    planned: set[str] = set()  # a dry run: the entries it would release completely
     listings: dict[str, list[WorktreeRecord] | None] = {}
     for entry in _entries():
         if entry.repository not in listings:
@@ -102,7 +102,7 @@ def gc(*, dry_run: bool = False) -> GcResult:
         elif found.status is Status.ORPHANED:
             try:
                 if dry_run:
-                    _add(result, entry, teardown.plan_release(entry))
+                    _plan(result, entry, planned)
                 else:
                     _release(result, entry, only_if_orphaned=True)
             except WtenvError as error:
@@ -125,7 +125,6 @@ def gc_release(paths: Sequence[str], *, dry_run: bool = False) -> GcResult:
     Nothing else is swept. A dry run takes no worktree
     lock and changes nothing.
     """
-    from wtenv import teardown  # only now; see the module docstring
 
     recorded: dict[str, list[WorktreeEntry]] = {}
     for entry in _entries():
@@ -141,9 +140,10 @@ def gc_release(paths: Sequence[str], *, dry_run: bool = False) -> GcResult:
         for entry in entries:
             _refuse_if_it_exists(entry)
             named[entry.git_dir] = entry
+    planned: set[str] = set()
     for entry in named.values():
         if dry_run:
-            _add(result, entry, teardown.plan_release(entry))
+            _plan(result, entry, planned)
             continue
         try:
             _release(result, entry, only_if_orphaned=False)
@@ -166,6 +166,21 @@ def _stopped(result: GcResult, error: WtenvError) -> None:
         hint=error.hint,
         details=error.details,
     )
+
+
+def _plan(result: GcResult, entry: WorktreeEntry, planned: set[str]) -> None:
+    """Add what releasing `entry` would do to a dry run, counting the entries planned before it.
+
+    A real run releases the entries one by one, so the last of a repository removes its exclude
+    block. A dry run releases none, so it passes the entries it would release completely as `gone`
+    to get the same items (L1).
+    """
+    from wtenv import teardown  # only now; see the module docstring
+
+    release = teardown.plan_release(entry, gone=planned)
+    if not release.failed:
+        planned.add(entry.git_dir)
+    _add(result, entry, release)
 
 
 def _entries() -> list[WorktreeEntry]:

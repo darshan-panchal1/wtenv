@@ -27,7 +27,7 @@ of them. The compose module is imported only when a compose project is recorded 
 
 import os
 import posixpath
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TypeVar
@@ -84,13 +84,18 @@ class Release:
         self.kept_volumes += removal.kept_volumes
 
 
-def plan_release(entry: WorktreeEntry, *, password: str | None = None) -> Release:
+def plan_release(
+    entry: WorktreeEntry, *, password: str | None = None, gone: Collection[str] = ()
+) -> Release:
     """Return the items releasing `entry` would remove, changing nothing and taking no lock.
 
     It is `release_entry` with `dry_run` set: the same steps, in the same order, ask the same
-    questions of the disk, the Postgres server, and Docker, and write nothing (FR-040).
+    questions of the disk, the Postgres server, and Docker, and write nothing (FR-040). `gone` is
+    the git directories of the entries a dry run of `gc` already plans to release completely: it
+    counts them as gone, because a real run would have released them, when it decides whether
+    `entry` is the last of its repository and so removes the exclude block (L1).
     """
-    return _release(entry, password=password, dry_run=True)
+    return _release(entry, password=password, dry_run=True, gone=gone)
 
 
 def release_entry(entry: WorktreeEntry, *, password: str | None = None) -> Release:
@@ -104,7 +109,13 @@ def release_entry(entry: WorktreeEntry, *, password: str | None = None) -> Relea
     return _release(entry, password=password, dry_run=False)
 
 
-def _release(entry: WorktreeEntry, *, password: str | None, dry_run: bool) -> Release:
+def _release(
+    entry: WorktreeEntry,
+    *,
+    password: str | None,
+    dry_run: bool,
+    gone: Collection[str] = (),
+) -> Release:
     """Run the steps of cli.md, `wtenv down`, for `entry`; with `dry_run`, write nothing."""
     root = Path(entry.path)
     release = Release()
@@ -114,7 +125,7 @@ def _release(entry: WorktreeEntry, *, password: str | None, dry_run: bool) -> Re
     _database_step(entry, root, release, password, dry_run)
     _env_step(entry, root, release, dry_run)
     if not release.failed:
-        _finish(entry, release, dry_run)
+        _finish(entry, release, dry_run, gone)
     release.removed = [_for_worktree(item, entry) for item in release.removed]
     release.already_absent = [_for_worktree(item, entry) for item in release.already_absent]
     release.failed = [_for_worktree(item, entry) for item in release.failed]
@@ -371,7 +382,9 @@ def _mark_env_removing(entry: WorktreeEntry) -> None:
 # --- the port block, the registry entry, the exclude entries (cli.md: last) ----------------------
 
 
-def _finish(entry: WorktreeEntry, release: Release, dry_run: bool) -> None:
+def _finish(
+    entry: WorktreeEntry, release: Release, dry_run: bool, gone: Collection[str] = ()
+) -> None:
     """Release the block and the entry, and the exclude entries with the repository's last entry.
 
     The entry and its block are deleted in one transaction. The exclude block goes first, inside
@@ -388,7 +401,7 @@ def _finish(entry: WorktreeEntry, release: Release, dry_run: bool) -> None:
     try:
         if dry_run:
             with registry_lock():
-                last = _is_last(registry.load().worktrees, entry)
+                last = _is_last(registry.load().worktrees, entry, gone)
                 block_there = _remove_exclude_block(exclude_path, dry_run=True) if last else None
         else:
             with registry.transaction() as reg:
@@ -416,12 +429,17 @@ def _finish(entry: WorktreeEntry, release: Release, dry_run: bool) -> None:
     release.released = not dry_run
 
 
-def _is_last(worktrees: dict[str, WorktreeEntry], entry: WorktreeEntry) -> bool:
-    """Return whether no other registered worktree belongs to the entry's repository."""
+def _is_last(
+    worktrees: dict[str, WorktreeEntry], entry: WorktreeEntry, gone: Collection[str] = ()
+) -> bool:
+    """Return whether no other registered worktree belongs to the entry's repository.
+
+    The entries in `gone` are not counted: a dry run has not released them, but would have.
+    """
     return not any(
         other.repository == entry.repository
         for git_dir, other in worktrees.items()
-        if git_dir != entry.git_dir
+        if git_dir != entry.git_dir and git_dir not in gone
     )
 
 
