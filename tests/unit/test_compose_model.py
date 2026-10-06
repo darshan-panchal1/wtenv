@@ -173,6 +173,74 @@ def test_no_container_name_no_warning() -> None:
     assert compose.parse_model(document(web={"ports": []})).warnings == []
 
 
+# --- fixed volume names (T187; reading R8) -----------------------------------------------------
+
+
+def with_volumes(**volumes: object) -> dict[str, object]:
+    """A resolved model named `app` with these top-level volumes, as `docker compose config` shows."""
+    return {**document(web={"ports": []}), "volumes": volumes}
+
+
+def test_a_volume_with_a_name_other_than_the_default_is_a_warning_naming_it() -> None:
+    model = compose.parse_model(
+        with_volumes(data={"name": "app_data"}, shared={"name": "shared-pgdata"})
+    )
+
+    (warning,) = model.warnings
+    assert warning.code is WarningCode.COMPOSE_FIXED_VOLUME_NAME
+    assert warning.details == {"volume": "shared", "name": "shared-pgdata"}
+    assert "shared" in warning.message and "shared-pgdata" in warning.message
+
+
+def test_an_external_volume_gives_no_warning() -> None:
+    model = compose.parse_model(with_volumes(kept={"name": "someone-elses", "external": True}))
+
+    assert model.warnings == []
+
+
+def test_a_volume_with_the_default_name_gives_no_warning() -> None:
+    model = compose.parse_model(
+        with_volumes(data={"name": "app_data"}, cache={"name": "app_cache"})
+    )
+
+    assert model.warnings == []
+
+
+def test_a_name_that_only_starts_like_the_default_is_a_fixed_name() -> None:
+    model = compose.parse_model(
+        with_volumes(data={"name": "app_data_old"}, cache={"name": "app-cache"})
+    )
+
+    assert [w.details["volume"] for w in model.warnings] == ["cache", "data"]
+
+
+def test_each_fixed_volume_has_its_own_warning_in_name_order_after_the_container_warnings() -> None:
+    model = compose.parse_model(
+        {
+            **with_volumes(b={"name": "fixed-b"}, a={"name": "fixed-a"}),
+            "services": {"web": {"container_name": "c", "ports": []}},
+        }
+    )
+
+    assert [w.code for w in model.warnings] == [
+        WarningCode.COMPOSE_FIXED_CONTAINER_NAME,
+        WarningCode.COMPOSE_FIXED_VOLUME_NAME,
+        WarningCode.COMPOSE_FIXED_VOLUME_NAME,
+    ]
+    assert [w.details.get("volume") for w in model.warnings[1:]] == ["a", "b"]
+
+
+@pytest.mark.parametrize(
+    "volumes",
+    [None, {}, {"data": None}, {"data": {}}],
+    ids=["null", "empty", "null-volume", "no-name"],
+)
+def test_a_model_without_volumes_or_without_their_names_gives_no_volume_warning(
+    volumes: object,
+) -> None:
+    assert compose.parse_model({**document(web={"ports": []}), "volumes": volumes}).warnings == []
+
+
 # --- the resolution command ------------------------------------------------------------------
 
 

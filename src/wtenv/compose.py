@@ -162,7 +162,8 @@ def parse_model(document: Mapping[str, Any]) -> ComposeModel:
     Mappings come in service-name order and, within a service, in the order Compose reported.
     A mapping without a host port is kept with `published` None. A published range raises
     `unsupported` (`compose_port_range`, FR-033). A service with `container_name` gets the
-    warning `compose_fixed_container_name`.
+    warning `compose_fixed_container_name`, and a top-level volume that is not `external` and
+    whose name is not `<model name>_<key>` gets `compose_fixed_volume_name` (reading R8).
     """
     services: Mapping[str, Mapping[str, Any]] = document.get("services") or {}
     mappings: list[PortMapping] = []
@@ -176,7 +177,40 @@ def parse_model(document: Mapping[str, Any]) -> ComposeModel:
             if mapping.published is not None and "-" in mapping.published:
                 raise _port_range(service, mapping.published)
             mappings.append(mapping)
+    warnings += _fixed_volume_names(document)
     return ComposeModel(mappings=mappings, warnings=warnings)
+
+
+def _fixed_volume_names(document: Mapping[str, Any]) -> list[WarningInfo]:
+    """Return a warning for each volume that a `name:` makes shared, in key order (reading R8).
+
+    Compose resolves every volume to a `name`: `<model name>_<key>` unless the file sets one.
+    An `external` volume is the developer's own and is never wtenv's to remove, so it is no
+    warning. Without the model's name, nothing can be compared.
+    """
+    model_name = document.get("name")
+    volumes: Mapping[str, Mapping[str, Any] | None] = document.get("volumes") or {}
+    if not isinstance(model_name, str):
+        return []
+    warnings = []
+    for key in sorted(volumes):
+        settings = volumes[key] or {}
+        name = settings.get("name")
+        if settings.get("external") or not isinstance(name, str) or name == f"{model_name}_{key}":
+            continue
+        warnings.append(_fixed_volume_name(key, name))
+    return warnings
+
+
+def _fixed_volume_name(volume: str, name: str) -> WarningInfo:
+    return WarningInfo(
+        code=WarningCode.COMPOSE_FIXED_VOLUME_NAME,
+        message=(
+            f"volume {volume} is named {name}, so every worktree and the main checkout share it; "
+            "`wtenv down` never removes it"
+        ),
+        details={"volume": volume, "name": name},
+    )
 
 
 def _mapping(service: str, entry: Mapping[str, Any]) -> PortMapping:
@@ -722,7 +756,9 @@ def remove_project(
     is never passed: it would remove the anonymous volumes too, which carry no label. Only
     resources with the recorded project's label are ever named in a removal command, so an
     anonymous or `external` volume and an `external` network are never removed (FR-039); the
-    volumes found without the label are `kept_volumes` (reading R6). Every removed resource is an
+    volumes found without the label are `kept_volumes` (reading R6), and so is a labelled volume
+    whose name does not start with `<project>_`, with the reason `fixed_name` (reading R8). Every
+    removed resource is an
     item; a project with nothing left is `already_absent` (FR-042). `COMPOSE_*` variables are not
     passed on, so they cannot point Compose at another project or file. With `dry_run` only the
     listings and the inspection run, and the same items are returned. When Docker cannot be asked,
@@ -738,18 +774,22 @@ def remove_project(
     base = os.environ if environ is None else environ
     env = {name: value for name, value in base.items() if not name.startswith("COMPOSE_")}
     try:
-        before = _list_project(project, run, env)
+        listed = _list_project(project, run, env)
+        before, fixed = _split_fixed_names(project, listed)
+        kept_volumes = _kept_volumes(project, fixed, _unlabelled_mounts(project, listed, run, env))
         if not before:
-            return Removal(already_absent=[project_item])
-        kept_volumes = _unlabelled_mounts(project, before, run, env)
+            return Removal(already_absent=[project_item], kept_volumes=kept_volumes)
         if dry_run:
             return Removal(removed=[_item_of(r) for r in before], kept_volumes=kept_volumes)
         with tempfile.TemporaryDirectory() as empty:
             down = ["docker", "compose", "-p", project, "down", "--remove-orphans"]
             _docker(run, down, env, Path(empty))  # what it leaves behind is checked next
-        remaining = _list_project(project, run, env)
+        remaining, fixed_now = _split_fixed_names(project, _list_project(project, run, env))
+        kept_volumes = _kept_volumes(
+            project, [*fixed, *fixed_now], [k for k in kept_volumes if k.reason == "unlabelled"]
+        )
         reasons = {r: _remove_resource(r, run, env) for r in remaining}
-        left = _list_project(project, run, env)
+        left, _ = _split_fixed_names(project, _list_project(project, run, env))
     except _DockerFailed as error:
         # A dry run that cannot ask Docker fails the project, as the real run would (FR-040).
         reason = str(error)
@@ -767,6 +807,31 @@ def remove_project(
         ],
         kept_volumes=kept_volumes,
     )
+
+
+def _split_fixed_names(
+    project: str, found: list[_Resource]
+) -> tuple[list[_Resource], list[_Resource]]:
+    """Split `found` into what wtenv may remove and the labelled volumes it must not (reading R8).
+
+    A volume that a compose file declares with a fixed `name:` is given the label of whichever
+    project created it first, but it is shared with every other project that uses that name,
+    including the main checkout's. Compose names the project's own volumes `<project>_<key>`, so
+    only a labelled volume with that prefix is the project's. Any other is returned second.
+    """
+    owned = f"{project}_"
+    fixed = [r for r in found if r.kind is ItemKind.COMPOSE_VOLUME and not r.name.startswith(owned)]
+    return [r for r in found if r not in fixed], fixed
+
+
+def _kept_volumes(
+    project: str, fixed: list[_Resource], unlabelled: list[KeptVolume]
+) -> list[KeptVolume]:
+    """Return the volumes that are left alone, once each and in name order, with their reasons."""
+    kept = {v.name: v for v in unlabelled}
+    for resource in fixed:
+        kept[resource.name] = KeptVolume(name=resource.name, project=project, reason="fixed_name")
+    return [kept[name] for name in sorted(kept)]
 
 
 def _item_of(resource: _Resource) -> Item:

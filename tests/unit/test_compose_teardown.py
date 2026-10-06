@@ -22,6 +22,7 @@ from wtenv.registry import ComposeRecord, PortBlock, WorktreeEntry
 
 GIT_DIR = "/repos/app/.git/worktrees/app"
 PROJECT = compose.project_name("app", GIT_DIR)
+VOLUME = f"{PROJECT}_data"  # what Compose names the volume `data` of the project
 OTHER = "wtenv-other-12345678"
 LABEL = "com.docker.compose.project"
 DOWN = ["docker", "compose", "-p", PROJECT, "down", "--remove-orphans"]
@@ -134,7 +135,7 @@ def stack() -> FakeDocker:
             Resource("c8", "postgres-local", None),
         ],
         mounts={
-            "c1": ["app_data", "0123456789abcdef", "external-data"],
+            "c1": [VOLUME, "0123456789abcdef", "external-data"],
             "c9": ["other_data"],
             "c8": ["postgres-data"],
         },
@@ -144,7 +145,7 @@ def stack() -> FakeDocker:
             Resource("n8", "shared-external", None),
         ],
         volumes=[
-            Resource("v1", "app_data", PROJECT),
+            Resource("v1", VOLUME, PROJECT),
             Resource("v2", "0123456789abcdef", None),  # an anonymous volume: no compose label
             Resource("v9", "other_data", OTHER),
             Resource("v8", "external-data", None),  # declared `external`: no compose label
@@ -161,7 +162,7 @@ def item(kind: ItemKind, name: str) -> Item:
 REMOVED = [
     item(ItemKind.COMPOSE_CONTAINER, "app-web-1"),
     item(ItemKind.COMPOSE_NETWORK, "app_default"),
-    item(ItemKind.COMPOSE_VOLUME, "app_data"),
+    item(ItemKind.COMPOSE_VOLUME, VOLUME),
 ]
 # Mounted by the project's container, and without its label: found, kept, never removed.
 KEPT = [
@@ -242,11 +243,11 @@ def test_a_project_with_nothing_left_is_already_absent_and_nothing_is_run() -> N
 
 def test_no_removal_command_names_a_resource_of_another_project_or_one_with_no_label() -> None:
     docker = stack()
-    docker.down_leaves = {"app-web-1", "app_default", "app_data"}  # force the one-by-one removal
+    docker.down_leaves = {"app-web-1", "app_default", VOLUME}  # force the one-by-one removal
 
     compose.remove_project(PROJECT, GIT_DIR, run=docker, environ={})
 
-    mine = {"app-web-1", "c1", "app_default", "n1", "app_data", "v1"}
+    mine = {"app-web-1", "c1", "app_default", "n1", VOLUME, "v1"}
     for words in docker.removals():
         if words == DOWN:
             continue
@@ -278,14 +279,14 @@ def test_a_project_not_in_the_registry_is_not_touched_because_only_the_given_nam
 
 def test_labelled_resources_that_remain_are_removed_one_by_one() -> None:
     docker = stack()
-    docker.down_leaves = {"app-web-1", "app_default", "app_data"}
+    docker.down_leaves = {"app-web-1", "app_default", VOLUME}
 
     result = compose.remove_project(PROJECT, GIT_DIR, run=docker, environ={})
 
     assert result.removed == REMOVED
     assert ["docker", "rm", "c1"] in docker.removals()
     assert ["docker", "network", "rm", "n1"] in docker.removals()
-    assert ["docker", "volume", "rm", "app_data"] in docker.removals()
+    assert ["docker", "volume", "rm", VOLUME] in docker.removals()
     assert result.failed == []
 
 
@@ -298,7 +299,7 @@ def test_what_cannot_be_removed_is_failed_with_a_reason_and_the_rest_is_removed(
 
     assert [(f.kind, f.name) for f in result.failed] == [(ItemKind.COMPOSE_NETWORK, "app_default")]
     assert "in use" in result.failed[0].reason
-    assert [i.name for i in result.removed] == ["app-web-1", "app_data"]
+    assert [i.name for i in result.removed] == ["app-web-1", VOLUME]
 
 
 # --- listing only ---------------------------------------------------------------------------------------
@@ -343,9 +344,9 @@ def test_a_labelled_volume_is_removed_by_name_as_its_own_item() -> None:
 
     result = compose.remove_project(PROJECT, GIT_DIR, run=docker, environ={})
 
-    assert item(ItemKind.COMPOSE_VOLUME, "app_data") in result.removed
-    assert ["docker", "volume", "rm", "app_data"] in docker.removals()
-    assert "app_data" not in names(docker.volumes)
+    assert item(ItemKind.COMPOSE_VOLUME, VOLUME) in result.removed
+    assert ["docker", "volume", "rm", VOLUME] in docker.removals()
+    assert VOLUME not in names(docker.volumes)
 
 
 def test_a_mounted_volume_without_the_label_is_kept_reported_and_never_removed() -> None:
@@ -376,7 +377,7 @@ def test_a_volume_that_no_container_of_the_project_mounts_is_not_reported() -> N
         "postgres-data" not in reported
     )  # mounted by `postgres-local`, which is not the project's
     assert "other_data" not in reported  # another project's
-    assert "app_data" not in reported  # labelled: removed, not kept
+    assert VOLUME not in reported  # labelled: removed, not kept
 
 
 def test_the_mounts_are_inspected_before_the_down_while_the_containers_exist() -> None:
@@ -406,12 +407,12 @@ def test_listing_only_reports_the_same_kept_volumes_and_removes_nothing() -> Non
 
 def test_a_project_with_no_container_has_nothing_to_inspect() -> None:
     docker = FakeDocker(
-        volumes=[Resource("v1", "app_data", PROJECT), Resource("v2", "0123456789abcdef", None)]
+        volumes=[Resource("v1", VOLUME, PROJECT), Resource("v2", "0123456789abcdef", None)]
     )
 
     result = compose.remove_project(PROJECT, GIT_DIR, run=docker, environ={})
 
-    assert result.removed == [item(ItemKind.COMPOSE_VOLUME, "app_data")]
+    assert result.removed == [item(ItemKind.COMPOSE_VOLUME, VOLUME)]
     assert result.kept_volumes == []
     assert not any(words[:3] == INSPECT for words, _, _ in docker.calls)
     assert names(docker.volumes) == ["0123456789abcdef"]
@@ -419,11 +420,11 @@ def test_a_project_with_no_container_has_nothing_to_inspect() -> None:
 
 def test_a_volume_that_cannot_be_removed_is_failed_and_the_kept_ones_are_still_reported() -> None:
     docker = stack()
-    docker.undeletable = {"app_data"}
+    docker.undeletable = {VOLUME}
 
     result = compose.remove_project(PROJECT, GIT_DIR, run=docker, environ={})
 
-    assert [(f.kind, f.name) for f in result.failed] == [(ItemKind.COMPOSE_VOLUME, "app_data")]
+    assert [(f.kind, f.name) for f in result.failed] == [(ItemKind.COMPOSE_VOLUME, VOLUME)]
     assert result.kept_volumes == KEPT
 
 
@@ -581,3 +582,106 @@ def test_teardown_keeps_the_override_and_the_compose_record_of_a_project_it_did_
     assert override.read_bytes() == before
     recorded = registry.load().worktrees[GIT_DIR]
     assert recorded.compose is not None and recorded.compose.project == project
+
+
+# --- a labelled volume whose name does not start with `<project>_` is never removed (T185; R8) ----
+
+FIXED = "shared-pgdata"
+
+
+def fixed_name_stack() -> FakeDocker:
+    """A project whose container mounts its own volume and one with a fixed `name:`.
+
+    Compose labels both with the project that created them, but only the first is named
+    `<project>_data`. The second is shared with whatever else uses that name.
+    """
+    return FakeDocker(
+        containers=[Resource("c1", "app-web-1", PROJECT)],
+        mounts={"c1": [VOLUME, FIXED]},
+        networks=[Resource("n1", "app_default", PROJECT)],
+        volumes=[Resource("v1", VOLUME, PROJECT), Resource("v2", FIXED, PROJECT)],
+    )
+
+
+def volume_removals(docker: FakeDocker) -> list[list[str]]:
+    return [words for words in docker.removals() if words[:3] == ["docker", "volume", "rm"]]
+
+
+def test_a_labelled_volume_with_a_fixed_name_is_kept_and_the_projects_own_is_removed() -> None:
+    docker = fixed_name_stack()
+    docker.down_leaves = {"app-web-1", "app_default"}  # force the one-by-one removal
+
+    result = compose.remove_project(PROJECT, GIT_DIR, run=docker, environ={})
+
+    assert item(ItemKind.COMPOSE_VOLUME, VOLUME) in result.removed
+    assert item(ItemKind.COMPOSE_VOLUME, FIXED) not in result.removed
+    assert result.kept_volumes == [KeptVolume(name=FIXED, project=PROJECT, reason="fixed_name")]
+    assert result.failed == []
+    assert names(docker.volumes) == [FIXED]
+    assert all(FIXED not in words for words in docker.removals())  # not even named
+
+
+def test_a_fixed_name_volume_is_never_named_in_a_removal_command_in_a_dry_run_either() -> None:
+    docker = fixed_name_stack()
+
+    planned = compose.remove_project(PROJECT, GIT_DIR, dry_run=True, run=docker, environ={})
+
+    assert item(ItemKind.COMPOSE_VOLUME, VOLUME) in planned.removed
+    assert item(ItemKind.COMPOSE_VOLUME, FIXED) not in planned.removed
+    assert planned.kept_volumes == [KeptVolume(name=FIXED, project=PROJECT, reason="fixed_name")]
+    assert docker.removals() == []
+    assert names(docker.volumes) == [VOLUME, FIXED]
+
+
+def test_a_dry_run_and_a_real_run_list_the_same_items_and_the_same_kept_volumes() -> None:
+    planned = compose.remove_project(
+        PROJECT, GIT_DIR, dry_run=True, run=fixed_name_stack(), environ={}
+    )
+    actual = compose.remove_project(PROJECT, GIT_DIR, run=fixed_name_stack(), environ={})
+
+    assert planned.removed == actual.removed
+    assert planned.kept_volumes == actual.kept_volumes
+
+
+def test_kept_volumes_of_both_reasons_come_once_each_in_name_order() -> None:
+    docker = FakeDocker(
+        containers=[Resource("c1", "app-web-1", PROJECT)],
+        mounts={"c1": [VOLUME, "zz-unlabelled", FIXED, "aa-unlabelled"]},
+        volumes=[Resource("v1", VOLUME, PROJECT), Resource("v2", FIXED, PROJECT)],
+    )
+
+    result = compose.remove_project(PROJECT, GIT_DIR, run=docker, environ={})
+
+    assert result.kept_volumes == [
+        KeptVolume(name="aa-unlabelled", project=PROJECT, reason="unlabelled"),
+        KeptVolume(name=FIXED, project=PROJECT, reason="fixed_name"),
+        KeptVolume(name="zz-unlabelled", project=PROJECT, reason="unlabelled"),
+    ]
+
+
+def test_a_name_that_only_starts_like_the_project_is_still_a_fixed_name() -> None:
+    """`<project>x_data` and `<project>-data` do not start with `<project>_`."""
+    lookalikes = [f"{PROJECT}x_data", f"{PROJECT}-data", PROJECT, f"{PROJECT[:-1]}_data"]
+    docker = FakeDocker(
+        containers=[Resource("c1", "app-web-1", PROJECT)],
+        mounts={"c1": lookalikes},
+        volumes=[Resource(f"v{i}", name, PROJECT) for i, name in enumerate(lookalikes)],
+    )
+
+    result = compose.remove_project(PROJECT, GIT_DIR, run=docker, environ={})
+
+    assert volume_removals(docker) == []
+    assert result.removed == [item(ItemKind.COMPOSE_CONTAINER, "app-web-1")]
+    assert [k.name for k in result.kept_volumes] == sorted(lookalikes)
+    assert {k.reason for k in result.kept_volumes} == {"fixed_name"}
+
+
+def test_a_project_with_only_a_fixed_name_volume_has_nothing_to_remove_and_reports_it() -> None:
+    docker = FakeDocker(volumes=[Resource("v2", FIXED, PROJECT)])
+
+    result = compose.remove_project(PROJECT, GIT_DIR, run=docker, environ={})
+
+    assert result.removed == [] and result.failed == []
+    assert result.already_absent == [Item(kind=ItemKind.COMPOSE_PROJECT, name=PROJECT)]
+    assert result.kept_volumes == [KeptVolume(name=FIXED, project=PROJECT, reason="fixed_name")]
+    assert docker.removals() == []

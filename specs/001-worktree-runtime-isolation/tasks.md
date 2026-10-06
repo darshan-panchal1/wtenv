@@ -1426,7 +1426,7 @@ exit status is 13 (0 for a dry run). Every test removes its decoys.
 
 **M1. Volumes with a fixed name (reading R8)**
 
-- [ ] T185 Add failing tests for fixed-name volumes to `tests/unit/test_compose_teardown.py` and `tests/integration/test_us4_lifecycle.py`
+- [X] T185 Add failing tests for fixed-name volumes to `tests/unit/test_compose_teardown.py` and `tests/integration/test_us4_lifecycle.py`
   - M1, reading R8, FR-039, FR-041: a fake engine holding labelled volumes `<project>_data`
     and `shared-pgdata`. `<project>_data` is removed and reported; `shared-pgdata` is in
     `kept_volumes` with reason `fixed_name` and is never named in a `docker volume rm`.
@@ -1436,14 +1436,14 @@ exit status is 13 (0 for a dry run). Every test removes its decoys.
     `down --dry-run --json`, `down --json`, and `gc` after the worktree is removed: the
     volume is in `kept_volumes` with `fixed_name` and still holds the file written into
     it. The test removes the volume.
-- [ ] T186 Remove only volumes named `<project>_…`, in `src/wtenv/compose.py`
+- [X] T186 Remove only volumes named `<project>_…`, in `src/wtenv/compose.py`
   - Reading R8; cli.md, `wtenv down`. Any other labelled volume goes to `kept_volumes`,
     reason `fixed_name`, once per volume and in name order with the unlabelled ones.
-- [ ] T187 Add failing tests for the `compose_fixed_volume_name` warning to `tests/unit/test_compose_model.py`
+- [X] T187 Add failing tests for the `compose_fixed_volume_name` warning to `tests/unit/test_compose_model.py`
   - M1, reading R8: a resolved model whose top-level volume has `name` other than
     `<model name>_<key>` and is not `external` gives the warning with `details` `volume`
     and `name`; an external volume and a volume with the default name give none.
-- [ ] T188 Warn about fixed volume names in `parse_model`, in `src/wtenv/compose.py`
+- [X] T188 Warn about fixed volume names in `parse_model`, in `src/wtenv/compose.py`
   - cli.md, `wtenv up`, Warnings. The warning reaches `UpResult.warnings` the same way as
     `compose_fixed_container_name`.
 

@@ -872,3 +872,26 @@ def test_up_refuses_a_recorded_env_file_of_a_form_wtenv_never_records_when_env_f
     assert snapshot_tree(outside) == outside_before
     assert snapshot_tree(worktree) == tree_before
     assert registry_path().read_bytes() == registry_before
+
+
+def test_up_warns_about_a_volume_with_a_fixed_name_and_not_about_an_external_one(
+    compose_docker: None, run_wtenv: Run, repo: Path, add_worktree: AddWorktree
+) -> None:
+    """T187, T188; reading R8: `up` starts nothing, so no volume is made or removed."""
+    # Compose leaves a volume that no service mounts out of its resolved model.
+    stack = STACK.replace(
+        "      - cache-data:/data\n",
+        "      - cache-data:/data\n      - shared:/shared\n      - kept:/kept\n",
+    ).replace(
+        "volumes:\n  cache-data:\n",
+        "volumes:\n  cache-data:\n  shared:\n    name: wtenv-test-never-created-volume\n"
+        "  kept:\n    external: true\n    name: wtenv-test-never-created-external\n",
+    )
+    worktree = make_worktree(repo, add_worktree, "one", stack=stack)
+
+    result = up(run_wtenv, worktree)
+
+    fixed = [w for w in result.warnings if w.code.value == "compose_fixed_volume_name"]
+    assert [w.details for w in fixed] == [
+        {"volume": "shared", "name": "wtenv-test-never-created-volume"}
+    ]

@@ -1974,6 +1974,107 @@ def test_only_the_labelled_volume_is_removed_and_the_others_are_kept_and_reporte
     assert_kept_untouched(stack)
 
 
+# --- a volume with a fixed `name:` is shared, so it is never removed (T185; reading R8; FR-039) -----
+#
+# Compose gives a volume declared with `name: x` the label of whichever project created it first,
+# and the same volume is what the main checkout, or another worktree, mounts under that name. The
+# test's own project mounts one, and a named volume of its own. `down`, `gc`, and `gc --release`
+# remove the project's own volume and report the fixed-name one in `kept_volumes` with the reason
+# `fixed_name`, leaving it with what is in it. The test creates it and removes it.
+
+FIXED_STACK = """\
+services:
+  cache:
+    image: {image}
+    pull_policy: never
+    ports:
+      - "${{CACHE_PORT:-6379}}:6379"
+    volumes:
+      - own-data:/own
+      - shared:/shared
+volumes:
+  own-data:
+  shared:
+    name: {shared}
+"""
+
+
+@pytest.fixture
+def fixed_volume_name(compose_projects: ComposeProjects) -> Iterator[str]:
+    """A unique name for the fixed-name volume; the volume is removed, by name, at the end."""
+    name = f"wtenv-test-shared-{uuid.uuid4().hex[:10]}"
+    yield name
+    compose_projects.remove_all()
+    subprocess.run(["docker", "volume", "rm", "--force", name], capture_output=True, check=False)
+
+
+@pytest.mark.parametrize("mode", ["down", "gc", "gc_release"])
+def test_a_labelled_volume_with_a_fixed_name_is_kept_and_reported_and_the_projects_own_is_removed(
+    mode: str,
+    run_wtenv: Run,
+    make_repo: Callable[[str], Path],
+    add_worktree: AddWorktree,
+    compose_image: str,
+    compose_projects: ComposeProjects,
+    fixed_volume_name: str,
+    outside: Path,
+) -> None:
+    repo = make_repo("doomed" if mode == "gc_release" else "app")
+    worktree = add_worktree(repo, "feature-x", "feature-x")
+    (worktree / "compose.yaml").write_text(
+        FIXED_STACK.format(image=COMPOSE_IMAGE, shared=fixed_volume_name), encoding="utf-8"
+    )
+    write_config(worktree, COMPOSE_TOML)
+    commit_all(worktree)
+    up(run_wtenv, worktree)
+    project = compose_projects.track(project_of(worktree))
+    start_stack(worktree)
+    (container,) = container_names(project)
+    own = f"{project}_own-data"
+    text = f"marker-{uuid.uuid4().hex}"
+    write_marker(container, "/shared", text)
+    created = volume_created_at(fixed_volume_name)
+    # Compose labels the fixed-name volume with the project that created it: that is the hazard.
+    assert sorted(project_resources(project)["volumes"]) == sorted([own, fixed_volume_name])
+    kept = [KeptVolume(name=fixed_volume_name, project=project, reason="fixed_name")]
+    if mode == "gc":
+        remove_with_git(repo, worktree)
+    if mode == "gc_release":
+        shutil.rmtree(repo)  # the worktree is left, but its git directory is gone
+
+    def run(*flags: str) -> tuple[int, DownResult | GcResult]:
+        if mode == "down":
+            return down(run_wtenv, worktree, *flags)
+        release = ["--release", str(worktree)] if mode == "gc_release" else []
+        return gc(run_wtenv, outside, *release, *flags)
+
+    def untouched() -> None:
+        assert volume_exists(fixed_volume_name)
+        assert volume_created_at(fixed_volume_name) == created
+        assert read_marker(fixed_volume_name) == text
+
+    status, planned = run("--dry-run")
+
+    assert status == 0 and planned.dry_run and planned.failed == [], planned
+    assert ("compose_volume", own) in keys(planned.would_remove)
+    assert fixed_volume_name not in [n for _, n in keys(planned.would_remove)]
+    assert planned.kept_volumes == kept
+    assert volume_exists(own)
+    untouched()
+
+    status, result = run()
+
+    assert status == 0 and result.ok and result.failed == [], result
+    assert result.removed == planned.would_remove
+    assert ("compose_volume", own) in keys(result.removed)
+    assert fixed_volume_name not in [n for _, n in keys(result.removed)]
+    assert result.kept_volumes == kept
+    assert not volume_exists(own)
+    left = project_resources(project)
+    assert left["containers"] == [] and left["networks"] == []
+    untouched()
+
+
 # --- symbolic links in `down` and `gc` (T155, T156; FR-086) --------------------------------------
 #
 # Every case links to a decoy outside the worktree, or to another worktree, and compares it before
