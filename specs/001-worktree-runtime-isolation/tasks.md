@@ -1502,19 +1502,19 @@ exit status is 13 (0 for a dry run). Every test removes its decoys.
     release an entry whose git directory still exists are changed to prune first.
 - [X] T200 Refuse `--release` while the entry's git directory exists, in `_refuse_if_it_exists` in `src/wtenv/orphans.py`
   - cli.md, `wtenv gc --release`, step 1. The re-check of T171 includes it.
-- [ ] T201 Add a failing test for a worktree that appears at the path during the compose step to `tests/integration/test_us4_lifecycle.py`
+- [X] T201 Add a failing test for a worktree that appears at the path during the compose step to `tests/integration/test_us4_lifecycle.py`
   - L4, FR-073, FR-074: in-process, as T170, a worktree with a different git directory
     added at the recorded path (`git worktree add -f`), with `.wtenv/`, an env section, and
     an override, after the compose step and before the disk steps → every file item under
     `failed` with reason `worktree_exists`; the new worktree's files are unchanged; the
     entry stays; exit 13. For plain `gc` and `gc --release`.
-- [ ] T202 Read `points_to` again after the compose step in `gc`, in `src/wtenv/teardown.py`
+- [X] T202 Read `points_to` again after the compose step in `gc`, in `src/wtenv/teardown.py`
   - cli.md, `wtenv gc`, step 4. Not for `down`, whose root is the current worktree.
-- [ ] T203 Add a failing test for a link above the root under `gc` to `tests/integration/test_us4_lifecycle.py`
+- [X] T203 Add a failing test for a link above the root under `gc` to `tests/integration/test_us4_lifecycle.py`
   - L5, FR-086: the worktree's parent directory replaced, after the worktree is gone, by a
     link to another directory holding the same file names → `gc --release <path>` puts
     every file item under `failed` with reason `symlink`; the link's target is unchanged.
-- [ ] T204 Fail the file items when the recorded root does not resolve to itself, in `src/wtenv/teardown.py`
+- [X] T204 Fail the file items when the recorded root does not resolve to itself, in `src/wtenv/teardown.py`
   - When `os.path.realpath(root) != str(root)`.
 - [ ] T205 Add failing tests for a linked `.git/info/exclude` to `tests/unit/test_exclude.py` and `tests/integration/test_us4_lifecycle.py`
   - L6, FR-018, FR-086: `info/exclude` is a link to a file outside the repository. `down`

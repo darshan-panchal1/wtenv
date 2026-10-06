@@ -36,7 +36,13 @@ from wtenv import database, envfile, exclude, registry
 from wtenv.config import load_config
 from wtenv.database import PostgresTarget, Removal
 from wtenv.errors import EXIT_STATUS, ErrorCode, WtenvError
-from wtenv.identity import WorktreeIdentity, current_worktree, recorded_path_problem, symlinked_part
+from wtenv.identity import (
+    WorktreeIdentity,
+    current_worktree,
+    points_to,
+    recorded_path_problem,
+    symlinked_part,
+)
 from wtenv.locks import WORKTREE_LOCK_TIMEOUT, registry_lock, worktree_lock
 from wtenv.output import (
     DownResult,
@@ -56,6 +62,8 @@ ItemT = TypeVar("ItemT", bound=Item)
 # The `reason` of an item left alone because it, or a directory above it, is a symbolic link
 # (FR-086).
 SYMLINK_REASON = "symlink"
+# The `reason` of an item left alone because a worktree has appeared at the recorded path (L4).
+WORKTREE_EXISTS_REASON = "worktree_exists"
 
 # Where `up` puts a SQLite copy: exactly `.wtenv/<file name>` (files.md, Names).
 SQLITE_DIRECTORY = ".wtenv"
@@ -98,15 +106,22 @@ def plan_release(
     return _release(entry, password=password, dry_run=True, gone=gone)
 
 
-def release_entry(entry: WorktreeEntry, *, password: str | None = None) -> Release:
+def release_entry(
+    entry: WorktreeEntry, *, password: str | None = None, recheck_path: bool = False
+) -> Release:
     """Release everything `entry` records, and drop the entry when nothing is left (FR-038).
 
     The caller holds the entry's worktree lock. `password` is for the Postgres drop; with none,
     libpq looks in `PGPASSWORD`, `PGPASSFILE`, and `~/.pgpass`. An item that cannot be removed is
     in `failed`, stays recorded, and keeps the entry, as `incomplete`; running this again finishes
     the job (FR-042). Removes only what the entry records (FR-039).
+
+    `gc` passes `recheck_path`: after the compose step, which can take a while, `points_to` is read
+    again on the recorded path, and a worktree that has appeared there puts every file item under
+    `failed` with the reason `worktree_exists` (L4). `down` does not: its root is the worktree it
+    runs in.
     """
-    return _release(entry, password=password, dry_run=False)
+    return _release(entry, password=password, dry_run=False, recheck_path=recheck_path)
 
 
 def _release(
@@ -115,15 +130,19 @@ def _release(
     password: str | None,
     dry_run: bool,
     gone: Collection[str] = (),
+    recheck_path: bool = False,
 ) -> Release:
     """Run the steps of cli.md, `wtenv down`, for `entry`; with `dry_run`, write nothing."""
     root = Path(entry.path)
     release = Release()
     if not dry_run:
         _update(entry.git_dir, _mark_incomplete)
-    _compose_step(entry, root, release, dry_run)
-    _database_step(entry, root, release, password, dry_run)
-    _env_step(entry, root, release, dry_run)
+    project_failed = _compose_step(entry, root, release, dry_run)
+    blocked = _files_blocked_by(root, recheck_path=recheck_path)
+    if project_failed is not None:
+        _override_step(entry, root, release, dry_run, project_failed, blocked)
+    _database_step(entry, root, release, password, dry_run, blocked)
+    _env_step(entry, root, release, dry_run, blocked)
     if not release.failed:
         _finish(entry, release, dry_run, gone)
     release.removed = [_for_worktree(item, entry) for item in release.removed]
@@ -150,28 +169,68 @@ def _update(git_dir: str, change: Callable[[WorktreeEntry], None]) -> None:
 # --- the compose project and its override (cli.md: first) ---------------------------------------
 
 
-def _compose_step(entry: WorktreeEntry, root: Path, release: Release, dry_run: bool) -> None:
-    """Remove the recorded project's resources, then its override file, then its record."""
+def _compose_step(entry: WorktreeEntry, root: Path, release: Release, dry_run: bool) -> bool | None:
+    """Remove the resources of the recorded project.
+
+    Returns None when there is no override to deal with next: no compose record, or a project
+    that is not the entry's own, of which nothing is listed or removed and whose override and
+    record are kept (H1). Otherwise returns whether removing the project failed.
+    """
     record = entry.compose
     if record is None:
-        return
+        return None
     from wtenv import compose  # only now: the module is not loaded without a compose project
 
     problem = compose.project_problem(record.project, entry.git_dir)
     if problem is not None:
-        # Nothing of the project is listed or removed, and its override and record are kept.
         release.failed.append(
             FailedItem(kind=ItemKind.COMPOSE_PROJECT, name=record.project, reason=problem)
         )
-        return
+        return None
     failures_before = len(release.failed)
     release.add(compose.remove_project(record.project, entry.git_dir, dry_run=dry_run))
-    project_failed = len(release.failed) > failures_before
+    return len(release.failed) > failures_before
+
+
+def _files_blocked_by(root: Path, *, recheck_path: bool) -> str | None:
+    """Return the reason every file item must be left alone, or None when they may be touched.
+
+    A root that does not resolve to itself has a symbolic link in it or above it: `symlink` (L5).
+    The identity of a worktree is resolved first (FR-006), so only a recorded path that `gc` or
+    `gc --release` uses can have changed since. With `recheck_path` (`gc`, after the compose step),
+    a git directory that `points_to` now names on the recorded path means a worktree has appeared
+    there: `worktree_exists` (L4).
+    """
+    if os.path.realpath(root) != str(root):
+        return SYMLINK_REASON
+    if recheck_path:
+        live = points_to(root)
+        if live is not None and os.path.isdir(live):
+            return WORKTREE_EXISTS_REASON
+    return None
+
+
+def _override_step(
+    entry: WorktreeEntry,
+    root: Path,
+    release: Release,
+    dry_run: bool,
+    project_failed: bool,
+    blocked: str | None,
+) -> None:
+    """Remove the override file, then the compose record when nothing of it failed."""
+    record = entry.compose
+    assert record is not None
+    from wtenv import compose
+
     override = root / record.override
     item = Item(kind=ItemKind.COMPOSE_OVERRIDE, name=str(override))
     form = _form_reason(record.override)
     if form is not None:
         release.failed.append(FailedItem(kind=item.kind, name=item.name, reason=form))
+        return
+    if blocked is not None:
+        release.failed.append(FailedItem(kind=item.kind, name=item.name, reason=blocked))
         return
     if symlinked_part(root, record.override) is not None:
         release.failed.append(FailedItem(kind=item.kind, name=item.name, reason=SYMLINK_REASON))
@@ -240,7 +299,12 @@ def _set_override_state(git_dir: str, state: ResourceState) -> None:
 
 
 def _database_step(
-    entry: WorktreeEntry, root: Path, release: Release, password: str | None, dry_run: bool
+    entry: WorktreeEntry,
+    root: Path,
+    release: Release,
+    password: str | None,
+    dry_run: bool,
+    blocked: str | None,
 ) -> None:
     """Remove each recorded database: a SQLite copy and its side files, or a Postgres database."""
     for record in entry.databases:
@@ -251,6 +315,13 @@ def _database_step(
                 # No side file is looked for, and the record is not marked `removing`.
                 release.failed.append(
                     FailedItem(kind=ItemKind.SQLITE_FILE, name=str(root / record.path), reason=form)
+                )
+                continue
+            if blocked is not None:
+                release.failed.append(
+                    FailedItem(
+                        kind=ItemKind.SQLITE_FILE, name=str(root / record.path), reason=blocked
+                    )
                 )
                 continue
             if symlinked_part(root, record.path) is not None:
@@ -306,7 +377,9 @@ def _drop_database_record(git_dir: str, kind: str) -> None:
 # --- wtenv's section of the env file (cli.md: third) ---------------------------------------------
 
 
-def _env_step(entry: WorktreeEntry, root: Path, release: Release, dry_run: bool) -> None:
+def _env_step(
+    entry: WorktreeEntry, root: Path, release: Release, dry_run: bool, blocked: str | None
+) -> None:
     """Remove wtenv's section, and the file when wtenv made it and nothing else is in it."""
     record = entry.env_file
     if record is None:
@@ -316,6 +389,9 @@ def _env_step(entry: WorktreeEntry, root: Path, release: Release, dry_run: bool)
     form = _form_reason(record.path)
     if form is not None:
         release.failed.append(FailedItem(kind=section.kind, name=section.name, reason=form))
+        return
+    if blocked is not None:
+        release.failed.append(FailedItem(kind=section.kind, name=section.name, reason=blocked))
         return
     if symlinked_part(root, record.path) is not None:
         release.failed.append(

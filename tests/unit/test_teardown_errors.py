@@ -216,11 +216,11 @@ def busy_on_the_second(monkeypatch: pytest.MonkeyPatch, entries: list[WorktreeEn
     real = teardown.release_entry
     attempted: list[str] = []
 
-    def release_entry(entry: WorktreeEntry, *, password: str | None = None) -> teardown.Release:
+    def release_entry(entry: WorktreeEntry, **kwargs: Any) -> teardown.Release:
         attempted.append(entry.path)
         if entry.git_dir == entries[1].git_dir:
             raise WtenvError(ErrorCode.REGISTRY_BUSY, "the registry is busy", hint="Try again.")
-        return real(entry, password=password)
+        return real(entry, **kwargs)
 
     monkeypatch.setattr(teardown, "release_entry", release_entry)
     return attempted

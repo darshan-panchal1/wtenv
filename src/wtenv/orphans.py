@@ -243,7 +243,7 @@ def _release(result: GcResult, entry: WorktreeEntry, *, only_if_orphaned: bool) 
                 return
         else:
             _refuse_if_it_exists(current)
-        _add(result, current, teardown.release_entry(current))
+        _add(result, current, teardown.release_entry(current, recheck_path=True))
 
 
 def _refuse_if_it_exists(entry: WorktreeEntry) -> None:
