@@ -1218,7 +1218,7 @@ nothing. Automated by T124–T125 and T130–T134.
 **Purpose**: performance, coverage, CI, release, documentation, and the end-to-end run.
 
 **Order**: part 1, the findings of the first review of the destructive paths (T158–T173);
-then group 9S, the safety fixes from the second review (T174–T213); then part 2, polish,
+then group 9S, the safety fixes from the second and third reviews (T174–T222); then part 2, polish,
 CI, and release (T136–T148). Part 2 runs after group 9S.
 
 ### Part 1: findings of the review of the destructive paths (2026-10-05)
@@ -1555,6 +1555,59 @@ exit status is 13 (0 for a dry run). Every test removes its decoys.
     Reuses `override_problem`. After it, mutation-check "`up` never overwrites a file
     without wtenv's header": break the check, see T212 fail, restore it byte for byte.
 
+- [ ] T214 Add failing tests for `up` over a hand-edited recorded value to `tests/unit/test_recorded_value_checks.py` and `tests/integration/test_up_recorded_values.py`
+  - FR-088: a temp repository and a temp state directory, never the real registry and never
+    an existing Docker resource. Each test hand-edits one recorded field of a provisioned
+    entry to point at a decoy and runs `up`: the compose project set to the main checkout's
+    project (a name with no `-<id8>` of this entry's git directory); the Postgres name set
+    to another worktree's name; the Postgres host set to a remote host; the SQLite path set
+    to a path outside `.wtenv/` (`../main/db.sqlite3`, an absolute path, `data/db.sqlite3`).
+    Each → exit 11, `ownership_conflict`, `details.kind` the item kind, the reason naming the
+    field; the registry file is byte-identical, no file is written (env file, override,
+    exclude block), the decoy (the main checkout's file, a path outside `.wtenv/`) is
+    untouched, and no Docker or Postgres call is made for the failing field. A recorded
+    value that passes still gives an unchanged `up`.
+- [ ] T215 Check recorded compose project, Postgres database, and SQLite path before `up` reuses them, in `src/wtenv/provision.py`, `src/wtenv/compose.py`, `src/wtenv/database.py`, and `src/wtenv/identity.py`
+  - FR-088, cli.md, `wtenv up`, steps 5 and 7; runs in `_compose_plan` and `_database_plan`,
+    before anything changes. Reuse `compose.project_problem` and the name-plus-`<id8>` and
+    local-host checks of `remove_postgres_database` (factor them out as a function both call;
+    `down`'s behaviour does not change), and move `teardown._sqlite_form_reason` to
+    `identity` so both call it. After it, mutation-check "`up` never reuses a recorded value
+    that fails the `down` checks": break the code, see T214 fail, restore it byte for byte.
+- [ ] T216 Add failing tests for the override header recheck to `tests/unit/test_compose_checks.py`
+  - FR-087: the override's header is removed or the file is replaced after the plan but
+    before the write (the database step edits it, or the test calls the write step directly
+    after changing the file) → `ownership_conflict`, `details.kind` `compose_override`, the
+    file byte-identical. The same before the unlink of a recorded override that `up` removes
+    because `[compose]` is gone.
+- [ ] T217 Check the override header again immediately before `up` rewrites or deletes it, in `src/wtenv/compose.py` and `src/wtenv/provision.py`
+  - FR-087, cli.md, `wtenv up`, step 5. Call `compose.override_problem` just before
+    `write_override` and before the unlink in `_remove_override`, as `teardown` does before
+    its unlink. After it, T216 passes.
+- [ ] T218 Add failing tests for `up` over a SQLite copy left in `removing` to `tests/unit/test_up_database.py`
+  - FR-088: a recorded SQLite copy in state `removing` whose file still exists → `up` exits
+    with `unsupported`, `details.reason` `interrupted_removal`, `name` the copy's path; the
+    copy, the registry, and every other file are unchanged. After `down`, `up` works.
+- [ ] T219 Refuse to reuse a SQLite copy in `removing` in `src/wtenv/provision.py`
+  - FR-088, cli.md, `wtenv up`, step 7. Raise the error of `_interrupted_removal` (generalised
+    to take the name or path) for state `removing` before the copy is adopted. After it,
+    T218 passes.
+- [ ] T220 Add failing tests for `down` over an env file that git tracks to `tests/unit/test_teardown_env.py` and `tests/integration/test_us4_down.py`
+  - FR-018: `git add -f` of the env file after `up` (once with `created_file` set) → `down`
+    exits 13, the `env_section` item is under `failed` with `reason` `tracked_by_git`, the
+    entry stays `incomplete`, the file is byte-identical and not deleted. `--dry-run`: the
+    item under `failed`, exit 0. An env file that git does not track is removed as before.
+- [ ] T221 Fail the env-section item of `down` when git tracks the env file, in `src/wtenv/teardown.py`
+  - FR-018, cli.md, `wtenv down`. Use `gitutil.is_tracked` in `_env_step`, after the form,
+    blocked, and symlink checks and before the record is marked `removing`. After it, T220
+    passes.
+
+**Closing the found-after-the-close pairs**
+
+- [ ] T222 Check the new group
+  - Every ID in T212–T221 is unique, T214–T221 cite an FR that exists in `spec.md`, and the
+    full unit and integration suites, ruff, and mypy pass with no integration test skipped.
+
 ### Part 2: polish, CI, and release
 
 Runs after group 9S.
@@ -1634,7 +1687,7 @@ Runs after group 9S.
   command delivered so far.
 - **Review follow-ups (2026-10-05)**: groups 3F and 6G (FR-086) run after Phase 7, 3F
   first. The review tasks T158–T173 in Phase 9 (part 1) follow them.
-- **Review 2 (2026-10-06)**: group 9S (T174–T213) follows part 1. T174 and T175 come
+- **Review 2 (2026-10-06)**: group 9S (T174–T222) follows part 1. T174 and T175 come
   first; T176–T178 are written next and fail until the pairs they name are done; T211
   closes the group. The pairs run in ID order where they share a file. T212 and T213 were
   added after T211 (FR-087).

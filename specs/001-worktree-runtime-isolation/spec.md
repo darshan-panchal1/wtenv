@@ -560,7 +560,9 @@ reported with its own code and that `doctor` changed nothing.
 - **FR-018**: Files that wtenv generates inside a worktree MUST NOT show up as untracked
   changes in git. wtenv MUST achieve this by adding its own entries to the repository's
   `.git/info/exclude`, MUST preserve every other line of that file, and MUST NOT modify
-  `.gitignore` or any other tracked file.
+  `.gitignore` or any other tracked file. `down` and `gc` MUST NOT rewrite or delete an env
+  file that git tracks, even when wtenv once created it: they MUST report the env section as
+  not removed, keep it recorded, and exit with the partial-failure status.
 - **FR-019**: An env file created by wtenv MUST be readable and writable only by its owner.
   Credentials MUST NOT be stored in the registry and MUST NOT appear in any wtenv output.
 
@@ -625,7 +627,19 @@ reported with its own code and that `doctor` changed nothing.
   ownership-conflict error, reason naming the override path, and MUST change nothing; the
   file stays byte for byte as it was. A file that still starts with the header line and
   differs from what `up` would write is stale, and `up` rewrites it as before. A recorded
-  override that does not exist is created again.
+  override that does not exist is created again. `up` MUST check the header line again
+  immediately before it rewrites or deletes the override, not only when it plans the run, so
+  a file the developer replaced in between is never overwritten.
+- **FR-088**: `up` MUST reuse a recorded value only when it passes the checks `down` applies
+  to it (cli.md, `wtenv down`, "Recorded values"): the compose project name, the Postgres
+  database name and host, and the SQLite copy's path. The registry is a file a person can
+  edit, and a value that points at another worktree's or the main checkout's resource
+  would otherwise be written into the override and the env file. When a recorded value fails
+  its check, `up` MUST fail with the stable ownership-conflict error, reason naming the field,
+  and MUST change nothing. `up` MUST also refuse to reuse a SQLite copy whose record is in state
+  `removing` (an interrupted `down` may have removed its `-wal` file first): it MUST fail with the
+  stable `unsupported` error, reason `interrupted_removal`, as it does for a Postgres database
+  that a drop half removed, and MUST change nothing.
 
 **Post-up commands**
 

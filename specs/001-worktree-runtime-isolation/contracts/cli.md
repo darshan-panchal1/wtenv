@@ -135,11 +135,21 @@ resource. Nothing is changed unless all of them pass.
    (files.md, Compose override file); otherwise `ownership_conflict`, with `details.kind`
    `compose_override` and `name` the override path, and nothing changes (FR-087). A file
    that has the header and is only out of date passes, and step 11 rewrites it. A recorded
-   override that is missing passes, and step 11 creates it again.
+   override that is missing passes, and step 11 creates it again. The header is checked again
+   in step 11, immediately before the override is rewritten or deleted (FR-087). A recorded compose
+   project must pass the compose-project check of `wtenv down`, "Recorded values"; otherwise
+   `ownership_conflict`, with `details.kind` `compose_project`, `name` the recorded
+   project, and nothing changes (FR-088).
 6. Check that the block holds all port variables and published ports. Otherwise
    `config_invalid` with `details.min_block_size` (FR-014, FR-032).
 7. If a database is configured: check that the URL pattern resolves and names a local host.
    For SQLite, `.wtenv/` and the copy's path must not be symbolic links (step 4).
+   A recorded Postgres database must pass the database check of `wtenv down`, "Recorded
+   values" (name, `<id8>`, local host), and a recorded SQLite path must be exactly
+   `.wtenv/<file name>`; otherwise `ownership_conflict`, with `details.kind`
+   `postgres_database` or `sqlite_file`, `name` the recorded name or path, and nothing
+   changes (FR-088). A SQLite copy recorded in state `removing` is not reused: `unsupported`,
+   reason `interrupted_removal`, `name` the copy's path; run `wtenv down` first (FR-088).
 
    *From here on, `up` changes things, in this order:*
 8. Registry: create the entry, or record a new location (FR-084); allocate a block when the
@@ -240,6 +250,10 @@ nothing is done for it:
 Volumes are not recorded: they are found by the label of the recorded project, so the
 project check covers them.
 
+`wtenv up` applies the same checks to the compose project, the Postgres database (name and
+host), and the SQLite copy before it reuses them, and fails with `ownership_conflict` (exit 11)
+and a `reason` naming the field when one fails (FR-088; `wtenv up`, steps 5 and 7).
+
 After that: databases; wtenv's section of the env file (and the file itself when wtenv created it and
 nothing else is in it); registry entry and port block; and, when this was the last
 registered worktree of the repository, wtenv's entries in `.git/info/exclude` (FR-085).
@@ -255,6 +269,11 @@ registered worktree of the repository, wtenv's entries in `.git/info/exclude` (F
 - A file that cannot be changed or deleted (an `OSError`, such as a read-only directory)
   is an item under `failed`, with a `reason` naming the path and the system's error; it
   stays recorded, and the exit status is 13.
+- Tracked env file (FR-018): when git tracks the recorded env file (the developer force-added
+  it after `up`), `down` does not rewrite or delete it. The `env_section` item is reported
+  under `failed` with `reason` `tracked_by_git`, stays recorded, and the exit status is 13.
+  With `--dry-run`, it is listed under `failed` instead of `would_remove`, and the exit status
+  stays 0.
 - A worktree with no registry entry: success, nothing changed (FR-043).
 - A recorded item that is already gone is reported under `already_absent`; that is not an
   error (FR-042).

@@ -89,3 +89,14 @@ T158–T173. Its findings became readings R8 and R9 and tasks T174–T211
 | Idea | Why it is not in v1 |
 |------|---------------------|
 | **Opt-in removal of a fixed-name volume that this worktree's project created** (R8). `down` and `gc` keep every labelled volume whose name does not start with `<project>_` and list it in `kept_volumes` with reason `fixed_name`. An option could remove one when no other project's container mounts it, with `--dry-run` available. | A volume with a fixed `name:` is shared by the main checkout and every worktree, and its label only says which project created it first (Principle II). |
+
+## From review 3 of the destructive paths (2026-10-06)
+
+Source: the third read-only review, after group 9S and T212/T213. Its MEDIUM finding and three
+of its LOW findings became tasks T214–T221
+(`specs/001-worktree-runtime-isolation/tasks.md`, group 9S, "Found after the close"). The rest
+did not.
+
+| Idea | Why it is not in v1 |
+|------|---------------------|
+| **Remaining LOW findings of review 3**: (1) recorded `exclude_patterns` are added to the exclude block unchecked, and a hand-edited pattern can hide untracked files or raise `ValueError`; (2) `_finish` trusts the recorded `repository` for the exclude path; (3) `check_sqlite_target` then `os.replace` leaves a millisecond race (use `os.link`); (4) lines a developer writes between the markers are dropped without a warning (`env_section_edited`); (5) `gc` treats a worktree whose parent directory is an unmounted mount point or was renamed by hand as an orphan once git has pruned it (treat an empty parent as `parent_missing`, document `git worktree lock`); (6) the `<project>_` prefix rule covers volumes but not networks with a fixed `name:`; (7) `down` and `gc` do not check that the Docker endpoint is local; (8) `gc --dry-run` takes no worktree lock, so it can list an entry that a real run reports as `skipped_busy`, and run-time failures show as `would_remove`. | Each needs a hand-edited registry, a race of milliseconds, or an unusual setup, and none removes a resource wtenv did not create without that. Items 4 and 8 follow from documented behaviour (FR-076). Add the ones the maintainer picks as task pairs. |
