@@ -79,3 +79,13 @@ Readings table; T162, T163).
 | Idea | Why it is not in v1 |
 |------|---------------------|
 | **Opt-in cleanup of anonymous volumes of removed projects** (R6, 2026-10-05), for example `down --anonymous-volumes`. Anonymous volumes carry no compose label (probe on Docker 29.5.3, Compose 5.1.4), so `down` and `gc` keep them and list them in `kept_volumes`. The option would remove those that only the removed project's containers mounted, and only with `--dry-run` available. | Nothing but the container's mount ties an anonymous volume to a project, and a volume can hold data the developer wants (Principle II), so v1 never removes one. |
+
+## From review 2 of the destructive paths (2026-10-06)
+
+Source: the second read-only review of everything `down` and `gc` can delete, after
+T158–T173. Its findings became readings R8 and R9 and tasks T174–T211
+(`specs/001-worktree-runtime-isolation/tasks.md`, group 9S); this idea did not.
+
+| Idea | Why it is not in v1 |
+|------|---------------------|
+| **Opt-in removal of a fixed-name volume that this worktree's project created** (R8). `down` and `gc` keep every labelled volume whose name does not start with `<project>_` and list it in `kept_volumes` with reason `fixed_name`. An option could remove one when no other project's container mounts it, with `--dry-run` available. | A volume with a fixed `name:` is shared by the main checkout and every worktree, and its label only says which project created it first (Principle II). |

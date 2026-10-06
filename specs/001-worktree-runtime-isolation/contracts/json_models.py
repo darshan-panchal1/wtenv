@@ -91,6 +91,8 @@ class WarningCode(StrEnum):
 
     ENV_DUPLICATE_VARIABLE = "env_duplicate_variable"
     COMPOSE_FIXED_CONTAINER_NAME = "compose_fixed_container_name"
+    # A compose volume with a fixed `name:` (reading R8): `down` and `gc` never remove it.
+    COMPOSE_FIXED_VOLUME_NAME = "compose_fixed_volume_name"
     WORKTREE_MOVED = "worktree_moved"
     CONFIG_IGNORED = "config_ignored"
 
@@ -164,6 +166,9 @@ class UnverifiableReason(StrEnum):
     GIT_STILL_LISTS = "git_still_lists"
     MOVED = "moved"
     PATH_EXISTS = "path_exists"
+    # The directory that holds the recorded path is missing, so the worktree may only be on
+    # a drive that is not mounted, or under a renamed directory (reading R9).
+    PARENT_MISSING = "parent_missing"
 
 
 class ResourceState(StrEnum):
@@ -261,8 +266,10 @@ class KeptVolume(Model):
     name: str
     # The compose project it was found with.
     project: str
-    # Why it was left: "unlabelled", it lacks `com.docker.compose.project=<project>`.
-    reason: Literal["unlabelled"]
+    # Why it was left: "unlabelled", it lacks `com.docker.compose.project=<project>`
+    # (reading R6); "fixed_name", it has the label but its name does not start with
+    # `<project>_`, so the compose file gave it a fixed `name:` (reading R8).
+    reason: Literal["unlabelled", "fixed_name"]
 
 
 # --------------------------------------------------------------------------------------

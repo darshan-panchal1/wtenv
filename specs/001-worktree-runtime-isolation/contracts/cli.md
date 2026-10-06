@@ -82,7 +82,7 @@ Stable from the first release (Principle IV). One code, one exit status.
 | `registry_busy`, `worktree_busy` | `waited_seconds` |
 | `registry_unreadable` | `path`; `reason`: `invalid_json`, `invalid_schema`, `unknown_version`, `not_readable`, or `lock_unsupported` |
 | `problems_found` | `problems` (count) |
-| `worktree_exists` | `path`; `current_path` when the worktree was moved |
+| `worktree_exists` | `path`; `current_path` when the worktree was moved; `not_attempted` (`gc --release` stopped at a worktree that reappeared: the named paths it did not get to, in command-line order) |
 | `unsupported` | `reason`: `compose_port_range`, `compose_port_clash`, `compose_env_override`, `compose_verification_failed`, `hooks_path_redirected`, `hook_not_shell`, `markers_damaged`, or `interrupted_removal`; `service` or `file` where it applies |
 | `internal_error` | `exception` (class name) |
 
@@ -97,7 +97,7 @@ Stable from the first release (Principle IV). One code, one exit status.
 | `incomplete` | An `up` or `down` was interrupted or partly failed (this includes a failed post-up command) |
 | `unprovisioned` | A worktree of the current repository with no registry entry |
 | `orphaned` | All three checks of FR-045 hold; `gc` will release it |
-| `unverifiable` | The worktree cannot be found as recorded, but its removal is not confirmed. `reason` is `repository_not_found`, `git_still_lists`, `moved`, or `path_exists` |
+| `unverifiable` | The worktree cannot be found as recorded, but its removal is not confirmed. `reason` is `repository_not_found`, `git_still_lists`, `moved`, `path_exists`, or `parent_missing` (the directory that holds the recorded path is missing, for example a drive that is not mounted, after git has pruned the worktree; reading R9) |
 
 ---
 
@@ -121,8 +121,12 @@ resource. Nothing is changed unless all of them pass.
    not tracked by git, writable, markers intact. Otherwise `env_file_unusable`. Neither the
    path nor any directory between the worktree root and it may be a symbolic link;
    otherwise `env_file_unusable`, reason `symlink` (FR-086). The same rule applies to the
-   override path in step 5, to `.wtenv/` and the SQLite copy in step 7, and to a recorded
-   env file or override that a configuration change makes `up` remove.
+   override path in step 5, to `.wtenv/` and the SQLite copy in step 7, to a recorded
+   env file or override that a configuration change makes `up` remove, and to the
+   repository's `.git/info/exclude` (step 9; `path` is the link). A recorded env file or
+   override that `up` would remove must also pass the checks of recorded values (`wtenv
+   down`, "Recorded values"); otherwise `ownership_conflict`, with `details.kind` the item
+   kind and `name` the recorded path, and nothing changes.
 5. If compose is configured: check Docker and the Compose version, the compose file's name,
    that no override file of the developer's exists, and that `COMPOSE_PROJECT_NAME` and
    `COMPOSE_FILE` are not set. Resolve the compose file and count the ports it publishes.
@@ -168,7 +172,12 @@ wtenv: provisioned /code/feature-x
 `released`.
 
 **Warnings**: `env_duplicate_variable` (FR-080), `compose_fixed_container_name`,
-`worktree_moved`.
+`compose_fixed_volume_name`, `worktree_moved`.
+
+`compose_fixed_volume_name` (reading R8): the resolved compose model has a top-level volume,
+not `external`, whose `name` is not `<model name>_<volume key>`, so it was given a fixed
+`name:`. `details` has `volume` (the key) and `name`. Every worktree and the main checkout
+share such a volume, so `down` and `gc` never remove it (`wtenv down`).
 
 **Exit statuses**: 0, 3, 4, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 19.
 
@@ -186,18 +195,45 @@ Releases everything the registry records for the current worktree (FR-038).
 volume carry none. So, before `docker compose down`, wtenv runs `docker inspect` on the
 project's containers (found by the label) and collects the volumes they mount. Then:
 
-- each volume labelled `com.docker.compose.project=<recorded project name>` is removed by
-  name, as its own item in `removed` or, with `--dry-run`, `would_remove`;
+- each volume labelled `com.docker.compose.project=<recorded project name>` whose name
+  starts with `<recorded project name>_` is removed by name, as its own item in `removed`
+  or, with `--dry-run`, `would_remove`;
+- each volume with that label whose name does not start with `<recorded project name>_`
+  was given a fixed `name:` in the compose file, and other worktrees and the main checkout
+  share it (reading R8). It is never removed and never named in a removal command. It is
+  reported in `kept_volumes` with `name`, `project`, and `reason` `fixed_name`, with or
+  without `--dry-run`. `up` warns about such a volume (`compose_fixed_volume_name`);
 - each mounted volume without that label, anonymous or external, is never removed and
   never named in a removal command. It is reported in `kept_volumes` with `name`, `project`
   (the recorded project name), and `reason` `unlabelled`, with or without `--dry-run`. The
   inspection runs for `--dry-run` too, and changes nothing. A project with no container
-  left has nothing to inspect, so no volume is reported for it.
+  left has nothing to inspect, so no unlabelled volume is reported for it.
 
-**Known limit**: an anonymous volume of a removed project stays on disk, listed in
-`kept_volumes`, because nothing but the container's mount ties it to the project. Remove it
+**Known limits**: an anonymous volume of a removed project stays on disk, listed in
+`kept_volumes`, because nothing but the container's mount ties it to the project. A volume
+with a fixed name stays too, even when this worktree's project created it. Remove either
 yourself with `docker volume rm NAME` once you are sure it holds nothing you need. An opt-in
-cleanup is on the roadmap (docs/roadmap.md).
+cleanup of anonymous volumes is on the roadmap (docs/roadmap.md).
+
+**Recorded values.** The registry is a file a person can edit, so `down` acts on a recorded
+value only when it has the form wtenv records. Each check runs before anything is listed,
+inspected, connected to, or deleted, in a dry run as in a real one. A value that fails is
+an item under `failed` (the exit status is 13; with `--dry-run`, 0), its record stays, and
+nothing is done for it:
+
+- compose project: matches `wtenv-[a-z0-9-]{1,40}-[0-9a-f]{8}` in full, and its last 8
+  digits are the `<id8>` of the entry's own git directory (files.md, Names). Otherwise
+  nothing of the project is listed or removed, and the override file is kept with it;
+- Postgres database: the name matches `wtenv_[a-z0-9_]{1,40}_[0-9a-f]{8}` in full and ends
+  in `_<id8>` of the entry's own git directory; the host is `localhost`, `127.0.0.1`, or
+  `::1`. Both are checked before connecting;
+- env file, override file, and SQLite copy: the recorded path is relative, unchanged by
+  normalisation, and has no `..` part. The SQLite copy is exactly `.wtenv/<file name>`. The
+  override's file name is one of the four in files.md, Names, and the file starts with
+  wtenv's header line (files.md, Compose override file) before it is deleted.
+
+Volumes are not recorded: they are found by the label of the recorded project, so the
+project check covers them.
 
 After that: databases; wtenv's section of the env file (and the file itself when wtenv created it and
 nothing else is in it); registry entry and port block; and, when this was the last
@@ -209,6 +245,11 @@ registered worktree of the repository, wtenv's entries in `.git/info/exclude` (F
   as the database file's own item. A side file that does not exist is not listed. Side files
   are removed only together with the recorded database file: when the recorded copy is
   already gone, it is reported under `already_absent` and its side files are left in place.
+  A side file that is a symbolic link (SQLite never makes one) puts the copy and each of its
+  side files under `failed` with `reason` `symlink`, and none of them is deleted.
+- A file that cannot be changed or deleted (an `OSError`, such as a read-only directory)
+  is an item under `failed`, with a `reason` naming the path and the system's error; it
+  stays recorded, and the exit status is 13.
 - A worktree with no registry entry: success, nothing changed (FR-043).
 - A recorded item that is already gone is reported under `already_absent`; that is not an
   error (FR-042).
@@ -220,7 +261,11 @@ registered worktree of the repository, wtenv's entries in `.git/info/exclude` (F
   it. The item is reported under `failed` with `reason`
   `symlink`, stays recorded, and the exit status is 13, as for damaged markers. For the
   SQLite copy, its side files are neither listed nor touched. With `--dry-run`, the item is
-  listed under `failed` instead of `would_remove`, and the exit status stays 0.
+  listed under `failed` instead of `would_remove`, and the exit status stays 0. A link in
+  a directory above the worktree root, which only `gc` can meet because it uses the
+  recorded path, puts every file item under `failed` with `reason` `symlink` in the same
+  way. The same rule covers the repository's `.git/info/exclude`: when it is a link, the
+  `exclude_entries` item is `failed` with `reason` `symlink`.
 - `down` uses only the registry. A missing or invalid `wtenv.toml` does not stop it; an
   invalid one produces the warning `config_ignored`.
 - The Postgres password for the drop comes from `wtenv.toml` when it resolves, otherwise from
@@ -253,8 +298,20 @@ Releases registry entries whose worktrees git confirms are gone, across all repo
    includes the symbolic-link rule of `down` (FR-086): such an item goes under `failed`
    with `reason` `symlink`, the entry stays recorded and is not listed under `released`,
    and the exit status is 13. Volumes of the entry's compose project are handled as for
-   `down`: a volume without the project label is never removed and is reported in
-   `kept_volumes` with `reason` `unlabelled`, with or without `--dry-run`.
+   `down`: a volume without the project label, or with a fixed name, is never removed and
+   is reported in `kept_volumes` with `reason` `unlabelled` or `fixed_name`, with or
+   without `--dry-run`. The recorded-value checks of `down` apply too.
+   After the compose step and before the first file is touched, `points_to` is read again
+   on the recorded path. If it now names a git directory that exists, a worktree has
+   appeared there, and every file item of the entry is `failed` with `reason`
+   `worktree_exists`; the entry stays.
+5. When the run releases the last entries of a repository, the last one also removes the
+   `exclude_entries` block. A dry run lists that item for the same entry, because it counts
+   the entries it would release as gone.
+
+If anything else stops the release of an entry with an error (for example
+`registry_busy`), `gc` stops there and prints its result as it stands: the entries and
+items already released are reported, and `error` holds the error, with its exit status.
 
 Entries that are `unverifiable` are reported under `kept` with their reason. Entries of
 existing worktrees are not touched and not listed. Neither `kept` nor `skipped_busy` changes
@@ -271,12 +328,19 @@ the exit status.
    `PATH` matches the entry recorded at `PATH` made absolute, or else the one recorded at
    its resolved path, so an entry whose recorded path is now a symbolic link is still found;
    its files are then left alone under the symbolic-link rule of `down` (FR-086).
+   An entry whose recorded git directory still exists is refused with `worktree_exists`
+   too: git still has that worktree, perhaps moved by hand or under a renamed directory.
+   The hint says to run `git worktree repair` from the new location, or
+   `git worktree prune`, first.
 2. A `PATH` with no entry is reported under `no_entry`. That is not an error, so the command
    can be repeated safely.
 3. Each remaining entry is released as `down` would, with the same lock rule as plain `gc`.
    Holding the lock, immediately before each delete, the step-1 check is repeated. If the
    worktree has reappeared, that entry is stopped with `worktree_exists` (exit 18) and
-   nothing of it is changed.
+   nothing of it is changed. The entries released before it stay in the result. The named
+   paths after it are not attempted; they are listed in `error.details.not_attempted` and
+   in the message. When an earlier entry has items under `failed`, the hint says so, since
+   exit 18 hides the partial failure.
 
 **Credentials**: `gc` has no `wtenv.toml` to read. The Postgres password comes from the libpq
 sources. Without it, the database is reported under `failed`, stays recorded, and the exit

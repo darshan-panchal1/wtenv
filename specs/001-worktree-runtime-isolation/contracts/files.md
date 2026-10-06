@@ -22,7 +22,9 @@ creation and never recomputed, so they survive a move (FR-022, FR-084).
 | Compose override | Beside the compose file: `compose.override.yaml` for `compose.yaml`, `compose.override.yml` for `compose.yml`, `docker-compose.override.yaml` for `docker-compose.yaml`, `docker-compose.override.yml` for `docker-compose.yml` | `/code/feature-x/compose.override.yaml` |
 
 All names start with `wtenv`, so they are recognisable (FR-022). Recognising a name is never
-a reason to remove something; only the registry is (FR-039).
+a reason to remove something; only the registry is (FR-039). The converse holds too: `down`
+and `gc` act on a recorded name or path only when it has the form in this table, with the
+`<id8>` of the entry's own git directory (cli.md, `wtenv down`, "Recorded values").
 
 ## Env file section
 

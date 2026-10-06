@@ -142,6 +142,10 @@ changes, or when the entry is released (FR-011).
 The project's containers, networks, and volumes are not listed in the registry: Docker
 labels them with the project name, and every resource with the label
 `com.docker.compose.project=<project>` belongs to the recorded project (constitution v1.0.1).
+One exception (reading R8): a labelled volume whose name does not start with `<project>_`
+was given a fixed `name:` in the compose file, gets the label of whichever project created
+it first, and is shared. `down` and `gc` keep it and report it in `kept_volumes`, reason
+`fixed_name`.
 
 ### Hook record (`HookRecord`)
 
@@ -206,6 +210,15 @@ nothing. `down` and `gc` report the item under `failed` with reason `symlink`: i
 stays, the entry stays `incomplete`, and a later run removes the item once the link is
 gone.
 
+Recorded values: the registry can be edited by hand, so `down`, `gc`, and the removals in
+`up` act on a recorded value only when it has the form wtenv writes (cli.md, `wtenv down`,
+"Recorded values"). The compose project is `wtenv-<slug>-<id8>` and the Postgres database
+`wtenv_<slug>_<id8>`, with `<id8>` that of the entry's own `git_dir`, which is the registry
+key and never changes. Recorded paths are relative, unchanged by normalisation, and free of
+`..`; the SQLite copy is exactly `.wtenv/<file name>`; the override has one of the four
+override file names and starts with wtenv's header. A value that fails is not acted on:
+`down` and `gc` report it under `failed`, and `up` fails with `ownership_conflict`.
+
 ## Write order of `up`
 
 Principle II: nothing is created that is not already recorded. `up` therefore writes in this
@@ -251,8 +264,14 @@ when that fails.
    1. Something exists at `entry.path`: **unverifiable**, `path_exists`.
    2. `listing` lists `entry.path` (another record at that path): **unverifiable**,
       `git_still_lists`.
-   3. Otherwise: **orphaned**. All three checks of FR-045 hold: the repository answers, git
-      has neither this worktree nor anything at its path, and nothing exists at the path.
+   3. The directory that holds `entry.path` is missing: **unverifiable**, `parent_missing`
+      (reading R9). Git prunes a worktree whose location has been missing for longer than
+      `gc.worktreePruneExpire`, so a worktree on a drive that is not mounted, or under a
+      renamed directory, reaches this step with nothing at its path. A missing parent says
+      the path may only be out of reach, not that the worktree is gone.
+   4. Otherwise: **orphaned**. All three checks of FR-045 hold: the repository answers, git
+      has neither this worktree nor anything at its path, and nothing exists at the path,
+      whose directory does.
 
 Worktrees of the current repository that appear in `listing`, exist on disk, and whose
 `points_to` is not a registry key are shown as **unprovisioned** by `ls`.

@@ -110,6 +110,25 @@ Decided by the maintainer after the review of the destructive paths (finding MED
   removed, with reason `symlink`, exit with the partial-failure status, and keep it
   recorded (FR-086).
 
+### Session 2026-10-06
+
+Decided by the maintainer after the second review of the destructive paths:
+
+- Q: A compose volume declared with a fixed `name:` gets the label of whichever project
+  created it first, so a worktree's `down` could delete a volume the main checkout shares.
+  What do `down` and `gc` do with it? → A: they remove only labelled volumes whose name
+  starts with `<project>_`, and report any other labelled volume as kept, reason
+  `fixed_name`. `up` warns when the compose file declares such a volume (reading R8;
+  FR-039).
+- Q: Git prunes a worktree whose location has been missing for months, so a worktree on an
+  unmounted drive or under a renamed directory can pass every FR-045 check. Is it
+  orphaned? → A: no. An entry whose recorded path has a missing parent directory is
+  `unverifiable`, reason `parent_missing`, and is released only when named (reading R9;
+  FR-072, FR-073).
+- Q: May `gc` release a named entry while git still has its git directory (a worktree moved
+  by hand, or under a renamed directory)? → A: no. It is refused like a live worktree; the
+  developer runs `git worktree repair` or `git worktree prune` first (FR-073).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Port and env isolation (Priority: P1)
@@ -271,8 +290,8 @@ entry are still there.
    confirm (its drive is not mounted, its repository was renamed, moved, or deleted, or its
    directory was deleted by hand while git still lists it), **When** `wtenv gc` is run,
    **Then** nothing of it is removed, and it is reported as `unverifiable` with the reason.
-9. **Given** an unverifiable worktree, **When** `wtenv gc` is run with that worktree's
-   recorded path named explicitly, **Then** its resources and registry entry are removed
+9. **Given** an unverifiable worktree whose git directory git no longer has, **When**
+   `wtenv gc` is run with that worktree's recorded path named explicitly, **Then** its resources and registry entry are removed
    and the command reports each item it removed.
 
 ---
@@ -429,7 +448,8 @@ reported with its own code and that `doctor` changed nothing.
   because git cannot tell this apart from an unmounted drive. It becomes orphaned once the
   developer runs `git worktree prune`. wtenv never runs `git worktree prune` itself.
 - **A worktree is on a drive that is not mounted when `gc` runs**: git still lists it, so
-  it is unverifiable and nothing of it is removed.
+  it is unverifiable and nothing of it is removed. Once git has pruned it, the directory
+  that held it is still missing, so it stays unverifiable (`parent_missing`).
 - **A repository is deleted, with or without its worktrees**: `gc` cannot ask git about it,
   so its entries are unverifiable and nothing of them is removed.
 - **A worktree reappears between `gc` deciding and `gc` deleting** (for example a worktree
@@ -655,14 +675,15 @@ reported with its own code and that `doctor` changed nothing.
   registry with all their resources.
 - **FR-072**: An entry whose worktree cannot be found but which fails any check in FR-045
   MUST be kept and reported as `unverifiable`, with a stable reason that says which check
-  failed: repository not found, git still lists the worktree, the worktree was moved, or
-  the path still exists. Keeping an unverifiable entry is not a failure and MUST NOT change
+  failed: repository not found, git still lists the worktree, the worktree was moved, the
+  path still exists, or the directory that holds the path is missing. Keeping an unverifiable entry is not a failure and MUST NOT change
   the exit status of `gc`.
 - **FR-073**: `gc` MUST release an unverifiable entry only when its recorded worktree path
   is named explicitly on the command line (the option name is set during planning). `gc`
   MUST refuse a named path at which a worktree still exists, and MUST refuse an entry whose
-  worktree was moved and still exists at another location. This form MUST support
-  `--dry-run` and MUST report what it removed in the same way as a plain `gc`.
+  worktree was moved and still exists at another location. It MUST also refuse an entry
+  whose git directory still exists, because git still has that worktree. This form MUST
+  support `--dry-run` and MUST report what it removed in the same way as a plain `gc`.
 - **FR-074**: `gc` MUST repeat the FR-045 checks for each entry immediately before
   releasing it, while holding that entry's worktree lock (FR-076), and MUST skip the entry
   if they no longer hold.

@@ -54,7 +54,7 @@ worktrees or needs Docker carries `pytestmark = pytest.mark.integration`),
   command function (NFR-001).
 - **Scope**: build only what a task says. An idea outside the spec goes to
   `docs/roadmap.md` (Principle X). If a task is ambiguous, stop and ask.
-- **Readings R1–R4** (end of this file) are choices the design documents left open. The
+- **Readings R1–R9** (end of this file) are choices the design documents left open. The
   maintainer has confirmed them, and they are recorded in the contracts. The tasks that
   depend on one say so.
 
@@ -1217,62 +1217,11 @@ nothing. Automated by T124–T125 and T130–T134.
 
 **Purpose**: performance, coverage, CI, release, documentation, and the end-to-end run.
 
-- [ ] T136 [P] Write a local-only test in `tests/unit/test_local_only.py`
-  - Principle I, FR-071: parse every module under `src/wtenv/` with `ast`; no `import` or
-    `from … import` names a top-level module in this closed list: `urllib`, `urllib3`,
-    `http`, `requests`, `httpx`, `aiohttp`, `ftplib`, `smtplib`, `poplib`, `imaplib`,
-    `xmlrpc`, `socketserver`, `ssl`.
-  - `socket` is imported only by `ports.py` and `doctor.py`, for `bind`.
-- [ ] T137 [P] Create the sample app in `tests/fixtures/sample_app/app.py`, `tests/fixtures/sample_app/compose.yaml`, `tests/fixtures/sample_app/wtenv.toml`
-  - Exactly as quickstart.md, "The sample app fixture".
-- [ ] T138 Write the provisioning-time test in `tests/integration/test_up_time.py`
-  - NFR-002, SC-002 on the sample app (URL rewritten to the `postgres_server` port): (a) a
-    first `up` with `[database]` and `post_up` removed; (b) a repeat `up` in a provisioned
-    worktree with the full configuration and `post_up` removed; each under 5 s.
-- [ ] T139 [P] Write the startup benchmark `scripts/bench-startup.sh`
-  - NFR-001: against the installed `wtenv` called directly, from the root of a repository
-    with only its main worktree and an empty registry (`XDG_STATE_HOME` in a temporary
-    directory): `hyperfine --warmup 5 --runs 30 'wtenv --version'` and the same for
-    `'wtenv ls --json'`; exit non-zero when a mean is 300 ms or more.
-- [ ] T140 Run the benchmark on the maintainer's machine and record the result in `docs/benchmarks.md`
-  - Machine model, OS version, wtenv version, both means (NFR-001, SC-004). Needs
-    `hyperfine`; ask the maintainer if it is missing. If a mean fails, stop and ask: the
-    contingency in research.md §8 changes the dependency list.
-- [ ] T141 [P] Write the CI workflow `.github/workflows/ci.yml`
-  - On pushes and pull requests. Matrix `ubuntu-latest` and `macos-latest`, Python 3.11 and
-    3.12, with `astral-sh/setup-uv` and `uv sync --locked`. Each job runs the five gates
-    (plan.md, Build, CI and release; NFR-004); on macOS the Docker tests skip themselves.
-  - The ubuntu jobs have Docker, so the Docker and Postgres integration tests run there
-    with nothing skipped.
-  - Pin each action to a full commit SHA with its version in a comment, as the uv guide does.
-- [ ] T142 Add the NFR-003 coverage check to `.github/workflows/ci.yml`
-  - In one ubuntu job: `uv run pytest --cov=wtenv`, then one
-    `uv run coverage report --fail-under=80 --include=<modules>` per row of plan.md's
-    coverage map: `registry.py` with `locks.py`; `ports.py`; `identity.py`; `config.py`;
-    `database.py`; `compose.py`; `orphans.py`; `envfile.py`. Each row measured on its own.
-- [ ] T143 Run the coverage check locally with Docker available and add tests in `tests/unit/` or `tests/integration/` for any area under 80%
-  - Done when all eight core-area rows of T142 report 80% or more.
-- [ ] T144 [P] Write the release workflow `.github/workflows/release.yml`
-  - On `v*` tags: a `build` job running `uv build` and uploading `dist/`, and a separate
-    `publish` job with `environment: pypi` and `permissions: id-token: write` running
-    `uv publish` with PyPI trusted publishing; no stored credentials (plan.md; research.md
-    §5, §11). The first release uses a "pending" publisher.
-- [ ] T145 [P] Write `README.md` and add `readme = "README.md"` to `pyproject.toml`
-  - Install (`uv tool install wtenv` or `pipx install wtenv`); the nine commands with one
-    example each; `wtenv.toml` (config.md); `--json` and exit statuses (cli.md); platforms
-    (macOS, Linux, WSL2); limits (research.md §1, §4); working with Claude Code
-    (quickstart.md: the `CLAUDE.md` line, no env file in `.worktreeinclude`, `gc` after
-    removal). No feature beyond the spec.
-- [ ] T146 Check `docs/roadmap.md` against the code
-  - The command surface matches cli.md (T130); nothing on the roadmap was built; every idea
-    noted during implementation is added with its source (FR-001, Principle X).
-- [ ] T147 Run quickstart.md end to end and fix what it finds
-  - `uv tool install --force --reinstall .`, extract the script with the `awk` command at the
-    top of quickstart.md, run it with Docker (SC-001–SC-009).
-  - Done when the script prints `ACCEPTANCE PASSED`.
-- [ ] T148 Run the five gates one last time and confirm `CLAUDE.md` still matches the constitution
+**Order**: part 1, the findings of the first review of the destructive paths (T158–T173);
+then group 9S, the safety fixes from the second review (T174–T211); then part 2, polish,
+CI, and release (T136–T148). Part 2 runs after group 9S.
 
-### Findings of the review of the destructive paths (2026-10-05)
+### Part 1: findings of the review of the destructive paths (2026-10-05)
 
 Findings LOW-1, LOW-2, and LOW-4 to LOW-7 of that review: each could remove or overwrite
 something wtenv did not record, or hide an error. LOW-3 is on `docs/roadmap.md`. Run these
@@ -1373,6 +1322,284 @@ after groups 3F and 6G, and before T146–T148. Each pair is a failing test, the
     entry, repeat the step-1 check (`_refuse_if_it_exists`) on the re-read entry. If the
     worktree has reappeared, stop that entry with `worktree_exists`, exit 18.
 
+### 9S. Safety fixes from review 2 (2026-10-06)
+
+The second review of the destructive paths, run after T158–T173, found two ways a
+hand-edited registry makes `down` or `gc` delete something wtenv never created (H1, H2),
+three medium findings (M1–M3), and eight low ones (L1–L8). The maintainer took M1 and M2 as
+readings R8 and R9. Run this group after the findings group above and before part 2 below.
+Each pair is a failing test, then the code. The hand-edited-registry tests (T176–T178) come
+first: they fail until the pairs they name are done, and T211 closes them.
+
+**Contract**
+
+- [ ] T174 Add failing contract tests for readings R8 and R9 to `tests/contract/test_models_match_contract.py`
+  - Reading R8, reading R9, FR-058: as T172, `KeptVolume.reason` accepts `fixed_name` and
+    `unlabelled` and nothing else; `WarningCode.COMPOSE_FIXED_VOLUME_NAME` is
+    `compose_fixed_volume_name`; `UnverifiableReason.PARENT_MISSING` is `parent_missing`;
+    the schemas of `KeptVolume`, `WarningInfo`, `KeptEntry`, `WorktreeView`, `DownResult`,
+    and `GcResult` equal the contract's. The existing schema comparisons already fail once
+    `json_models.py` has the new members; this task adds the explicit member checks.
+- [ ] T175 Port the new members from `json_models.py` to `src/wtenv/output.py`
+  - As T173. T174 and the existing contract tests pass. Comes before every task below that
+    emits `fixed_name`, `compose_fixed_volume_name`, or `parent_missing`.
+
+**Hand-edited registry**
+
+Each test provisions a worktree with `up`, edits one recorded field in `registry.json` to
+point at a decoy the test created outside wtenv, then runs `down --dry-run`, `down`, `gc`
+(after `git worktree remove`), and `gc --release` (after the repository is deleted). In
+every run the decoy is unchanged (same bytes, same containers, same database). A value of a
+form wtenv never records is under `failed` with its record kept, the entry stays, and the
+exit status is 13 (0 for a dry run). Every test removes its decoys.
+
+- [ ] T176 Write failing hand-edited-registry tests for recorded paths in `tests/integration/test_hand_edited_registry.py`
+  - FR-039, FR-044, FR-086: SQLite only, no Docker. `env_file.path` set to a developer file
+    in the worktree (`src/main.py`), to `../outside.env`, and to an absolute path;
+    `databases[sqlite].path` set to `../../notes.db` (with `notes.db-wal` and
+    `notes.db-shm` beside it), to an absolute path, and to `data/notes.db` inside the
+    worktree. `src/main.py` has the form of a recorded path but holds no wtenv section, so
+    it is reported under `already_absent` and left byte for byte, even with
+    `created_file` true. Passes after T182.
+- [ ] T177 Write failing hand-edited-registry tests for the compose project and the override in `tests/integration/test_hand_edited_registry.py`
+  - FR-028, FR-039, FR-040: Docker; skips with a clear message without it. The decoy is a
+    project `decoy-<random>` started with `docker compose -p decoy-<random> up -d`: one
+    container, one network, one labelled named volume holding a file. `compose.project` set
+    to the decoy's name, and to `wtenv-<slug>-<id8 of another git directory>`: nothing of
+    the decoy is listed or removed, and no `docker` command names it. `compose.override` set
+    to `src/main.py`, to `../compose.override.yaml`, to an absolute path, and to a
+    `compose.override.yaml` the developer wrote without wtenv's header: the file is
+    unchanged. The override cases also through `up` with `[compose]` removed from
+    `wtenv.toml`: exit 11, `ownership_conflict`, nothing changed. Passes after T180, T182,
+    and T184.
+- [ ] T178 Write failing hand-edited-registry tests for the Postgres record and for volume names in `tests/integration/test_hand_edited_registry.py`
+  - FR-025, FR-039, FR-070: Postgres; skips with a clear message without it. Decoy
+    databases `precious` and `wtenv_other_<id8 of another git directory>`, each created by
+    the test. `databases[postgres].name` set to each: not dropped; `host` set to a host
+    that is not local: no connection is made. Passes after T208 (`precious` already passes
+    since T169).
+  - Volume names are not a recorded field: volumes are found by the recorded project's
+    label (data-model.md, Compose record), so T177 covers them. A `volumes` list naming a
+    decoy volume added by hand to the `compose` record makes the registry invalid: every
+    command exits 16, `registry_unreadable`, and the decoy volume still exists (Docker;
+    skips without it). This case passes today and guards the schema.
+
+**H1. The compose project name**
+
+- [ ] T179 Add failing tests for the compose project guard to `tests/unit/test_compose_teardown.py`
+  - H1, FR-028, FR-039: with a fake engine that records every command. A recorded project
+    that does not match `^wtenv-[a-z0-9-]{1,40}-[0-9a-f]{8}$` in full, or whose last 8
+    digits are not `short_id(entry.git_dir, 8)`, gives one `compose_project` item under
+    `failed` with the reason "not a project name wtenv generates"; no `docker` command is
+    run, not even a listing; the override file is kept; the compose record stays. The same
+    with `dry_run=True`. A record of the right form for its own git directory is removed as
+    before.
+- [ ] T180 Check the recorded project name before any Docker call, in `src/wtenv/compose.py` and `src/wtenv/teardown.py`
+  - cli.md, `wtenv down`, "Recorded values". `teardown` passes the entry's git directory.
+    The git directory is the registry key and never changes, so real records always pass.
+
+**H2. Recorded paths and the override file**
+
+- [ ] T181 Add failing tests for the recorded path guard to `tests/unit/test_teardown_paths.py`
+  - H2, FR-039, FR-086: for `env_file.path`, `databases[sqlite].path`, and
+    `compose.override`, each of an absolute path, a path with a `..` part, and a path that
+    `posixpath.normpath` changes (`./a`, `a//b`) is one item under `failed` with a reason
+    naming the rule; nothing is unlinked or rewritten; the record stays. A SQLite path that
+    is not exactly `.wtenv/<file name>` (`data/x.db`, `.wtenv/sub/x.db`) fails the same way,
+    and its side files are neither listed nor touched. The same with `dry_run=True`.
+- [ ] T182 Check recorded paths before using them, in `src/wtenv/identity.py` and `src/wtenv/teardown.py`
+  - One helper beside `symlinked_part`, used for all three paths: relative, unchanged by
+    `normpath`, no `..` part (the rule of `config.py`'s `env_file` check). The SQLite form
+    is checked in `teardown.py`.
+- [ ] T183 Add failing tests for the override name and header to `tests/unit/test_teardown_paths.py` and `tests/integration/test_us3_compose.py`
+  - H2, FR-039: a recorded override whose file name
+    is not one of the four in files.md, Names, or whose first line is not wtenv's header,
+    is `failed` in `down` and `gc` and is not deleted. In `up` with `[compose]` removed, or
+    with the compose file moved, the same recorded override makes `up` fail with
+    `ownership_conflict` (`details.kind` `compose_override`, `name` the path) before step 8;
+    nothing changes. The same for a recorded env file that fails T181's checks when
+    `env_file` changed.
+- [ ] T184 Check the override's name and header before deleting it, in `src/wtenv/teardown.py`, `src/wtenv/provision.py`, and `src/wtenv/compose.py`
+  - cli.md, `wtenv up`, step 4, and `wtenv down`, "Recorded values". `up` runs the checks
+    with its link checks, before anything changes (provision.py's check of the old
+    override and old env file).
+
+**M1. Volumes with a fixed name (reading R8)**
+
+- [ ] T185 Add failing tests for fixed-name volumes to `tests/unit/test_compose_teardown.py` and `tests/integration/test_us4_lifecycle.py`
+  - M1, reading R8, FR-039, FR-041: a fake engine holding labelled volumes `<project>_data`
+    and `shared-pgdata`. `<project>_data` is removed and reported; `shared-pgdata` is in
+    `kept_volumes` with reason `fixed_name` and is never named in a `docker volume rm`.
+    The same with `dry_run=True`.
+  - Docker (skips without it): the test's compose file declares a volume with
+    `name: wtenv-test-shared-<random>`, mounted by a service; `docker compose up -d`; then
+    `down --dry-run --json`, `down --json`, and `gc` after the worktree is removed: the
+    volume is in `kept_volumes` with `fixed_name` and still holds the file written into
+    it. The test removes the volume.
+- [ ] T186 Remove only volumes named `<project>_…`, in `src/wtenv/compose.py`
+  - Reading R8; cli.md, `wtenv down`. Any other labelled volume goes to `kept_volumes`,
+    reason `fixed_name`, once per volume and in name order with the unlabelled ones.
+- [ ] T187 Add failing tests for the `compose_fixed_volume_name` warning to `tests/unit/test_compose_model.py`
+  - M1, reading R8: a resolved model whose top-level volume has `name` other than
+    `<model name>_<key>` and is not `external` gives the warning with `details` `volume`
+    and `name`; an external volume and a volume with the default name give none.
+- [ ] T188 Warn about fixed volume names in `parse_model`, in `src/wtenv/compose.py`
+  - cli.md, `wtenv up`, Warnings. The warning reaches `UpResult.warnings` the same way as
+    `compose_fixed_container_name`.
+
+**M2. A missing parent directory (reading R9)**
+
+- [ ] T189 Add failing tests for `parent_missing` to `tests/unit/test_classify.py` and `tests/integration/test_us4_lifecycle.py`
+  - M2, reading R9, FR-045, FR-046, FR-072: unit, an entry whose git directory is gone,
+    which no listing names, and whose recorded path's parent directory is missing →
+    `unverifiable`, `parent_missing`; the same entry with the parent present → `orphaned`.
+    The earlier reasons are unchanged when the parent is also missing.
+  - Integration, real git: a worktree under `<tmp>/drive/`, provisioned with SQLite;
+    `<tmp>/drive` renamed, then `git worktree prune --expire now`. `gc` keeps the entry
+    under `kept` with `parent_missing`, the copy is untouched, and `ls` shows the reason.
+    `gc --release <path>` then releases it.
+- [ ] T190 Classify a missing parent as `parent_missing`, in `src/wtenv/orphans.py`
+  - data-model.md, "Status and the orphan checks", step 4.3. `doctor` and `ls` show the
+    reason without further change.
+
+**M3. Errors in the middle of a release**
+
+- [ ] T191 Add failing tests for an `OSError` in the env and exclude steps to `tests/unit/test_teardown_errors.py`
+  - M3, FR-041, FR-042: `os.unlink` or the atomic write patched to raise `PermissionError`
+    for the env file, and the same for `.git/info/exclude` → the `env_section` (or
+    `env_file`) item, and the `exclude_entries` item, are under `failed` with a reason
+    naming the path and the error; the entry stays `incomplete`; `down` exits 13, not 1.
+- [ ] T192 Turn an `OSError` in a file step into a failed item, in `src/wtenv/teardown.py`
+- [ ] T193 Add failing tests for an error during one entry of `gc` to `tests/unit/test_teardown_errors.py`
+  - M3, FR-041, FR-073: three orphaned entries, the second's release patched to raise
+    `registry_busy`. Plain `gc` and `gc --release` print a `GcResult` whose `released` and
+    `removed` hold the first entry, whose `error.code` is `registry_busy` with its exit
+    status 14, and in which the third entry is not touched.
+- [ ] T194 Catch a `WtenvError` per entry in `gc` and `gc --release`, stop, and return the partial result, in `src/wtenv/orphans.py`
+  - As is already done for `worktree_exists` (cli.md, `wtenv gc`).
+
+**L1–L8**
+
+- [ ] T195 Add a failing test for the exclude item in a `gc` dry run to `tests/integration/test_us4_lifecycle.py`
+  - L1, FR-040, FR-085: the last two entries of a repository, both orphaned. `gc --dry-run`
+    lists the `exclude_entries` item once, and its items equal the real run's `removed`.
+    The same with both named to `gc --release --dry-run`.
+- [ ] T196 Count the entries a dry run would release as gone when deciding the last entry, in `src/wtenv/teardown.py` and `src/wtenv/orphans.py`
+  - Pass the git directories the dry run already plans to release completely to `_finish`
+    and leave them out of `_is_last`.
+- [ ] T197 Add a failing test for the paths `gc --release` did not attempt to `tests/integration/test_us4_lifecycle.py`
+  - L2, FR-041, FR-073: three named paths; the first has a failed item, the second's
+    worktree reappears (patched as in T170). Exit 18; `error.details.not_attempted` is the
+    third path; the message names it; the hint mentions `failed`; `failed[]` still holds
+    the first entry's item.
+- [ ] T198 Report not-attempted paths and an earlier partial failure when `gc --release` stops, in `src/wtenv/orphans.py`
+  - cli.md, `wtenv gc --release`, step 3, and "Error details".
+- [ ] T199 Add a failing test for `gc --release` on an entry whose git directory still exists to `tests/integration/test_us4_lifecycle.py`
+  - L3, FR-046, FR-073: a worktree moved by hand (`mv`, no `git worktree repair`), so it
+    classifies as `git_still_lists`. `gc --release <old path>` → exit 18,
+    `worktree_exists`, a hint naming `git worktree repair` and `git worktree prune`;
+    nothing changes. After `git worktree prune` the release succeeds. Existing tests that
+    release an entry whose git directory still exists are changed to prune first.
+- [ ] T200 Refuse `--release` while the entry's git directory exists, in `_refuse_if_it_exists` in `src/wtenv/orphans.py`
+  - cli.md, `wtenv gc --release`, step 1. The re-check of T171 includes it.
+- [ ] T201 Add a failing test for a worktree that appears at the path during the compose step to `tests/integration/test_us4_lifecycle.py`
+  - L4, FR-073, FR-074: in-process, as T170, a worktree with a different git directory
+    added at the recorded path (`git worktree add -f`), with `.wtenv/`, an env section, and
+    an override, after the compose step and before the disk steps → every file item under
+    `failed` with reason `worktree_exists`; the new worktree's files are unchanged; the
+    entry stays; exit 13. For plain `gc` and `gc --release`.
+- [ ] T202 Read `points_to` again after the compose step in `gc`, in `src/wtenv/teardown.py`
+  - cli.md, `wtenv gc`, step 4. Not for `down`, whose root is the current worktree.
+- [ ] T203 Add a failing test for a link above the root under `gc` to `tests/integration/test_us4_lifecycle.py`
+  - L5, FR-086: the worktree's parent directory replaced, after the worktree is gone, by a
+    link to another directory holding the same file names → `gc --release <path>` puts
+    every file item under `failed` with reason `symlink`; the link's target is unchanged.
+- [ ] T204 Fail the file items when the recorded root does not resolve to itself, in `src/wtenv/teardown.py`
+  - When `os.path.realpath(root) != str(root)`.
+- [ ] T205 Add failing tests for a linked `.git/info/exclude` to `tests/unit/test_exclude.py` and `tests/integration/test_us4_lifecycle.py`
+  - L6, FR-018, FR-086: `info/exclude` is a link to a file outside the repository. `down`
+    of the last entry → `exclude_entries` under `failed`, reason `symlink`; the target is
+    unchanged; exit 13. `up` → exit 7, `env_file_unusable`, reason `symlink`, `path` the
+    link, before anything changes.
+- [ ] T206 Check `symlinked_part(repository, "info/exclude")` before writing the exclude block, in `src/wtenv/exclude.py`, `src/wtenv/teardown.py`, and `src/wtenv/provision.py`
+  - cli.md, `wtenv up`, step 4, and `wtenv down`, symbolic links.
+- [ ] T207 Add failing tests for another worktree's database name to `tests/unit/test_database_remove.py`
+  - L7, FR-039: a recorded name of the right form whose `<id8>` is not that of the entry's
+    git directory → failed item, no connection, nothing dropped; dry run too.
+- [ ] T208 Require the entry's own `<id8>` in the drop guard, in `src/wtenv/database.py`
+  - Extends T169: `name.endswith("_" + short_id(entry.git_dir, 8))`.
+- [ ] T209 Add failing tests for a SQLite side file that is a link to `tests/unit/test_database_remove.py`
+  - L8, FR-039, FR-086: `<copy>-wal` is a link to a file elsewhere → the copy and each side
+    file are under `failed` with reason `symlink`; nothing is unlinked; the link's target
+    is unchanged; the record stays. Dry run too.
+- [ ] T210 Check side files with `lstat` before removing the copy, in `src/wtenv/database.py`
+
+**Closing the group**
+
+- [ ] T211 Run T176–T178 and make them pass
+  - Done when every hand-edited-registry case passes with T180, T182, T184, and T208 in
+    place. A field still found unguarded is not fixed here: stop and ask, and add a task
+    pair for it.
+
+### Part 2: polish, CI, and release
+
+Runs after group 9S.
+
+- [ ] T136 [P] Write a local-only test in `tests/unit/test_local_only.py`
+  - Principle I, FR-071: parse every module under `src/wtenv/` with `ast`; no `import` or
+    `from … import` names a top-level module in this closed list: `urllib`, `urllib3`,
+    `http`, `requests`, `httpx`, `aiohttp`, `ftplib`, `smtplib`, `poplib`, `imaplib`,
+    `xmlrpc`, `socketserver`, `ssl`.
+  - `socket` is imported only by `ports.py` and `doctor.py`, for `bind`.
+- [ ] T137 [P] Create the sample app in `tests/fixtures/sample_app/app.py`, `tests/fixtures/sample_app/compose.yaml`, `tests/fixtures/sample_app/wtenv.toml`
+  - Exactly as quickstart.md, "The sample app fixture".
+- [ ] T138 Write the provisioning-time test in `tests/integration/test_up_time.py`
+  - NFR-002, SC-002 on the sample app (URL rewritten to the `postgres_server` port): (a) a
+    first `up` with `[database]` and `post_up` removed; (b) a repeat `up` in a provisioned
+    worktree with the full configuration and `post_up` removed; each under 5 s.
+- [ ] T139 [P] Write the startup benchmark `scripts/bench-startup.sh`
+  - NFR-001: against the installed `wtenv` called directly, from the root of a repository
+    with only its main worktree and an empty registry (`XDG_STATE_HOME` in a temporary
+    directory): `hyperfine --warmup 5 --runs 30 'wtenv --version'` and the same for
+    `'wtenv ls --json'`; exit non-zero when a mean is 300 ms or more.
+- [ ] T140 Run the benchmark on the maintainer's machine and record the result in `docs/benchmarks.md`
+  - Machine model, OS version, wtenv version, both means (NFR-001, SC-004). Needs
+    `hyperfine`; ask the maintainer if it is missing. If a mean fails, stop and ask: the
+    contingency in research.md §8 changes the dependency list.
+- [ ] T141 [P] Write the CI workflow `.github/workflows/ci.yml`
+  - On pushes and pull requests. Matrix `ubuntu-latest` and `macos-latest`, Python 3.11 and
+    3.12, with `astral-sh/setup-uv` and `uv sync --locked`. Each job runs the five gates
+    (plan.md, Build, CI and release; NFR-004); on macOS the Docker tests skip themselves.
+  - The ubuntu jobs have Docker, so the Docker and Postgres integration tests run there
+    with nothing skipped.
+  - Pin each action to a full commit SHA with its version in a comment, as the uv guide does.
+- [ ] T142 Add the NFR-003 coverage check to `.github/workflows/ci.yml`
+  - In one ubuntu job: `uv run pytest --cov=wtenv`, then one
+    `uv run coverage report --fail-under=80 --include=<modules>` per row of plan.md's
+    coverage map: `registry.py` with `locks.py`; `ports.py`; `identity.py`; `config.py`;
+    `database.py`; `compose.py`; `orphans.py`; `envfile.py`. Each row measured on its own.
+- [ ] T143 Run the coverage check locally with Docker available and add tests in `tests/unit/` or `tests/integration/` for any area under 80%
+  - Done when all eight core-area rows of T142 report 80% or more.
+- [ ] T144 [P] Write the release workflow `.github/workflows/release.yml`
+  - On `v*` tags: a `build` job running `uv build` and uploading `dist/`, and a separate
+    `publish` job with `environment: pypi` and `permissions: id-token: write` running
+    `uv publish` with PyPI trusted publishing; no stored credentials (plan.md; research.md
+    §5, §11). The first release uses a "pending" publisher.
+- [ ] T145 [P] Write `README.md` and add `readme = "README.md"` to `pyproject.toml`
+  - Install (`uv tool install wtenv` or `pipx install wtenv`); the nine commands with one
+    example each; `wtenv.toml` (config.md); `--json` and exit statuses (cli.md); platforms
+    (macOS, Linux, WSL2); limits (research.md §1, §4); working with Claude Code
+    (quickstart.md: the `CLAUDE.md` line, no env file in `.worktreeinclude`, `gc` after
+    removal). No feature beyond the spec.
+- [ ] T146 Check `docs/roadmap.md` against the code
+  - The command surface matches cli.md (T130); nothing on the roadmap was built; every idea
+    noted during implementation is added with its source (FR-001, Principle X).
+- [ ] T147 Run quickstart.md end to end and fix what it finds
+  - `uv tool install --force --reinstall .`, extract the script with the `awk` command at the
+    top of quickstart.md, run it with Docker (SC-001–SC-009).
+  - Done when the script prints `ACCEPTANCE PASSED`.
+- [ ] T148 Run the five gates one last time and confirm `CLAUDE.md` still matches the constitution
+
 ---
 
 ## Dependencies & Execution Order
@@ -1392,10 +1619,14 @@ after groups 3F and 6G, and before T146–T148. Each pair is a failing test, the
 - **US6 (Phase 8)**: after US4 (`doctor` uses `classify`); its contract suite covers every
   command delivered so far.
 - **Review follow-ups (2026-10-05)**: groups 3F and 6G (FR-086) run after Phase 7, 3F
-  first. The review tasks T158–T173 in Phase 9 follow them and come before T146–T148.
-- **Polish (Phase 9)**: after the stories that will ship. T141, T144, and T145 depend only
-  on Setup and can be pulled forward, for example to release the MVP early. T141 must be
-  done before anything merges to `main` (Working rules).
+  first. The review tasks T158–T173 in Phase 9 (part 1) follow them.
+- **Review 2 (2026-10-06)**: group 9S (T174–T211) follows part 1. T174 and T175 come
+  first; T176–T178 are written next and fail until the pairs they name are done; T211
+  closes the group. The pairs run in ID order where they share a file.
+- **Polish (Phase 9, part 2: T136–T148)**: after group 9S. T141, T144, and T145 depend
+  only on Setup; they were open to being pulled forward for an early MVP release, and now
+  wait for group 9S too. T141 must be done before anything merges to `main` (Working
+  rules).
 
 ### Groups that can run side by side
 
@@ -1511,7 +1742,8 @@ gates pass.
 The maintainer decided R1 and accepted R2–R4 as written. R5 came from the review of the
 destructive paths (2026-10-05). Each is recorded in the contract
 named in the last column. R6 and R7 came from the same review; the maintainer
-accepted both on 2026-10-05.
+accepted both on 2026-10-05. R8 and R9 came from the second review of the destructive
+paths (findings M1 and M2); the maintainer accepted both on 2026-10-06.
 
 | # | Open point | Reading taken | Tasks | Recorded in |
 |---|------------|---------------|-------|-------------|
@@ -1522,6 +1754,8 @@ accepted both on 2026-10-05.
 | R5 | FR-073, for a worktree at the path whose git directory is not the entry's (the repository was moved and repaired, or another worktree took the path) | The converse of R3: a directory whose `.git` names a git directory that exists is a worktree, whatever the entry records, so `--release` refuses it | T149, T150 | cli.md, `wtenv gc` |
 | R6 | FR-041, for anonymous volumes that `compose down --volumes` removes without a project label (review LOW-4) | **Accepted; amended 2026-10-05 after a probe (Docker 29.5.3, Compose 5.1.4): only named volumes carry `com.docker.compose.project`, anonymous and external volumes do not.** `down` and `gc` stop passing `--volumes` to `docker compose down`. wtenv lists volumes labelled `com.docker.compose.project=<recorded project name>`, removes each by name, and reports each as its own item in `removed` and in `--dry-run`. A volume without the label is never removed. Before `docker compose down` (and for `--dry-run`), wtenv inspects the project's containers' mounts; every mounted volume lacking the project label, anonymous or external, is reported in `kept_volumes` (a `KeptVolume` with `project` the recorded name and reason `unlabelled`) on `DownResult` and `GcResult`; `kept` is unchanged. Known limit: anonymous volumes of removed projects stay on disk (docs/roadmap.md) | T172, T173, T162, T163 | cli.md, `wtenv down` |
 | R7 | FR-073 and FR-074, for a `--release` entry whose worktree appears after step 1 (review LOW-7) | **Accepted.** `gc --release` re-checks that the worktree is still gone immediately before each delete. If it has reappeared, it stops that entry with `worktree_exists`, exit 18 | T170, T171 | cli.md, `wtenv gc` |
+| R8 | FR-039, for a compose volume declared with a fixed `name:`, which gets the label of whichever project created it first and is shared with the main checkout and other worktrees (review 2, M1) | **Accepted.** `down` and `gc` remove only labelled volumes whose name starts with `<project>_`. Any other volume with the project label is never removed and is reported in `kept_volumes` with reason `fixed_name` (`KeptVolume.reason` is `"unlabelled"` or `"fixed_name"`). `up` adds the warning `compose_fixed_volume_name` when the resolved compose model has a non-external volume whose name is not `<model name>_<key>`. Known limit: such a volume stays on disk even when this worktree's project created it | T174, T175, T185–T188 | cli.md, `wtenv up` and `wtenv down`; json_models.py; data-model.md, Compose record |
+| R9 | FR-045 and FR-072, for a worktree on a drive that is not mounted or under a renamed directory, after git has pruned it (`gc.worktreePruneExpire`), which passes every FR-045 check (review 2, M2) | **Accepted.** An entry whose recorded path has a missing parent directory is `unverifiable`, new reason `parent_missing`, never `orphaned`; it is released only by `gc --release`. The check is step 4.3 of the classification, so the reasons of steps 1 to 4.2 are unchanged and `moved` still blocks `--release` | T174, T175, T189, T190 | cli.md, Worktree status; data-model.md, Status and the orphan checks; json_models.py; spec.md, FR-072 |
 
 ---
 
