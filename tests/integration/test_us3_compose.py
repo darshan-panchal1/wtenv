@@ -31,8 +31,10 @@ from helpers import (
     snapshot_tree,
 )
 
+from wtenv import provision
 from wtenv.compose import project_name
 from wtenv.envfile import read_section
+from wtenv.errors import ErrorCode, WtenvError
 from wtenv.identity import current_worktree
 from wtenv.output import ItemKind, ResourceState, UpResult
 from wtenv.registry import WorktreeEntry, load, registry_path, transaction
@@ -899,6 +901,67 @@ def test_up_creates_a_recorded_override_that_is_missing_again(
     up(run_wtenv, worktree)
 
     assert override.read_bytes() == wrote
+
+
+def edit_during_the_database_step(
+    monkeypatch: pytest.MonkeyPatch, override: Path, text: bytes
+) -> None:
+    """Replace the override while `up` is between its plan and its write (the database step).
+
+    Step 10 can take long for a large template, and the developer can edit the file meanwhile.
+    """
+
+    def database_step(*args: object, **kwargs: object) -> list[object]:
+        override.write_bytes(text)
+        return []
+
+    monkeypatch.setattr(provision, "_database_step", database_step)
+
+
+@pytest.mark.parametrize("name", EDITED_OVERRIDES)
+def test_up_does_not_rewrite_an_override_that_lost_the_header_after_the_plan(
+    name: str,
+    compose_docker: None,
+    run_wtenv: Run,
+    repo: Path,
+    add_worktree: AddWorktree,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T216, FR-087: the header is checked again immediately before the rewrite."""
+    worktree = make_worktree(repo, add_worktree, "one")
+    up(run_wtenv, worktree)
+    override = worktree / "compose.override.yaml"
+    override.write_text(OWN_HEADER + 'name: "stale"\n', encoding="utf-8")  # so `up` rewrites it
+    edit_during_the_database_step(monkeypatch, override, EDITED_OVERRIDES[name].encode())
+
+    with pytest.raises(WtenvError) as caught:
+        provision.up(worktree)
+
+    assert caught.value.code is ErrorCode.OWNERSHIP_CONFLICT
+    assert caught.value.details == {"kind": "compose_override", "name": str(override)}
+    assert override.read_bytes() == EDITED_OVERRIDES[name].encode()
+
+
+def test_up_does_not_delete_an_override_that_lost_the_header_after_the_plan(
+    compose_docker: None,
+    run_wtenv: Run,
+    repo: Path,
+    add_worktree: AddWorktree,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T216, FR-087: the same before the unlink, when `[compose]` was removed from the config."""
+    worktree = make_worktree(repo, add_worktree, "one")
+    up(run_wtenv, worktree)
+    override = worktree / "compose.override.yaml"
+    (worktree / "wtenv.toml").write_text('ports = ["PORT", "CACHE_PORT"]\n', encoding="utf-8")
+    edit_during_the_database_step(monkeypatch, override, b"services: {}\n")
+
+    with pytest.raises(WtenvError) as caught:
+        provision.up(worktree)
+
+    assert caught.value.code is ErrorCode.OWNERSHIP_CONFLICT
+    assert caught.value.details == {"kind": "compose_override", "name": str(override)}
+    assert override.read_bytes() == b"services: {}\n"
 
 
 @pytest.mark.parametrize("name", ["outside by ..", "absolute", "a part that is `..`"])

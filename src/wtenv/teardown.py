@@ -26,7 +26,7 @@ of them. The compose module is imported only when a compose project is recorded 
 """
 
 import os
-import posixpath
+import subprocess
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,11 +36,13 @@ from wtenv import database, envfile, exclude, registry
 from wtenv.config import load_config
 from wtenv.database import PostgresTarget, Removal
 from wtenv.errors import EXIT_STATUS, ErrorCode, WtenvError
+from wtenv.gitutil import is_tracked
 from wtenv.identity import (
     WorktreeIdentity,
     current_worktree,
     points_to,
     recorded_path_problem,
+    sqlite_directory_problem,
     symlinked_part,
 )
 from wtenv.locks import WORKTREE_LOCK_TIMEOUT, registry_lock, worktree_lock
@@ -62,11 +64,12 @@ ItemT = TypeVar("ItemT", bound=Item)
 # The `reason` of an item left alone because it, or a directory above it, is a symbolic link
 # (FR-086).
 SYMLINK_REASON = "symlink"
+# The `reason` of an env section left alone because git tracks the env file (FR-018).
+TRACKED_REASON = "tracked_by_git"
 # The `reason` of an item left alone because a worktree has appeared at the recorded path (L4).
 WORKTREE_EXISTS_REASON = "worktree_exists"
 
 # Where `up` puts a SQLite copy: exactly `.wtenv/<file name>` (files.md, Names).
-SQLITE_DIRECTORY = ".wtenv"
 
 
 @dataclass
@@ -184,7 +187,11 @@ def _compose_step(entry: WorktreeEntry, root: Path, release: Release, dry_run: b
     problem = compose.project_problem(record.project, entry.git_dir)
     if problem is not None:
         release.failed.append(
-            FailedItem(kind=ItemKind.COMPOSE_PROJECT, name=record.project, reason=problem)
+            FailedItem(
+                kind=ItemKind.COMPOSE_PROJECT,
+                name=record.project,
+                reason=f"{problem}; it was left alone",
+            )
         )
         return None
     failures_before = len(release.failed)
@@ -257,6 +264,22 @@ def _override_step(
         _update(entry.git_dir, _drop_compose_record)
 
 
+def _git_tracks(root: Path, relative: str) -> bool:
+    """Return whether git tracks the env file `relative`, which `down` must then leave as it is.
+
+    FR-018: a file the developer force-added after `up` is theirs, and rewriting or deleting it
+    would show up as a change in git. A file that is not there has nothing to protect. When git
+    cannot be asked (the repository is gone, as `gc --release` can find it), no live repository
+    tracks the file, so it counts as not tracked.
+    """
+    if not os.path.lexists(root / relative):
+        return False
+    try:
+        return is_tracked(root, relative)
+    except subprocess.CalledProcessError:
+        return False
+
+
 def _form_reason(path: str) -> str | None:
     """Return the reason a recorded path is left alone because of its form, or None (H2).
 
@@ -274,13 +297,10 @@ def _sqlite_form_reason(path: str) -> str | None:
     problem = _form_reason(path)
     if problem is not None:
         return problem
-    directory, name = posixpath.split(path)
-    if directory == SQLITE_DIRECTORY and name:
+    problem = sqlite_directory_problem(path)
+    if problem is None:
         return None
-    return (
-        f"the recorded path {path!r} is not `{SQLITE_DIRECTORY}/<file name>`, "
-        "where wtenv puts a SQLite copy; it was left alone"
-    )
+    return f"the recorded path {path!r} is {problem}; it was left alone"
 
 
 def _drop_compose_record(entry: WorktreeEntry) -> None:
@@ -396,6 +416,11 @@ def _env_step(
     if symlinked_part(root, record.path) is not None:
         release.failed.append(
             FailedItem(kind=section.kind, name=section.name, reason=SYMLINK_REASON)
+        )
+        return
+    if _git_tracks(root, record.path):
+        release.failed.append(
+            FailedItem(kind=section.kind, name=section.name, reason=TRACKED_REASON)
         )
         return
     if not dry_run and record.state is not ResourceState.REMOVING:

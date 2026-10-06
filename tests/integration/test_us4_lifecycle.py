@@ -447,6 +447,54 @@ def test_damaged_markers_fail_the_section_keep_the_file_and_the_entry_until_repa
     assert BEGIN not in exclude_text(repo)
 
 
+# --- an env file that git tracks (T220; FR-018) -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "wtenv_made_the_file", [True, False], ids=["created by wtenv", "developer's"]
+)
+def test_down_fails_the_env_section_when_git_tracks_the_env_file(
+    wtenv_made_the_file: bool, run_wtenv: Run, repo: Path, add_worktree: AddWorktree
+) -> None:
+    """The developer force-added the env file after `up`: `down` rewrites or deletes nothing."""
+    worktree = add_worktree(repo, "feature-x", "feature-x")
+    env_file = worktree / ".env.local"
+    if not wtenv_made_the_file:
+        env_file.write_bytes(b"A=1\n")
+    up(run_wtenv, worktree)
+    git(worktree, "add", "-f", ".env.local")
+    wrote = env_file.read_bytes()
+    registry_before = registry_path().read_bytes()
+
+    dry_status, dry = down(run_wtenv, worktree, "--dry-run")
+
+    assert dry_status == 0
+    assert keys(dry.failed) == [("env_section", str(env_file))]
+    assert dry.failed[0].reason == "tracked_by_git"
+    assert ("env_section", str(env_file)) not in keys(dry.would_remove)
+    assert env_file.read_bytes() == wrote and registry_path().read_bytes() == registry_before
+
+    status, result = down(run_wtenv, worktree)
+
+    assert status == 13
+    assert result.error is not None and result.error.code is ErrorCode.PARTIAL_FAILURE
+    assert keys(result.failed) == [("env_section", str(env_file))]
+    assert result.failed[0].reason == "tracked_by_git"
+    assert ("env_section", str(env_file)) not in keys(result.removed)
+    assert ("env_file", str(env_file)) not in keys(result.removed)
+    assert env_file.read_bytes() == wrote  # not rewritten and not deleted
+    entry = entry_of(worktree)
+    assert entry.state == "incomplete" and entry.env_file is not None  # still recorded
+    assert entry.env_file.state is ResourceState.CREATED  # `removing` is not recorded either
+
+    git(worktree, "rm", "--cached", "-q", ".env.local")  # the developer stops tracking it
+    status, finished = down(run_wtenv, worktree)
+
+    assert status == 0 and finished.failed == []
+    assert not is_recorded(worktree)
+    assert env_file.exists() == (not wtenv_made_the_file)
+
+
 # --- the exclude block and a moved worktree (T094; FR-084, FR-085) -----------------------------
 
 

@@ -658,10 +658,7 @@ def project_problem(project: str, git_dir: str) -> str | None:
     """
     if _GENERATED_PROJECT.fullmatch(project) and project.endswith(f"-{short_id(git_dir, 8)}"):
         return None
-    return (
-        "not a project name wtenv generates (wtenv-<name>-<id> of this worktree's git directory); "
-        "it was left alone"
-    )
+    return "not a project name wtenv generates (wtenv-<name>-<id> of this worktree's git directory)"
 
 
 # Per kind of resource: the listing command (the label filter and the format are added), the
@@ -790,7 +787,8 @@ def remove_project(
     project_item = Item(kind=ItemKind.COMPOSE_PROJECT, name=project)
     problem = project_problem(project, git_dir)
     if problem is not None:
-        return Removal(failed=[FailedItem(kind=project_item.kind, name=project, reason=problem)])
+        reason = f"{problem}; it was left alone"
+        return Removal(failed=[FailedItem(kind=project_item.kind, name=project, reason=reason)])
     base = os.environ if environ is None else environ
     env = {name: value for name, value in base.items() if not name.startswith("COMPOSE_")}
     try:

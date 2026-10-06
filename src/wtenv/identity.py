@@ -132,6 +132,29 @@ def recorded_path_problem(path: str) -> str | None:
     return None
 
 
+SQLITE_DIRECTORY = ".wtenv"  # the only directory that holds a SQLite copy (files.md, Names)
+
+
+def sqlite_directory_problem(path: str) -> str | None:
+    """Return the rule a recorded SQLite path breaks beyond its form, or None.
+
+    A copy is exactly `.wtenv/<file name>`: wtenv never puts one anywhere else.
+    """
+    directory, name = posixpath.split(path)
+    if directory == SQLITE_DIRECTORY and name:
+        return None
+    return f"not `{SQLITE_DIRECTORY}/<file name>`, where wtenv puts a SQLite copy"
+
+
+def sqlite_copy_problem(path: str) -> str | None:
+    """Return the rule a recorded SQLite path breaks, or None when `down` would accept it.
+
+    The form of `recorded_path_problem`, and then `.wtenv/<file name>` exactly. `up` and `down`
+    apply it before they use the path (cli.md, `wtenv down`, "Recorded values").
+    """
+    return recorded_path_problem(path) or sqlite_directory_problem(path)
+
+
 def short_id(git_dir: str, length: int) -> str:
     """Return the first `length` hexadecimal digits of the SHA-256 of the git directory path.
 

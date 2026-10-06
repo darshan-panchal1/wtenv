@@ -29,6 +29,7 @@ from wtenv.identity import (
     WorktreeIdentity,
     current_worktree,
     recorded_path_problem,
+    sqlite_copy_problem,
     symlinked_part,
 )
 from wtenv.listing import database_view, port_views
@@ -254,6 +255,20 @@ def _recorded_value_conflict(kind: ItemKind, path: Path, why: str) -> WtenvError
     )
 
 
+def _recorded_field_conflict(kind: ItemKind, name: str, field: str, problem: str) -> WtenvError:
+    """Build `ownership_conflict` for a recorded value that `up` would reuse and `down` would refuse.
+
+    `field` names the recorded value in the message, and `details.name` is the value itself (FR-088).
+    """
+    return WtenvError(
+        ErrorCode.OWNERSHIP_CONFLICT,
+        f"the registry records the {field} {name!r}, which is {problem}, so wtenv will not reuse it",
+        hint="Fix or remove the entry in the registry by hand, or run `wtenv down` and read "
+        "`failed`. Nothing was changed.",
+        details={"kind": kind.value, "name": name},
+    )
+
+
 def _check_override_links(root: Path, config: Config, known: WorktreeEntry | None) -> None:
     """Raise `env_file_unusable` when an override file `up` would write or remove is a link.
 
@@ -329,8 +344,16 @@ def _compose_plan(
         return None
     from wtenv import compose  # only now: the module is not loaded without `[compose]`
 
-    compose.check_docker()
     recorded = None if known is None or known.compose is None else known.compose
+    if recorded is not None:
+        # FR-088: the recorded project goes into the override, so it is checked like `down` checks
+        # it, before Docker is asked anything.
+        problem = compose.project_problem(recorded.project, identity.git_dir)
+        if problem is not None:
+            raise _recorded_field_conflict(
+                ItemKind.COMPOSE_PROJECT, recorded.project, "compose project", problem
+            )
+    compose.check_docker()
     if recorded is None:
         # Before anything is recorded, nothing may exist under the name (data-model.md, Resource
         # states): resources found there are not wtenv's, and `down` would remove them.
@@ -389,8 +412,12 @@ def _database_plan(
             if record is not None and record.path is not None
             else f"{database.SQLITE_DIR}/{Path(settings.template).name}"
         )
+        if record is not None and record.path is not None:
+            _check_recorded_sqlite(root, record)
         url = database.resolve_url(settings.url, path=str(root / relative), config_file=config_file)
         return _DatabasePlan(kind="sqlite", url=url, path=relative)
+    if record is not None and record.name is not None:
+        _check_recorded_postgres(record, identity.git_dir)
     name = (
         record.name
         if record is not None and record.name is not None
@@ -399,6 +426,43 @@ def _database_plan(
     url = database.resolve_url(settings.url, name=name, config_file=config_file)
     target = database.postgres_target(url, config_file=config_file)
     return _DatabasePlan(kind="postgres", url=url, name=name, target=target)
+
+
+def _check_recorded_sqlite(root: Path, record: DatabaseRecord) -> None:
+    """Raise `ownership_conflict` unless the recorded SQLite copy is where `down` would remove it.
+
+    FR-088. The path goes into `DATABASE_URL`, so it must be exactly `.wtenv/<file name>` (the form
+    `down` requires) before it is used. A copy that an interrupted `down` left in `removing` is
+    refused as `interrupted_removal`: `down` removes the `-wal` file first, so the copy may lack
+    committed pages, and only `down` can finish the job.
+    """
+    assert record.path is not None
+    problem = sqlite_copy_problem(record.path)
+    if problem is not None:
+        raise _recorded_field_conflict(
+            ItemKind.SQLITE_FILE, str(root / record.path), "SQLite path", problem
+        )
+    if record.state is ResourceState.REMOVING and (root / record.path).exists():
+        raise _interrupted_removal(str(root / record.path), "SQLite copy")
+
+
+def _check_recorded_postgres(record: DatabaseRecord, git_dir: str) -> None:
+    """Raise `ownership_conflict` unless the recorded database name and host pass `down`'s checks.
+
+    FR-088: the name is `wtenv_<slug>_<id8>` with the id of this entry's git directory, and the
+    host is on this machine. Both go into `DATABASE_URL` and decide where a later `down` drops.
+    """
+    assert record.name is not None
+    problem = database.name_problem(record.name, git_dir)
+    if problem is not None:
+        raise _recorded_field_conflict(
+            ItemKind.POSTGRES_DATABASE, record.name, "database name", problem
+        )
+    problem = database.host_problem(record.host)
+    if problem is not None:
+        raise _recorded_field_conflict(
+            ItemKind.POSTGRES_DATABASE, record.name, "database host", problem
+        )
 
 
 def _warnings(
@@ -784,15 +848,16 @@ def _postgres_step(template: str, plan: _DatabasePlan, entry: WorktreeEntry) -> 
     return [UpChange(item=item, action="created")]
 
 
-def _interrupted_removal(name: str) -> WtenvError:
-    """Build `unsupported` (`interrupted_removal`) for a database an interrupted drop half removed.
+def _interrupted_removal(name: str, what: str = "database") -> WtenvError:
+    """Build `unsupported` (`interrupted_removal`) for a database an interrupted `down` half removed.
 
-    The server marks such a database invalid and it cannot be used again; only `down` can finish
-    removing it (data-model.md, Resource states).
+    The server marks a Postgres database invalid and it cannot be used again; a SQLite copy may
+    lack the pages of a `-wal` file that `down` had already removed. Only `down` can finish the job
+    (data-model.md, Resource states). `name` is the database name or the copy's path.
     """
     return WtenvError(
         ErrorCode.UNSUPPORTED,
-        f"the database {name} was half removed by an interrupted `wtenv down`, and cannot be used",
+        f"the {what} {name} was half removed by an interrupted `wtenv down`, and cannot be used",
         hint="Run `wtenv down` to finish removing it, then run `wtenv up` again.",
         details={"reason": "interrupted_removal", "name": name},
     )
@@ -869,6 +934,8 @@ def _compose_step(
             override_state=ResourceState.CREATING,
         )
         _save_compose_record(entry.git_dir, record)
+    # FR-087: the plan checked the header a while ago, and the database step ran since.
+    compose.check_recorded_override(root, record.override)
     pairs = _override_pairs(compose_plan.model, entry.published)
     text = compose.override_text(record.project, pairs)
     action = compose.write_and_verify_override(
@@ -883,7 +950,14 @@ def _compose_step(
 
 
 def _remove_override(root: Path, git_dir: str, record: ComposeRecord) -> list[UpChange]:
-    """Remove wtenv's recorded override file, recording `removing` first; report it if it was there."""
+    """Remove wtenv's recorded override file, recording `removing` first; report it if it was there.
+
+    The header is checked again here, immediately before the file is deleted (FR-087): the plan
+    checked it before the database step, which can take long.
+    """
+    from wtenv import compose
+
+    compose.check_recorded_override(root, record.override)
     path = root / record.override
     if record.override_state is not ResourceState.REMOVING:
         _save_compose_record(

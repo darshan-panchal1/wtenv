@@ -600,6 +600,28 @@ def _drop_failure_reason(error: Exception, target: PostgresTarget, *, dry_run: b
     return f"the server did not drop the database ({type(error).__name__})"
 
 
+def name_problem(name: str, git_dir: str) -> str | None:
+    """Return why `name` is not a database name wtenv generated for `git_dir`, or None when it is.
+
+    The registry is a file a person can edit, so `down` and `up` check a recorded name before they
+    use it (cli.md, `wtenv down`, "Recorded values"): it has the form `wtenv_<slug>_<id8>` in
+    full, and its `<id8>` is that of the entry's own git directory.
+    """
+    if _GENERATED_NAME.fullmatch(name) and name.endswith(f"_{short_id(git_dir, 8)}"):
+        return None
+    return (
+        "not a database name wtenv generates (wtenv_<name>_<id>, with the id of this "
+        "worktree's git directory)"
+    )
+
+
+def host_problem(host: str | None) -> str | None:
+    """Return why a recorded Postgres `host` is not a server on this machine, or None when it is."""
+    if host in LOCAL_HOSTS:
+        return None
+    return f"the recorded server {host or '(none)'} is not on this machine"
+
+
 def remove_postgres_database(
     target: PostgresTarget, name: str, git_dir: str, *, dry_run: bool = False
 ) -> Removal:
@@ -620,17 +642,14 @@ def remove_postgres_database(
 
     item = Item(kind=ItemKind.POSTGRES_DATABASE, name=name)
     # The registry is a file a person can edit, so both facts are checked before a connection.
-    if not _GENERATED_NAME.fullmatch(name) or not name.endswith(f"_{short_id(git_dir, 8)}"):
-        reason = (
-            "not a database name wtenv generates (wtenv_<name>_<id>, with the id of this "
-            "worktree's git directory); it was left alone"
+    problem = name_problem(name, git_dir)
+    if problem is not None:
+        return Removal(
+            failed=[FailedItem(kind=item.kind, name=name, reason=f"{problem}; it was left alone")]
         )
-        return Removal(failed=[FailedItem(kind=item.kind, name=name, reason=reason)])
-    if target.host not in LOCAL_HOSTS:
-        reason = (
-            f"the recorded server {target.host or '(none)'} is not on this machine; "
-            "wtenv drops databases only on a local server, so nothing was dropped"
-        )
+    problem = host_problem(target.host)
+    if problem is not None:
+        reason = f"{problem}; wtenv drops databases only on a local server, so nothing was dropped"
         return Removal(failed=[FailedItem(kind=item.kind, name=name, reason=reason)])
     try:
         with _connect(target) as connection:

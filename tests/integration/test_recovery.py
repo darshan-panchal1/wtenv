@@ -26,7 +26,7 @@ from wtenv.database import postgres_database_name
 from wtenv.envfile import read_section
 from wtenv.identity import current_worktree
 from wtenv.output import ResourceState
-from wtenv.registry import WorktreeEntry, load, transaction
+from wtenv.registry import WorktreeEntry, load, registry_path, transaction
 
 pytestmark = pytest.mark.integration
 
@@ -418,6 +418,22 @@ def test_up_after_an_interrupted_down_keeps_what_is_still_there_and_creates_what
     module, function = DOWN_RESOURCES[resource]
     interrupt_down(worktree, module, function, when)
 
+    if resource == "sqlite copy" and when == "before":
+        # T218, FR-088: the copy is still there, but `down` removes its `-wal` file first, so it
+        # may lack committed pages. `up` does not hand it back; `down` finishes the removal.
+        registry_before = registry_path().read_bytes()
+        process = run_wtenv(["up", "--json"], worktree)
+        assert process.returncode == 19, process.stderr
+        assert json.loads(process.stdout)["error"]["details"] == {
+            "reason": "interrupted_removal",
+            "name": str(copy),
+        }
+        assert registry_path().read_bytes() == registry_before
+        assert sqlite_rows(copy) == [(0,), (99,)]  # untouched
+        assert run_wtenv(["down", "--json"], worktree).returncode == 0
+        assert not copy.exists()
+        return
+
     process = run_wtenv(["up", "--json"], worktree)
 
     assert process.returncode == 0, process.stderr
@@ -427,8 +443,8 @@ def test_up_after_an_interrupted_down_keeps_what_is_still_there_and_creates_what
     assert exists(worktree, resource)
     assert read_section(worktree / ".env.local")  # the section is there either way
     if resource == "sqlite copy":
-        # Still there: kept with its data. Gone: copied again from the template.
-        assert sqlite_rows(copy) == ([(0,), (99,)] if when == "before" else [(0,)])
+        # Gone: copied again from the template.
+        assert sqlite_rows(copy) == [(0,)]
 
 
 # With Postgres: the same two points, and a database the server marks invalid.
