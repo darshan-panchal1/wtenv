@@ -1629,12 +1629,12 @@ Runs after group 9S.
   - NFR-002, SC-002 on the sample app (URL rewritten to the `postgres_server` port): (a) a
     first `up` with `[database]` and `post_up` removed; (b) a repeat `up` in a provisioned
     worktree with the full configuration and `post_up` removed; each under 5 s.
-- [ ] T139 [P] Write the startup benchmark `scripts/bench-startup.sh`
+- [X] T139 [P] Write the startup benchmark `scripts/bench-startup.sh`
   - NFR-001: against the installed `wtenv` called directly, from the root of a repository
     with only its main worktree and an empty registry (`XDG_STATE_HOME` in a temporary
     directory): `hyperfine --warmup 5 --runs 30 'wtenv --version'` and the same for
     `'wtenv ls --json'`; exit non-zero when a mean is 300 ms or more.
-- [ ] T140 Run the benchmark on the maintainer's machine and record the result in `docs/benchmarks.md`
+- [X] T140 Run the benchmark on the maintainer's machine and record the result in `docs/benchmarks.md`
   - Machine model, OS version, wtenv version, both means (NFR-001, SC-004). Needs
     `hyperfine`; ask the maintainer if it is missing. If a mean fails, stop and ask: the
     contingency in research.md §8 changes the dependency list.
