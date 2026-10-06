@@ -285,3 +285,81 @@ def test_listing_only_without_a_block_or_a_file_is_false(tmp_path: Path) -> None
     path.parent.mkdir(parents=True)
     path.write_bytes(b"# mine\n")
     assert remove_block(path, dry_run=True) is False
+
+
+# --- a linked exclude file or `info` directory is never written through (T205; L6; FR-086) ----------
+
+
+def linked_exclude(tmp_path: Path, *, directory: bool) -> tuple[Path, Path, bytes]:
+    """Make `info/exclude` (or `info` itself) a link to something outside the repository.
+
+    Returns the exclude path, the link, and the bytes of the file the link leads to.
+    """
+    path = exclude_path(tmp_path)
+    git_dir = path.parent.parent
+    git_dir.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    data = (block("/x") + "mine\n").encode()
+    (outside / "exclude").write_bytes(data)
+    if directory:
+        (git_dir / "info").symlink_to(outside)
+        return path, git_dir / "info", data
+    path.parent.mkdir()
+    path.symlink_to(outside / "exclude")
+    return path, path, data
+
+
+@pytest.mark.parametrize("directory", [False, True], ids=["file", "directory"])
+def test_adding_patterns_through_a_link_raises_symlink_and_changes_nothing(
+    tmp_path: Path, directory: bool
+) -> None:
+    path, link, data = linked_exclude(tmp_path, directory=directory)
+
+    with pytest.raises(WtenvError) as caught:
+        add_patterns(path, ["/.env.local"])
+
+    assert caught.value.code is ErrorCode.ENV_FILE_UNUSABLE
+    assert caught.value.details == {"path": str(link), "reason": "symlink"}
+    assert (tmp_path / "outside" / "exclude").read_bytes() == data
+    assert sorted(p.name for p in (tmp_path / "outside").iterdir()) == ["exclude"]
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("directory", [False, True], ids=["file", "directory"])
+def test_removing_the_block_through_a_link_raises_symlink_and_changes_nothing(
+    tmp_path: Path, directory: bool, dry_run: bool
+) -> None:
+    path, link, data = linked_exclude(tmp_path, directory=directory)
+
+    with pytest.raises(WtenvError) as caught:
+        remove_block(path, dry_run=dry_run)
+
+    assert caught.value.code is ErrorCode.ENV_FILE_UNUSABLE
+    assert caught.value.details == {"path": str(link), "reason": "symlink"}
+    assert (tmp_path / "outside" / "exclude").read_bytes() == data
+
+
+def test_a_dangling_link_counts_too(tmp_path: Path) -> None:
+    path = exclude_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.symlink_to(tmp_path / "nowhere")
+
+    with pytest.raises(WtenvError) as caught:
+        add_patterns(path, ["/.env.local"])
+
+    assert caught.value.details["reason"] == "symlink"
+    assert not (tmp_path / "nowhere").exists()  # nothing was created through it
+
+
+def test_a_linked_git_directory_above_info_is_the_developers_own_layout_and_is_allowed(
+    tmp_path: Path,
+) -> None:
+    real = tmp_path / "real-git"
+    (real / "info").mkdir(parents=True)
+    (tmp_path / "repo").mkdir()
+    (tmp_path / "repo" / ".git").symlink_to(real)
+
+    changed = add_patterns(exclude_path(tmp_path), ["/.env.local"])
+
+    assert changed and (real / "info" / "exclude").read_text() == block("/.env.local")

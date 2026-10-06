@@ -2301,6 +2301,60 @@ def test_gc_release_leaves_the_files_alone_when_a_directory_above_the_root_is_a_
     assert git_dir in load().worktrees
 
 
+# --- a linked `.git/info/exclude` (T205; L6; FR-018, FR-086) -----------------------------------------
+#
+# `.git/info/exclude` is written by `up` and rewritten by the last `down` of a repository. If it is a
+# link to a file outside the repository, wtenv must not write through it.
+
+
+def link_the_exclude_file(repo: Path, target: Path) -> Path:
+    """Replace the repository's `info/exclude` with a link to `target`; return the link."""
+    link = exclude_file(repo)
+    link.parent.mkdir(exist_ok=True)
+    link.unlink(missing_ok=True)
+    link.symlink_to(target)
+    return link
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_down_of_the_last_entry_fails_the_exclude_item_when_the_file_is_a_link(
+    dry_run: bool, run_wtenv: Run, repo: Path, add_worktree: AddWorktree, decoy: Path
+) -> None:
+    worktree = add_worktree(repo, "one", "one")
+    up(run_wtenv, worktree)
+    link = link_the_exclude_file(repo, decoy / "shared.env")
+    target_before = snapshot_tree(decoy)
+    flags = ["--dry-run"] if dry_run else []
+
+    status, result = down(run_wtenv, worktree, *flags)
+
+    assert status == (0 if dry_run else 13)
+    assert [(f.kind.value, f.name, f.reason) for f in result.failed] == [
+        ("exclude_entries", str(link), "symlink")
+    ]
+    assert snapshot_tree(decoy) == target_before
+    assert link.is_symlink() and is_recorded(worktree)
+
+
+def test_up_refuses_a_linked_exclude_file_before_changing_anything(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, decoy: Path
+) -> None:
+    worktree = add_worktree(repo, "one", "one")
+    link = link_the_exclude_file(repo, decoy / "shared.env")
+    target_before = snapshot_tree(decoy)
+    worktree_before = snapshot_tree(worktree)
+
+    process = run_wtenv(["up", "--json"], worktree)
+
+    assert process.returncode == 7, process.stdout + process.stderr
+    error = json.loads(process.stdout)["error"]
+    assert error["code"] == "env_file_unusable"
+    assert error["details"] == {"path": str(link), "reason": "symlink"}
+    assert snapshot_tree(decoy) == target_before
+    assert snapshot_tree(worktree) == worktree_before  # no env file
+    assert not is_recorded(worktree)  # and no registry entry
+
+
 # --- symbolic links in `down` and `gc` (T155, T156; FR-086) --------------------------------------
 #
 # Every case links to a decoy outside the worktree, or to another worktree, and compares it before

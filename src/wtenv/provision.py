@@ -24,7 +24,7 @@ from wtenv import database, envfile, exclude, ports, registry
 from wtenv.config import CONFIG_FILE_NAME, Config, load_config
 from wtenv.database import PostgresTarget
 from wtenv.errors import ErrorCode, WtenvError
-from wtenv.gitutil import git_path, is_tracked
+from wtenv.gitutil import is_tracked
 from wtenv.identity import (
     WorktreeIdentity,
     current_worktree,
@@ -116,6 +116,9 @@ def _provision(identity: WorktreeIdentity) -> UpResult:
     config = load_config(root)  # step 3
     env_path = root / config.env_file
     _check_env_file(root, config.env_file)  # step 4
+    # Not `git rev-parse --git-path`: git resolves a link, and then no link would be found (L6).
+    exclude_path = Path(identity.repository) / "info" / "exclude"
+    exclude.refuse_link(exclude_path)  # step 4: step 9 writes to it
     section = _read_section_or_none(env_path)  # also the markers check of step 4
     with registry_lock():
         known = registry.load().worktrees.get(identity.git_dir)
@@ -126,7 +129,6 @@ def _provision(identity: WorktreeIdentity) -> UpResult:
     plan = _database_plan(root, identity, config, known)  # step 7
     _check_sqlite_links(root, plan)  # step 7
     warnings = _warnings(identity, known, config, env_path, compose_plan)
-    exclude_path = git_path(root, "info/exclude")
 
     if known is not None and _has_nothing_to_change(
         known, identity, config, section, plan, compose_plan

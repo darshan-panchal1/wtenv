@@ -491,10 +491,15 @@ def _finish(
         )
         return
     except WtenvError as error:
-        if error.code is not ErrorCode.UNSUPPORTED:
+        if error.code is ErrorCode.ENV_FILE_UNUSABLE and error.details.get("reason") == "symlink":
+            # The exclude file, or `info/`, is a link (L6): not written through; the entry stays.
+            reason = SYMLINK_REASON
+        elif error.code is ErrorCode.UNSUPPORTED:
+            reason = error.message
+        else:
             raise  # a busy or unreadable registry is not an item
         release.failed.append(
-            FailedItem(kind=exclude_item.kind, name=exclude_item.name, reason=error.message)
+            FailedItem(kind=exclude_item.kind, name=exclude_item.name, reason=reason)
         )
         return
     release.removed += items

@@ -1516,12 +1516,12 @@ exit status is 13 (0 for a dry run). Every test removes its decoys.
     every file item under `failed` with reason `symlink`; the link's target is unchanged.
 - [X] T204 Fail the file items when the recorded root does not resolve to itself, in `src/wtenv/teardown.py`
   - When `os.path.realpath(root) != str(root)`.
-- [ ] T205 Add failing tests for a linked `.git/info/exclude` to `tests/unit/test_exclude.py` and `tests/integration/test_us4_lifecycle.py`
+- [X] T205 Add failing tests for a linked `.git/info/exclude` to `tests/unit/test_exclude.py` and `tests/integration/test_us4_lifecycle.py`
   - L6, FR-018, FR-086: `info/exclude` is a link to a file outside the repository. `down`
     of the last entry → `exclude_entries` under `failed`, reason `symlink`; the target is
     unchanged; exit 13. `up` → exit 7, `env_file_unusable`, reason `symlink`, `path` the
     link, before anything changes.
-- [ ] T206 Check `symlinked_part(repository, "info/exclude")` before writing the exclude block, in `src/wtenv/exclude.py`, `src/wtenv/teardown.py`, and `src/wtenv/provision.py`
+- [X] T206 Check `symlinked_part(repository, "info/exclude")` before writing the exclude block, in `src/wtenv/exclude.py`, `src/wtenv/teardown.py`, and `src/wtenv/provision.py`
   - cli.md, `wtenv up`, step 4, and `wtenv down`, symbolic links.
 - [ ] T207 Add failing tests for another worktree's database name to `tests/unit/test_database_remove.py`
   - L7, FR-039: a recorded name of the right form whose `<id8>` is not that of the entry's
