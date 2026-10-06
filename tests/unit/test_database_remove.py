@@ -213,3 +213,102 @@ def test_a_name_wtenv_would_not_have_generated_is_never_dropped(name: str) -> No
     assert result.removed == []
     assert [failed.name for failed in result.failed] == [name]
     assert "wtenv_" in result.failed[0].reason
+
+
+# --- the drop guard: only a database wtenv named, on a server on this machine (T168; LOW-6) ------
+#
+# The registry is a file a developer can edit. Whatever it says, wtenv must never drop a database
+# whose name wtenv could not have generated (`wtenv_<slug>_<id8>`, files.md, Names), and never
+# connect to a host that is not this machine (FR-025, FR-039). The guard comes before any
+# connection: a spy stands in for the connection and fails the test if it is opened.
+
+GENERATED = "wtenv_app_91c2d0aa"
+
+
+class ConnectionSpy:
+    """Stands in for `database._connect`: records each call and then refuses, like a dead server."""
+
+    def __init__(self) -> None:
+        self.targets: list[PostgresTarget] = []
+
+    def __call__(self, target: PostgresTarget) -> None:
+        import psycopg
+
+        self.targets.append(target)
+        raise psycopg.OperationalError("connection refused")
+
+
+@pytest.fixture
+def spy(monkeypatch: pytest.MonkeyPatch) -> ConnectionSpy:
+    recorded = ConnectionSpy()
+    monkeypatch.setattr("wtenv.database._connect", recorded)
+    return recorded
+
+
+def local_target(host: str = "127.0.0.1") -> PostgresTarget:
+    return PostgresTarget(host=host, port=5432, user="wtenv", password=None)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "postgres",
+        "template1",
+        "my_app",
+        "wtenv_",
+        "wtenv_precious",  # a developer's own database that happens to start with the prefix
+        "wtenv_app",
+        "wtenv__91c2d0aa",  # no slug
+        "wtenv_app_91c2d0a",  # seven hex digits
+        "wtenv_app_91c2d0aaa",  # nine
+        "wtenv_app_91c2d0AA",  # upper case
+        "wtenv_app_91c2d0ag",  # not hex
+        "wtenv_app-x_91c2d0aa",  # a hyphen
+        "wtenv_app_91c2d0aa; DROP DATABASE postgres",
+        "Wtenv_app_91c2d0aa",
+        "wtenv_" + "a" * 41 + "_91c2d0aa",  # a slug longer than wtenv makes
+    ],
+)
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_a_recorded_name_wtenv_would_not_have_generated_is_failed_without_a_connection(
+    spy: ConnectionSpy, name: str, dry_run: bool
+) -> None:
+    result = remove_postgres_database(local_target(), name, dry_run=dry_run)
+
+    assert spy.targets == []  # no connection was made
+    assert result.removed == [] and result.already_absent == []
+    assert [(f.kind, f.name) for f in result.failed] == [(ItemKind.POSTGRES_DATABASE, name)]
+    assert "wtenv_" in result.failed[0].reason
+
+
+@pytest.mark.parametrize(
+    "name",
+    [GENERATED, "wtenv_a_00000000", "wtenv_" + "a" * 40 + "_91c2d0aa", "wtenv_a_b_c_91c2d0aa"],
+)
+def test_every_name_wtenv_generates_passes_the_name_guard(spy: ConnectionSpy, name: str) -> None:
+    remove_postgres_database(local_target(), name)
+
+    assert len(spy.targets) == 1  # the guard let it through to the server
+
+
+@pytest.mark.parametrize(
+    "host",
+    ["db.example.com", "192.0.2.10", "127.0.0.2", "localhost.example.com", "0.0.0.0", ""],
+)
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_a_recorded_host_that_is_not_this_machine_is_failed_without_a_connection(
+    spy: ConnectionSpy, host: str, dry_run: bool
+) -> None:
+    result = remove_postgres_database(local_target(host), GENERATED, dry_run=dry_run)
+
+    assert spy.targets == []
+    assert result.removed == [] and result.already_absent == []
+    assert [(f.kind, f.name) for f in result.failed] == [(ItemKind.POSTGRES_DATABASE, GENERATED)]
+    assert "local" in result.failed[0].reason.lower()
+
+
+@pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "::1"])
+def test_the_three_local_hosts_pass_the_host_guard(spy: ConnectionSpy, host: str) -> None:
+    remove_postgres_database(local_target(host), GENERATED)
+
+    assert [target.host for target in spy.targets] == [host]

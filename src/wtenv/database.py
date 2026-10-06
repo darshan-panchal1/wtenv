@@ -28,6 +28,8 @@ SQLITE_DIR = ".wtenv"  # in the worktree root; the copies live here (files.md, N
 SQLITE_SIDE_SUFFIXES = ("-wal", "-shm", "-journal")  # SQLite's own files beside a database file
 POSTGRES_DEFAULT_PORT = 5432
 MAINTENANCE_DATABASE = "postgres"  # the database wtenv connects to (research.md section 3)
+# The only names wtenv creates, `wtenv_<slug>_<id8>` (files.md, Names): the only ones it drops.
+_GENERATED_NAME = re.compile(r"wtenv_[a-z0-9_]{1,40}_[0-9a-f]{8}")
 _URL_SETTING = "database.url"
 
 
@@ -597,7 +599,8 @@ def remove_postgres_database(
     `target` is the server the registry records for it; with no password in it, libpq looks in
     `PGPASSWORD`, `PGPASSFILE`, and `~/.pgpass`. A database that is not on the server is
     `already_absent` (FR-042). Only `name` is ever dropped, and only a name wtenv would have
-    generated (`wtenv_<slug>_<id8>`, FR-022); the template is never touched (FR-027). Every
+    generated (`wtenv_<slug>_<id8>`, FR-022) on a server on this machine (FR-025), both checked
+    before any connection; the template is never touched (FR-027). Every
     failure is returned in `failed`, never raised, with a reason that holds no password. With
     `dry_run` the server is asked and nothing is dropped; when it cannot be asked, the database is
     `failed` as in a real run, and not listed as removed (FR-040).
@@ -606,8 +609,15 @@ def remove_postgres_database(
     from psycopg import sql
 
     item = Item(kind=ItemKind.POSTGRES_DATABASE, name=name)
-    if not name.startswith("wtenv_"):
+    # The registry is a file a person can edit, so both facts are checked before a connection.
+    if not _GENERATED_NAME.fullmatch(name):
         reason = "not a database name wtenv generates (wtenv_<name>_<id>); it was left alone"
+        return Removal(failed=[FailedItem(kind=item.kind, name=name, reason=reason)])
+    if target.host not in LOCAL_HOSTS:
+        reason = (
+            f"the recorded server {target.host or '(none)'} is not on this machine; "
+            "wtenv drops databases only on a local server, so nothing was dropped"
+        )
         return Removal(failed=[FailedItem(kind=item.kind, name=name, reason=reason)])
     try:
         with _connect(target) as connection:

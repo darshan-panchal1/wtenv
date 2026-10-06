@@ -1358,11 +1358,11 @@ after groups 3F and 6G, and before T146–T148. Each pair is a failing test, the
     that file's directory; nothing changed. If real git commands cannot produce this state,
     patch the classification in-process, as T105 does.
 - [X] T167 Refuse such an entry in `_refuse_if_it_exists` in `src/wtenv/orphans.py`
-- [ ] T168 Add failing tests for the Postgres drop guard to `tests/unit/test_database_remove.py`
+- [X] T168 Add failing tests for the Postgres drop guard to `tests/unit/test_database_remove.py`
   - LOW-6, FR-025, FR-039: a recorded name that does not match
     `^wtenv_[a-z0-9_]{1,40}_[0-9a-f]{8}$` (files.md, Names), or a recorded host that is not
     local → failed item, no connection made, nothing dropped.
-- [ ] T169 Check the recorded name and host before a drop, in `src/wtenv/database.py`
+- [X] T169 Check the recorded name and host before a drop, in `src/wtenv/database.py`
 - [ ] T170 Add a failing test for a worktree that appears at a `--release` path during `gc` to `tests/integration/test_us4_lifecycle.py`
   - LOW-7, FR-073, FR-074: in-process, with a worktree created at the named path after the
     step-1 check and before the release (patched as in T105) → that entry is stopped with

@@ -2558,3 +2558,81 @@ def test_a_moved_entry_whose_git_dir_names_nothing_that_exists_can_still_be_rele
 
     assert result.ok and result.released == [str(worktree)]
     assert git_dir not in load().worktrees
+
+
+# --- a hand-edited registry cannot make wtenv drop a database that is not its own (T168; LOW-6) --
+
+
+def create_database(server: PostgresServer, name: str) -> None:
+    with server.connect() as connection:
+        connection.execute(f'CREATE DATABASE "{name}"')
+
+
+def test_a_registry_that_names_a_database_wtenv_did_not_generate_drops_nothing(
+    run_wtenv: Run,
+    repo: Path,
+    add_worktree: AddWorktree,
+    postgres_server: PostgresServer,
+    database_cleanup: list[str],
+    pg_env: dict[str, str],
+) -> None:
+    """`wtenv_precious` starts with the prefix but is a developer's own database."""
+    worktree = add_worktree(repo, "one", "one")
+    up(run_wtenv, worktree)
+    precious = f"wtenv_precious_{uuid.uuid4().hex[:6]}"
+    database_cleanup.append(precious)
+    create_database(postgres_server, precious)
+    with transaction() as registry:  # the hand edit
+        registry.worktrees[git_dir_of(worktree)].databases.append(
+            DatabaseRecord(
+                kind="postgres",
+                name=precious,
+                host=postgres_server.host,
+                port=postgres_server.port,
+                user=postgres_server.user,
+                state=ResourceState.CREATED,
+            )
+        )
+
+    status, result = down(run_wtenv, worktree, env=pg_env)
+
+    assert status == 13 and keys(result.failed) == [("postgres_database", precious)]
+    assert "wtenv_" in result.failed[0].reason
+    assert postgres_server.database_exists(precious)  # still there
+    assert is_recorded(worktree)  # and the entry stays, so nothing is half released
+
+
+def test_a_registry_that_names_another_host_drops_nothing_on_this_server(
+    run_wtenv: Run,
+    repo: Path,
+    add_worktree: AddWorktree,
+    postgres_server: PostgresServer,
+    database_cleanup: list[str],
+    pg_env: dict[str, str],
+) -> None:
+    """A well-formed name on a host that is not this machine. `127.0.0.2` is loopback on Linux, so
+    an unguarded drop would reach the test server there; on macOS it would only fail to connect."""
+    worktree = add_worktree(repo, "one", "one")
+    up(run_wtenv, worktree)
+    name = f"wtenv_remote_{uuid.uuid4().hex[:8]}"
+    database_cleanup.append(name)
+    create_database(postgres_server, name)
+    with transaction() as registry:
+        registry.worktrees[git_dir_of(worktree)].databases.append(
+            DatabaseRecord(
+                kind="postgres",
+                name=name,
+                host="127.0.0.2",
+                port=postgres_server.port,
+                user=postgres_server.user,
+                state=ResourceState.CREATED,
+            )
+        )
+
+    status, result = down(run_wtenv, worktree, env=pg_env)
+    _, planned = down(run_wtenv, worktree, "--dry-run", env=pg_env)
+
+    assert status == 13 and keys(result.failed) == [("postgres_database", name)]
+    assert "not on this machine" in result.failed[0].reason
+    assert keys(planned.failed) == keys(result.failed)
+    assert postgres_server.database_exists(name)
