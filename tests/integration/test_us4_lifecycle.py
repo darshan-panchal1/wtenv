@@ -2967,6 +2967,81 @@ def test_the_entries_released_before_a_stopped_one_stay_released_and_the_rest_is
     assert (third / ".wtenv" / "dev.sqlite3").exists()
 
 
+def test_a_stopped_gc_release_names_the_paths_it_did_not_attempt_and_the_earlier_failure(
+    run_wtenv: Run,
+    repo: Path,
+    make_repo: Callable[[str], Path],
+    add_worktree: AddWorktree,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    decoy: Path,
+) -> None:
+    """T197; L2: exit 18 hides a partial failure, so the result says what it did not get to."""
+    live = add_worktree(repo, "live", "live")
+    up(run_wtenv, live)
+    first, first_dir = stray_with_a_database(run_wtenv, make_repo, add_worktree, "first")
+    second, _ = stray_with_a_database(run_wtenv, make_repo, add_worktree, "second")
+    third, third_dir = stray_with_a_database(run_wtenv, make_repo, add_worktree, "third")
+    replace_with_link(first / ".env.local", decoy / "shared.env")  # the first entry has a failure
+    real_check = orphans._refuse_if_it_exists
+    calls: list[str] = []
+
+    def check_then_create_the_worktree(entry: WorktreeEntry) -> None:
+        calls.append(entry.path)  # recorded first: the second call raises
+        real_check(entry)
+        if len(calls) == 4:  # the release of the first entry has just been checked
+            plant_a_worktree(second, git_dir_of(live))
+
+    monkeypatch.setattr(orphans, "_refuse_if_it_exists", check_then_create_the_worktree)
+    capsys.readouterr()
+
+    status = cli.main(
+        ["gc", "--release", str(first), "--release", str(second), "--release", str(third), "--json"]
+    )
+
+    result = GcResult.model_validate_json(capsys.readouterr().out)
+    assert status == 18 and result.error is not None
+    assert result.error.code is ErrorCode.WORKTREE_EXISTS
+    assert result.error.details["path"] == str(second)
+    assert result.error.details["not_attempted"] == [str(third)]
+    assert str(third) in result.error.message
+    assert result.error.hint is not None and "failed" in result.error.hint
+    assert [(f.kind.value, f.reason) for f in result.failed] == [("env_section", "symlink")]
+    assert first_dir in load().worktrees and third_dir in load().worktrees
+    assert (third / ".wtenv" / "dev.sqlite3").exists()
+
+
+def test_a_stopped_gc_release_with_nothing_after_it_has_no_not_attempted_paths(
+    run_wtenv: Run,
+    repo: Path,
+    make_repo: Callable[[str], Path],
+    add_worktree: AddWorktree,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    live = add_worktree(repo, "live", "live")
+    up(run_wtenv, live)
+    stray, _ = stray_with_a_database(run_wtenv, make_repo, add_worktree, "stray")
+    real_check = orphans._refuse_if_it_exists
+    calls: list[str] = []
+
+    def check_then_create_the_worktree(entry: WorktreeEntry) -> None:
+        calls.append(entry.path)
+        real_check(entry)
+        if len(calls) == 1:
+            plant_a_worktree(stray, git_dir_of(live))
+
+    monkeypatch.setattr(orphans, "_refuse_if_it_exists", check_then_create_the_worktree)
+    capsys.readouterr()
+
+    status = cli.main(["gc", "--release", str(stray), "--json"])
+
+    result = GcResult.model_validate_json(capsys.readouterr().out)
+    assert status == 18 and result.error is not None
+    assert "not_attempted" not in result.error.details
+    assert result.error.hint is not None and "failed" not in result.error.hint
+
+
 def test_the_recheck_does_not_stop_an_entry_whose_worktree_stays_gone(
     run_wtenv: Run,
     make_repo: Callable[[str], Path],

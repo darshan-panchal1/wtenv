@@ -131,6 +131,7 @@ def gc_release(paths: Sequence[str], *, dry_run: bool = False) -> GcResult:
         recorded.setdefault(entry.path, []).append(entry)
     result = GcResult(ok=True, dry_run=dry_run)
     named: dict[str, WorktreeEntry] = {}  # by git directory: each entry once
+    given: dict[str, str] = {}  # the path as the command line named it, by git directory
     for path in paths:
         # The path as given first: an entry whose recorded path is now a symbolic link is still
         # found, and its files are left alone by the symbolic-link rule of `down` (FR-086).
@@ -140,31 +141,50 @@ def gc_release(paths: Sequence[str], *, dry_run: bool = False) -> GcResult:
         for entry in entries:
             _refuse_if_it_exists(entry)
             named[entry.git_dir] = entry
+            given.setdefault(entry.git_dir, path)
     planned: set[str] = set()
-    for entry in named.values():
-        if dry_run:
-            _plan(result, entry, planned)
-            continue
+    entries_in_order = list(named.values())
+    for index, entry in enumerate(entries_in_order):
         try:
-            _release(result, entry, only_if_orphaned=False)
+            if dry_run:
+                _plan(result, entry, planned)
+            else:
+                _release(result, entry, only_if_orphaned=False)
         except WtenvError as error:
             # A worktree appeared after the step-1 check (reading R7), or something else stopped
             # this entry: it is stopped with nothing of it changed, and so is every entry after
-            # it. What was released before it stays released and is reported.
-            _stopped(result, error)
+            # it. What was released before it stays released and is reported, and so are the
+            # paths that were not attempted (L2).
+            not_attempted = [given[other.git_dir] for other in entries_in_order[index + 1 :]]
+            _stopped(result, error, not_attempted)
             break
     return _finished(result)
 
 
-def _stopped(result: GcResult, error: WtenvError) -> None:
-    """Record the error that stopped `gc` in `result`, which keeps what was done before it."""
+def _stopped(
+    result: GcResult, error: WtenvError, not_attempted: Sequence[str] | None = None
+) -> None:
+    """Record the error that stopped `gc` in `result`, which keeps what was done before it.
+
+    For `gc --release`, `not_attempted` is the named paths after the stopped entry: they are in
+    `details` and in the message. Exit status 18 hides a partial failure, so when an earlier entry
+    has items under `failed`, the hint says so (L2).
+    """
+    message, hint, details = error.message, error.hint, dict(error.details)
+    if not_attempted is not None:
+        if not_attempted:
+            details["not_attempted"] = list(not_attempted)
+            message += f"; not attempted: {', '.join(not_attempted)}"
+        if result.failed:
+            hint = f"{hint or ''} Items of earlier entries are under `failed`: fix them, then run \
+the same command again.".strip()
     result.ok = False
     result.error = ErrorInfo(
         code=error.code,
         exit_status=EXIT_STATUS[error.code],
-        message=error.message,
-        hint=error.hint,
-        details=error.details,
+        message=message,
+        hint=hint,
+        details=details,
     )
 
 

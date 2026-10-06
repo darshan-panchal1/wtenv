@@ -1487,12 +1487,12 @@ exit status is 13 (0 for a dry run). Every test removes its decoys.
 - [X] T196 Count the entries a dry run would release as gone when deciding the last entry, in `src/wtenv/teardown.py` and `src/wtenv/orphans.py`
   - Pass the git directories the dry run already plans to release completely to `_finish`
     and leave them out of `_is_last`.
-- [ ] T197 Add a failing test for the paths `gc --release` did not attempt to `tests/integration/test_us4_lifecycle.py`
+- [X] T197 Add a failing test for the paths `gc --release` did not attempt to `tests/integration/test_us4_lifecycle.py`
   - L2, FR-041, FR-073: three named paths; the first has a failed item, the second's
     worktree reappears (patched as in T170). Exit 18; `error.details.not_attempted` is the
     third path; the message names it; the hint mentions `failed`; `failed[]` still holds
     the first entry's item.
-- [ ] T198 Report not-attempted paths and an earlier partial failure when `gc --release` stops, in `src/wtenv/orphans.py`
+- [X] T198 Report not-attempted paths and an earlier partial failure when `gc --release` stops, in `src/wtenv/orphans.py`
   - cli.md, `wtenv gc --release`, step 3, and "Error details".
 - [ ] T199 Add a failing test for `gc --release` on an entry whose git directory still exists to `tests/integration/test_us4_lifecycle.py`
   - L3, FR-046, FR-073: a worktree moved by hand (`mv`, no `git worktree repair`), so it
