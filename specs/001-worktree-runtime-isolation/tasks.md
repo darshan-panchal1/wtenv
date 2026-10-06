@@ -1652,7 +1652,7 @@ Runs after group 9S.
     `database.py`; `compose.py`; `orphans.py`; `envfile.py`. Each row measured on its own.
 - [X] T143 Run the coverage check locally with Docker available and add tests in `tests/unit/` or `tests/integration/` for any area under 80%
   - Done when all eight core-area rows of T142 report 80% or more.
-- [ ] T144 [P] Write the release workflow `.github/workflows/release.yml`
+- [X] T144 [P] Write the release workflow `.github/workflows/release.yml`
   - On `v*` tags: a `build` job running `uv build` and uploading `dist/`, and a separate
     `publish` job with `environment: pypi` and `permissions: id-token: write` running
     `uv publish` with PyPI trusted publishing; no stored credentials (plan.md; research.md
