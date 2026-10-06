@@ -102,6 +102,7 @@ def gc(*, dry_run: bool = False) -> GcResult:
 def gc_release(paths: Sequence[str], *, dry_run: bool = False) -> GcResult:
     """Release the entries recorded at `paths`, even though they are unverifiable (FR-073).
 
+    A path matches the entry recorded at it made absolute, else the one at its resolved path.
     Every path is checked before anything changes: an entry whose worktree still exists, at the
     path or, moved, at another, stops the command with `worktree_exists`. A path with no entry is
     reported under `no_entry`, so the command can be repeated. Each named entry is then released
@@ -116,7 +117,9 @@ def gc_release(paths: Sequence[str], *, dry_run: bool = False) -> GcResult:
     result = GcResult(ok=True, dry_run=dry_run)
     named: dict[str, WorktreeEntry] = {}  # by git directory: each entry once
     for path in paths:
-        entries = recorded.get(os.path.realpath(path), [])
+        # The path as given first: an entry whose recorded path is now a symbolic link is still
+        # found, and its files are left alone by the symbolic-link rule of `down` (FR-086).
+        entries = recorded.get(os.path.abspath(path)) or recorded.get(os.path.realpath(path), [])
         if not entries and path not in result.no_entry:
             result.no_entry.append(path)
         for entry in entries:

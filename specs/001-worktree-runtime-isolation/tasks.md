@@ -1278,12 +1278,12 @@ Findings LOW-1, LOW-2, and LOW-4 to LOW-7 of that review: each could remove or o
 something wtenv did not record, or hide an error. LOW-3 is on `docs/roadmap.md`. Run these
 after groups 3F and 6G, and before T146–T148. Each pair is a failing test, then the code.
 
-- [ ] T158 Add failing tests for `gc --release` naming a path that is now a symbolic link to `tests/integration/test_us4_lifecycle.py`
+- [X] T158 Add failing tests for `gc --release` naming a path that is now a symbolic link to `tests/integration/test_us4_lifecycle.py`
   - LOW-1, FR-073, FR-086: an entry whose repository was deleted and whose recorded path was
     then replaced by a link to another directory → `gc --release <path>` finds the entry
     (not `no_entry`); its files are under `failed` with `reason` `symlink`; nothing in the
     link's target changes; exit 13. A link to a live worktree → exit 18 (reading R5).
-- [ ] T159 Match `--release PATH` as given before resolving it, in `src/wtenv/orphans.py`
+- [X] T159 Match `--release PATH` as given before resolving it, in `src/wtenv/orphans.py`
   - cli.md, `gc --release`, step 1: the entry recorded at `os.path.abspath(PATH)`, else the
     one at `os.path.realpath(PATH)`.
 - [ ] T160 Add failing tests for a dry run that cannot reach Postgres or Docker to `tests/unit/test_database_remove.py` and `tests/unit/test_compose_teardown.py`

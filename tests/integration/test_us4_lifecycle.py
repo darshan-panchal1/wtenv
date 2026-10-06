@@ -2260,3 +2260,92 @@ def test_a_release_whose_worktree_root_is_a_link_touches_nothing_behind_it(
     assert real.removed == []
     assert snapshot_tree(decoy) == decoy_before
     assert is_recorded(worktree)
+
+
+# --- `gc --release` finds an entry whose recorded path is now a link (T158; LOW-1; FR-073) -------
+#
+# `--release PATH` used to resolve PATH first, so a recorded path that had become a symbolic link
+# matched nothing: the command said `no_entry` and exited 0 while the entry, its database, and its
+# block stayed. It now matches the path as given (made absolute) first, then the resolved path.
+
+
+def stray_behind_a_link(
+    run_wtenv: Run,
+    make_repo: Callable[[str], Path],
+    add_worktree: AddWorktree,
+    target: Path,
+) -> tuple[Path, str]:
+    """Make a stray entry (its repository is deleted), then replace its directory with a link to
+    `target`. Return the recorded path, which is now the link, and the entry's git directory."""
+    stray, stray_dir = stray_of_a_deleted_repository(run_wtenv, make_repo, add_worktree)
+    shutil.rmtree(stray)
+    stray.symlink_to(target)
+    return stray, stray_dir
+
+
+def test_release_finds_an_entry_whose_recorded_path_is_now_a_link_and_touches_nothing_behind_it(
+    run_wtenv: Run,
+    make_repo: Callable[[str], Path],
+    add_worktree: AddWorktree,
+    outside: Path,
+    decoy: Path,
+) -> None:
+    (decoy / ".env.local").write_bytes(f"MINE=1\n{BEGIN}\nPORT=1\n{END}\n".encode())
+    stray, stray_dir = stray_behind_a_link(run_wtenv, make_repo, add_worktree, decoy)
+    decoy_before = snapshot_tree(decoy)
+
+    status, result = gc(run_wtenv, outside, "--release", str(stray))
+
+    assert result.no_entry == []  # the entry was found, not reported as absent
+    assert status == 13 and not result.ok
+    assert failed_as_symlink(result.failed) == [("env_section", str(stray / ".env.local"))]
+    assert result.released == [] and result.removed == []
+    assert snapshot_tree(decoy) == decoy_before  # nothing behind the link changed
+    assert stray.is_symlink() and stray_dir in load().worktrees  # the entry stays recorded
+    assert load().worktrees[stray_dir].state == "incomplete"
+
+
+def test_a_dry_run_release_of_a_linked_entry_lists_it_as_failed_and_exits_0(
+    run_wtenv: Run,
+    make_repo: Callable[[str], Path],
+    add_worktree: AddWorktree,
+    outside: Path,
+    decoy: Path,
+) -> None:
+    (decoy / ".env.local").write_bytes(f"MINE=1\n{BEGIN}\nPORT=1\n{END}\n".encode())
+    stray, _ = stray_behind_a_link(run_wtenv, make_repo, add_worktree, decoy)
+    decoy_before = snapshot_tree(decoy)
+    registry_before = registry_path().read_bytes()
+
+    status, planned = gc(run_wtenv, outside, "--release", str(stray), "--dry-run")
+
+    assert status == 0 and planned.ok and planned.no_entry == []
+    assert failed_as_symlink(planned.failed) == [("env_section", str(stray / ".env.local"))]
+    assert planned.would_release == [] and planned.would_remove == []
+    assert snapshot_tree(decoy) == decoy_before
+    assert registry_path().read_bytes() == registry_before
+
+
+def test_a_recorded_path_that_links_to_a_live_worktree_is_refused_with_exit_18(
+    run_wtenv: Run,
+    make_repo: Callable[[str], Path],
+    add_worktree: AddWorktree,
+    repo: Path,
+    outside: Path,
+) -> None:
+    live = add_worktree(repo, "live", "live")
+    up(run_wtenv, live)
+    stray, stray_dir = stray_behind_a_link(run_wtenv, make_repo, add_worktree, live)
+    registry_before = registry_path().read_bytes()
+    live_before = snapshot_tree(live)
+
+    status, result = gc(run_wtenv, outside, "--release", str(stray))
+
+    assert status == 18 and not result.ok and result.error is not None
+    assert result.error.code is ErrorCode.WORKTREE_EXISTS
+    # The refused entry is the one recorded at the link, not the live worktree's own entry.
+    assert result.error.details["path"] == str(stray)
+    assert result.released == [] and result.removed == [] and result.failed == []
+    assert registry_path().read_bytes() == registry_before
+    assert snapshot_tree(live) == live_before
+    assert stray_dir in load().worktrees and is_recorded(live)
