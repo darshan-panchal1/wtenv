@@ -10,6 +10,7 @@ containers, networks, volumes, and databases they created.
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import uuid
@@ -65,7 +66,14 @@ from wtenv.output import (
     UnverifiableReason,
     UpResult,
 )
-from wtenv.registry import WorktreeEntry, load, registry_path
+from wtenv.registry import (
+    ComposeRecord,
+    DatabaseRecord,
+    WorktreeEntry,
+    load,
+    registry_path,
+    transaction,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -2349,3 +2357,136 @@ def test_a_recorded_path_that_links_to_a_live_worktree_is_refused_with_exit_18(
     assert registry_path().read_bytes() == registry_before
     assert snapshot_tree(live) == live_before
     assert stray_dir in load().worktrees and is_recorded(live)
+
+
+# --- a dry run that cannot reach Postgres or Docker (T160; LOW-2; FR-040) ------------------------
+#
+# A dry run must list what the real run would remove, or fail. With the server or the engine out
+# of reach, the real run fails the item and keeps the block and the entry; the dry run used to list
+# the item as removable, and the block and the entry with it. Every case here records a resource
+# that points at nothing (a closed port, a dead `DOCKER_HOST`), so no real server or project is
+# touched.
+
+
+def closed_port() -> int:
+    """Return a local port that nothing listens on now."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+def record_postgres_database(git_dir: str, name: str) -> None:
+    """Record a created Postgres database on a port with no server, as a hand-edited or aged
+    registry would."""
+    record = DatabaseRecord(
+        kind="postgres",
+        name=name,
+        host="127.0.0.1",
+        port=closed_port(),
+        user="dev",
+        state=ResourceState.CREATED,
+    )
+    with transaction() as registry:
+        registry.worktrees[git_dir].databases.append(record)
+
+
+def record_compose_project(git_dir: str, project: str) -> None:
+    """Record a compose project that has no resources, with no override file on disk."""
+    record = ComposeRecord(
+        project=project,
+        file="compose.yaml",
+        override="compose.override.yaml",
+        override_state=ResourceState.CREATED,
+    )
+    with transaction() as registry:
+        registry.worktrees[git_dir].compose = record
+
+
+def only_what_could_be_checked(items: Sequence[Item]) -> set[str]:
+    return {item.kind.value for item in items}
+
+
+def test_down_dry_run_fails_a_database_it_cannot_check_and_keeps_the_block_and_entry_out(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree
+) -> None:
+    worktree = add_worktree(repo, "one", "one")
+    up(run_wtenv, worktree)
+    name = "wtenv_one_aabbccdd"
+    record_postgres_database(git_dir_of(worktree), name)
+    registry_before = registry_path().read_bytes()
+
+    status, planned = down(run_wtenv, worktree, "--dry-run")
+
+    assert status == 0 and planned.ok and planned.dry_run  # a dry run still exits 0
+    assert keys(planned.failed) == [("postgres_database", name)]
+    assert "postgres" in planned.failed[0].reason.lower()
+    assert not {"port_block", "registry_entry"} & only_what_could_be_checked(planned.would_remove)
+    assert planned.removed == []
+    assert registry_path().read_bytes() == registry_before  # nothing changed
+
+
+def test_the_dry_run_lists_exactly_what_the_real_run_removes_and_fails(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree
+) -> None:
+    worktree = add_worktree(repo, "one", "one")
+    up(run_wtenv, worktree)
+    name = "wtenv_one_aabbccdd"
+    record_postgres_database(git_dir_of(worktree), name)
+
+    _, planned = down(run_wtenv, worktree, "--dry-run")
+    status, real = down(run_wtenv, worktree)
+
+    assert status == 13 and not real.ok  # the real run fails the same item
+    assert keys(planned.would_remove) == keys(real.removed)
+    assert keys(planned.failed) == keys(real.failed) == [("postgres_database", name)]
+    assert is_recorded(worktree)  # the entry and its block stay recorded
+    assert entry_of(worktree).block.size == 10
+
+
+def test_gc_release_dry_run_does_not_promise_to_release_an_entry_with_an_unreachable_database(
+    run_wtenv: Run,
+    make_repo: Callable[[str], Path],
+    add_worktree: AddWorktree,
+    outside: Path,
+) -> None:
+    stray, stray_dir = stray_of_a_deleted_repository(run_wtenv, make_repo, add_worktree)
+    name = "wtenv_stray_aabbccdd"
+    record_postgres_database(stray_dir, name)
+    registry_before = registry_path().read_bytes()
+
+    status, planned = gc(run_wtenv, outside, "--release", str(stray), "--dry-run")
+
+    assert status == 0 and planned.ok
+    assert planned.would_release == []  # the path is left out
+    assert keys(planned.failed) == [("postgres_database", name)]
+    assert not {"port_block", "registry_entry"} & only_what_could_be_checked(planned.would_remove)
+    assert registry_path().read_bytes() == registry_before
+
+    real_status, real = gc(run_wtenv, outside, "--release", str(stray))
+    assert real_status == 13 and real.released == []
+    assert keys(planned.would_remove) == keys(real.removed)
+    assert keys(planned.failed) == keys(real.failed)
+
+
+def test_down_dry_run_fails_a_compose_project_it_cannot_check_when_the_engine_does_not_answer(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree
+) -> None:
+    worktree = add_worktree(repo, "one", "one")
+    up(run_wtenv, worktree)
+    project = "wtenv-one-aabbccdd"
+    record_compose_project(git_dir_of(worktree), project)
+    dead_engine = {"DOCKER_HOST": f"tcp://127.0.0.1:{closed_port()}"}
+
+    status, planned = down(run_wtenv, worktree, "--dry-run", env=dead_engine)
+
+    assert status == 0 and planned.ok
+    assert keys(planned.failed) == [("compose_project", project)]
+    assert "docker" in planned.failed[0].reason.lower()
+    assert not {"port_block", "registry_entry"} & only_what_could_be_checked(planned.would_remove)
+    assert planned.removed == []
+
+    real_status, real = down(run_wtenv, worktree, env=dead_engine)
+    assert real_status == 13
+    assert keys(planned.would_remove) == keys(real.removed)
+    assert keys(planned.failed) == keys(real.failed)
+    assert is_recorded(worktree)

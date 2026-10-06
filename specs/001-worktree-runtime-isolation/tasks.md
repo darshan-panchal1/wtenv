@@ -1286,14 +1286,14 @@ after groups 3F and 6G, and before T146–T148. Each pair is a failing test, the
 - [X] T159 Match `--release PATH` as given before resolving it, in `src/wtenv/orphans.py`
   - cli.md, `gc --release`, step 1: the entry recorded at `os.path.abspath(PATH)`, else the
     one at `os.path.realpath(PATH)`.
-- [ ] T160 Add failing tests for a dry run that cannot reach Postgres or Docker to `tests/unit/test_database_remove.py` and `tests/unit/test_compose_teardown.py`
+- [X] T160 Add failing tests for a dry run that cannot reach Postgres or Docker to `tests/unit/test_database_remove.py` and `tests/unit/test_compose_teardown.py`
   - LOW-2, FR-040: with the server or the engine unreachable, the dry-run removal returns
     the item as failed, with a reason naming the dependency, and not as would-be removed.
   - Integration, in `tests/integration/test_us4_lifecycle.py`: an entry whose recorded
     Postgres port has nothing listening → `down --dry-run --json` lists the database under
     `failed` and leaves the port block and the entry out of `would_remove`; exit 0; and
     `gc --release <path> --dry-run` leaves the path out of `would_release`.
-- [ ] T161 List unreachable items as failed in dry runs, in `src/wtenv/database.py` and `src/wtenv/compose.py`
+- [X] T161 List unreachable items as failed in dry runs, in `src/wtenv/database.py` and `src/wtenv/compose.py`
   - cli.md, `wtenv down` and `wtenv gc`, `--dry-run`. `teardown` already leaves the block and
     the entry out when an item failed.
 - [X] T172 Add failing contract tests for `KeptVolume` and `kept_volumes` to `tests/contract/test_models_match_contract.py`

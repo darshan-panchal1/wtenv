@@ -184,11 +184,25 @@ def test_a_failed_connection_is_a_failure_reason_without_the_password() -> None:
     assert SECRET not in repr(result)
 
 
-def test_listing_only_with_no_server_to_ask_lists_the_recorded_database() -> None:
+def test_listing_only_with_no_server_to_ask_fails_the_database_and_does_not_list_it() -> None:
+    """LOW-2, FR-040: a dry run that cannot ask the server must not promise a removal."""
     result = remove_postgres_database(unreachable_target(), "wtenv_app_91c2d0aa", dry_run=True)
 
-    assert result.removed == [Item(kind=ItemKind.POSTGRES_DATABASE, name="wtenv_app_91c2d0aa")]
-    assert result.failed == []
+    assert result.removed == [] and result.already_absent == []
+    assert [(f.kind, f.name) for f in result.failed] == [
+        (ItemKind.POSTGRES_DATABASE, "wtenv_app_91c2d0aa")
+    ]
+    assert "postgres" in result.failed[0].reason.lower()
+    assert SECRET not in result.failed[0].reason and SECRET not in repr(result)
+
+
+def test_listing_only_gives_the_same_failure_as_the_real_run_when_the_server_is_not_there() -> None:
+    target = unreachable_target()
+
+    planned = remove_postgres_database(target, "wtenv_app_91c2d0aa", dry_run=True)
+    actual = remove_postgres_database(target, "wtenv_app_91c2d0aa")
+
+    assert planned.failed == actual.failed and planned.removed == actual.removed == []
 
 
 @pytest.mark.parametrize("name", ["postgres", "template1", "my_app"])

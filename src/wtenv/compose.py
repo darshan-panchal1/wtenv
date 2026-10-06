@@ -591,7 +591,7 @@ def _list_project(project: str, run: Runner, environ: Mapping[str, str]) -> list
         process = _docker(run, [*listing, "--filter", label, "--format", template], environ)
         if process.returncode != 0:
             reason = _first_line(process.stderr) or f"exit status {process.returncode}"
-            raise _DockerFailed(f"cannot list the project's resources: {reason}")
+            raise _DockerFailed(f"Docker cannot list the project's resources: {reason}")
         for line in process.stdout.splitlines():
             if line.strip():
                 key, _, name = line.strip().partition(" ")
@@ -621,7 +621,7 @@ def _unlabelled_mounts(
     process = _docker(run, command, environ)
     if process.returncode != 0:
         reason = _first_line(process.stderr) or f"exit status {process.returncode}"
-        raise _DockerFailed(f"cannot inspect the project's containers: {reason}")
+        raise _DockerFailed(f"Docker cannot inspect the project's containers: {reason}")
     labelled = {r.name for r in found if r.kind is ItemKind.COMPOSE_VOLUME}
     mounted = {line.strip() for line in process.stdout.splitlines() if line.strip()}
     return [
@@ -651,8 +651,7 @@ def remove_project(
     item; a project with nothing left is `already_absent` (FR-042). `COMPOSE_*` variables are not
     passed on, so they cannot point Compose at another project or file. With `dry_run` only the
     listings and the inspection run, and the same items are returned. When Docker cannot be asked,
-    a real run reports the project as `failed` and a listing returns the project itself, because
-    `down` would try to remove it.
+    the project is `failed`, in a dry run as in a real one, and is not listed as removed.
     """
     base = os.environ if environ is None else environ
     env = {name: value for name, value in base.items() if not name.startswith("COMPOSE_")}
@@ -671,8 +670,7 @@ def remove_project(
         reasons = {r: _remove_resource(r, run, env) for r in remaining}
         left = _list_project(project, run, env)
     except _DockerFailed as error:
-        if dry_run:
-            return Removal(removed=[project_item])
+        # A dry run that cannot ask Docker fails the project, as the real run would (FR-040).
         reason = str(error)
         return Removal(failed=[FailedItem(kind=project_item.kind, name=project, reason=reason)])
     candidates = before + [r for r in remaining if r not in before]

@@ -564,8 +564,11 @@ def create_postgres_database(target: PostgresTarget, *, template: str, name: str
         _raise_mapped(error, target, template, name, connections)
 
 
-def _drop_failure_reason(error: Exception, target: PostgresTarget) -> str:
-    """Say why the drop failed. The text of `error` is never copied: it could hold a password."""
+def _drop_failure_reason(error: Exception, target: PostgresTarget, *, dry_run: bool = False) -> str:
+    """Say why the drop failed, or with `dry_run` why the server could not be asked.
+
+    The text of `error` is never copied: it could hold a password.
+    """
     from psycopg import OperationalError, errors
 
     server = _server_text(target)
@@ -581,6 +584,8 @@ def _drop_failure_reason(error: Exception, target: PostgresTarget) -> str:
         )
     if isinstance(error, OperationalError):
         return f"cannot connect to the Postgres server at {server}"
+    if dry_run:
+        return f"the Postgres server could not be asked ({type(error).__name__})"
     return f"the server did not drop the database ({type(error).__name__})"
 
 
@@ -594,8 +599,8 @@ def remove_postgres_database(
     `already_absent` (FR-042). Only `name` is ever dropped, and only a name wtenv would have
     generated (`wtenv_<slug>_<id8>`, FR-022); the template is never touched (FR-027). Every
     failure is returned in `failed`, never raised, with a reason that holds no password. With
-    `dry_run` the server is asked and nothing is dropped; when it cannot be asked, the recorded
-    database is listed, because `down` would try to drop it.
+    `dry_run` the server is asked and nothing is dropped; when it cannot be asked, the database is
+    `failed` as in a real run, and not listed as removed (FR-040).
     """
     import psycopg
     from psycopg import sql
@@ -617,8 +622,7 @@ def remove_postgres_database(
         # An unsupported server version: the message names no credentials.
         return Removal(failed=[FailedItem(kind=item.kind, name=name, reason=error.message)])
     except psycopg.Error as error:
-        if dry_run:
-            return Removal(removed=[item])
-        reason = _drop_failure_reason(error, target)
+        # A dry run that cannot ask the server fails the item, as the real run would (FR-040).
+        reason = _drop_failure_reason(error, target, dry_run=dry_run)
         return Removal(failed=[FailedItem(kind=item.kind, name=name, reason=reason)])
     return Removal(removed=[item])

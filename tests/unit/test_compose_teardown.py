@@ -460,8 +460,33 @@ def test_without_docker_the_project_is_failed_and_stays_recorded() -> None:
     assert "docker" in result.failed[0].reason.lower()
 
 
-def test_listing_only_without_docker_lists_the_recorded_project() -> None:
+def test_listing_only_without_docker_fails_the_project_and_does_not_list_it() -> None:
+    """LOW-2, FR-040: a dry run that cannot ask Docker must not promise a removal."""
     result = compose.remove_project(PROJECT, dry_run=True, run=not_installed, environ={})
 
-    assert result.removed == [item(ItemKind.COMPOSE_PROJECT, PROJECT)]
-    assert result.failed == []
+    assert result.removed == [] and result.already_absent == []
+    assert [(f.kind, f.name) for f in result.failed] == [(ItemKind.COMPOSE_PROJECT, PROJECT)]
+    assert "docker" in result.failed[0].reason.lower()
+
+
+def engine_down(
+    command: Sequence[str], environ: Mapping[str, str], cwd: Path | None
+) -> "subprocess.CompletedProcess[str]":
+    return subprocess.CompletedProcess(
+        list(command), 1, stdout="", stderr="Cannot connect to the Docker daemon at unix:///x\n"
+    )
+
+
+def test_listing_only_with_an_engine_that_does_not_answer_fails_the_project() -> None:
+    result = compose.remove_project(PROJECT, dry_run=True, run=engine_down, environ={})
+
+    assert result.removed == [] and result.already_absent == []
+    assert [(f.kind, f.name) for f in result.failed] == [(ItemKind.COMPOSE_PROJECT, PROJECT)]
+    assert "docker" in result.failed[0].reason.lower()
+
+
+def test_listing_only_gives_the_same_failure_as_the_real_run_when_docker_is_not_there() -> None:
+    planned = compose.remove_project(PROJECT, dry_run=True, run=engine_down, environ={})
+    actual = compose.remove_project(PROJECT, run=engine_down, environ={})
+
+    assert planned.failed == actual.failed and planned.removed == actual.removed == []
