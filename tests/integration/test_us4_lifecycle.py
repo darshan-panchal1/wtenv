@@ -2760,6 +2760,7 @@ def test_a_moved_entry_whose_git_dir_names_nothing_that_exists_can_still_be_rele
     up(run_wtenv, worktree)
     git_dir = git_dir_of(worktree)
     shutil.move(worktree, tmp_path / "elsewhere")  # git is not told: `gitdir` names a missing file
+    git(repo, "worktree", "prune")  # git has forgotten it; before that, the release is refused (L3)
     monkeypatch.setattr(
         orphans,
         "classify",
@@ -3040,6 +3041,56 @@ def test_a_stopped_gc_release_with_nothing_after_it_has_no_not_attempted_paths(
     assert status == 18 and result.error is not None
     assert "not_attempted" not in result.error.details
     assert result.error.hint is not None and "failed" not in result.error.hint
+
+
+def add_a_worktree_and_move_it_by_hand(run_wtenv: Run, repo: Path, tmp_path: Path) -> Path:
+    """Provision a worktree, then `mv` it: git still lists the old path, as prunable.
+
+    Return the old path, which is the one the registry records.
+    """
+    worktree = repo.parent / "moving"
+    git(repo, "worktree", "add", "-b", "moving", str(worktree))
+    up(run_wtenv, worktree)
+    recorded = worktree.resolve()
+    shutil.move(str(worktree), str(tmp_path / "new-home"))
+    return recorded
+
+
+def git_dir_of_entry_at(path: Path) -> str:
+    """Return the git directory of the entry recorded at `path`."""
+    (found,) = [e for e in load().worktrees.values() if e.path == str(path)]
+    return found.git_dir
+
+
+def test_gc_release_refuses_an_entry_whose_git_directory_still_exists_until_git_has_pruned_it(
+    run_wtenv: Run, repo: Path, tmp_path: Path, outside: Path
+) -> None:
+    """T199; L3: a worktree moved by hand, with no `git worktree repair`, is still git's. Releasing
+    its entry would drop the block and the database of a worktree that exists."""
+    worktree = add_a_worktree_and_move_it_by_hand(run_wtenv, repo, tmp_path)
+    git_dir = git_dir_of_entry_at(worktree)
+    assert os.path.isdir(git_dir)
+    registry_before = registry_path().read_bytes()
+
+    status, refused = gc(run_wtenv, outside, "--release", str(worktree))
+
+    assert status == 18 and not refused.ok and refused.error is not None
+    assert refused.error.code is ErrorCode.WORKTREE_EXISTS
+    assert refused.error.details["path"] == str(worktree)
+    hint = refused.error.hint or ""
+    assert "git worktree repair" in hint and "git worktree prune" in hint
+    assert refused.released == [] and refused.removed == [] and refused.failed == []
+    assert registry_path().read_bytes() == registry_before
+    assert git_dir in load().worktrees
+    # The same for a dry run: nothing is promised for an entry that cannot be released.
+    dry_status, dry = gc(run_wtenv, outside, "--release", str(worktree), "--dry-run")
+    assert dry_status == 18 and dry.error is not None and dry.would_release == []
+
+    git(repo, "worktree", "prune")
+    status, released = gc(run_wtenv, outside, "--release", str(worktree))
+
+    assert status == 0 and released.released == [str(worktree)]
+    assert git_dir not in load().worktrees
 
 
 def test_the_recheck_does_not_stop_an_entry_whose_worktree_stays_gone(

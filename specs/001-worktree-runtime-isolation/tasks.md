@@ -1494,13 +1494,13 @@ exit status is 13 (0 for a dry run). Every test removes its decoys.
     the first entry's item.
 - [X] T198 Report not-attempted paths and an earlier partial failure when `gc --release` stops, in `src/wtenv/orphans.py`
   - cli.md, `wtenv gc --release`, step 3, and "Error details".
-- [ ] T199 Add a failing test for `gc --release` on an entry whose git directory still exists to `tests/integration/test_us4_lifecycle.py`
+- [X] T199 Add a failing test for `gc --release` on an entry whose git directory still exists to `tests/integration/test_us4_lifecycle.py`
   - L3, FR-046, FR-073: a worktree moved by hand (`mv`, no `git worktree repair`), so it
     classifies as `git_still_lists`. `gc --release <old path>` → exit 18,
     `worktree_exists`, a hint naming `git worktree repair` and `git worktree prune`;
     nothing changes. After `git worktree prune` the release succeeds. Existing tests that
     release an entry whose git directory still exists are changed to prune first.
-- [ ] T200 Refuse `--release` while the entry's git directory exists, in `_refuse_if_it_exists` in `src/wtenv/orphans.py`
+- [X] T200 Refuse `--release` while the entry's git directory exists, in `_refuse_if_it_exists` in `src/wtenv/orphans.py`
   - cli.md, `wtenv gc --release`, step 1. The re-check of T171 includes it.
 - [ ] T201 Add a failing test for a worktree that appears at the path during the compose step to `tests/integration/test_us4_lifecycle.py`
   - L4, FR-073, FR-074: in-process, as T170, a worktree with a different git directory

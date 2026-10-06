@@ -90,7 +90,8 @@ def test_gc_release(
     run_wtenv: Run, contract: ModuleType, repo: Path, add_worktree: AddWorktree, tmp_path: Path
 ) -> None:
     moved = provisioned(run_wtenv, repo, add_worktree, "moved")
-    shutil.move(moved, tmp_path / "elsewhere")  # git is not told: the entry is unverifiable
+    shutil.move(moved, tmp_path / "elsewhere")  # git is not told ...
+    git(repo, "worktree", "prune")  # ... until it prunes: `--release` refuses while git has it (L3)
 
     process = run_wtenv(["gc", "--release", str(moved), "--json"], repo)
 

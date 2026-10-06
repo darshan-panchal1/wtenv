@@ -253,7 +253,9 @@ def _refuse_if_it_exists(entry: WorktreeEntry) -> None:
     directory is not the entry's: the repository was moved and repaired, or another worktree took
     the path (reading R5). One whose `.git` names a git directory that no longer exists is not a
     worktree (reading R3), so its entry can be released. A `moved` entry is refused too, at the
-    location git lists or else the one `<git_dir>/gitdir` names, if a `.git` file is there.
+    location git lists or else the one `<git_dir>/gitdir` names, if a `.git` file is there. An
+    entry whose git directory still exists is refused as well, whatever its reason: git has that
+    worktree, and only `git worktree repair` or `git worktree prune` changes that (L3).
     """
     live = points_to(entry.path)
     if live is not None and os.path.isdir(live):
@@ -274,6 +276,18 @@ def _refuse_if_it_exists(entry: WorktreeEntry) -> None:
                 hint="Run `wtenv down` in that worktree instead.",
                 details={"path": entry.path, "current_path": current_path},
             )
+    if os.path.isdir(entry.git_dir):
+        # Git still has this worktree: moved by hand, or under a renamed directory (L3). It is
+        # not gone, so releasing its entry would drop the block and database of a live worktree.
+        raise WtenvError(
+            ErrorCode.WORKTREE_EXISTS,
+            f"git still has the worktree recorded at {entry.path}",
+            hint=(
+                "If it moved, run `git worktree repair` from its new location, then `wtenv down` "
+                "there; if it is gone, run `git worktree prune` first, then this command again."
+            ),
+            details={"path": entry.path, "git_dir": entry.git_dir},
+        )
 
 
 def _location_named_by_git_dir(entry: WorktreeEntry) -> str | None:
