@@ -102,7 +102,7 @@ cleanup() {
         "$WORK"/*) docker compose -p "$project" down --volumes --remove-orphans >/dev/null 2>&1 || true ;;
       esac
     done
-    docker rm -f "$PG" >/dev/null 2>&1 || true
+    docker rm -f -v "$PG" >/dev/null 2>&1 || true
     rm -rf "$WORK"
   fi
   exit "$rc"
@@ -115,7 +115,7 @@ docker info >/dev/null 2>&1 || fail "Docker is not running"
 ok "prerequisites ($(wtenv --version))"
 
 # One shared local Postgres server with a template database (spec Assumptions).
-docker rm -f "$PG" >/dev/null 2>&1 || true
+docker rm -f -v "$PG" >/dev/null 2>&1 || true
 docker run -d --name "$PG" -e POSTGRES_PASSWORD="$QS_PG_PASSWORD" \
   -p 127.0.0.1:15432:5432 postgres:17 >/dev/null
 for _ in $(seq 1 60); do docker exec "$PG" pg_isready -U postgres -q 2>/dev/null && break; sleep 0.5; done

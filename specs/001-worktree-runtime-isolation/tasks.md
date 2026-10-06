@@ -1687,10 +1687,13 @@ Runs after group 9S.
 - [X] T146 Check `docs/roadmap.md` against the code
   - The command surface matches cli.md (T130); nothing on the roadmap was built; every idea
     noted during implementation is added with its source (FR-001, Principle X).
-- [ ] T147 Run quickstart.md end to end and fix what it finds
+- [X] T147 Run quickstart.md end to end and fix what it finds
   - `uv tool install --force --reinstall .`, extract the script with the `awk` command at the
     top of quickstart.md, run it with Docker (SC-001–SC-009).
   - Done when the script prints `ACCEPTANCE PASSED`.
+  - Found by the run (2026-10-06): the script's `docker rm -f` of its Postgres container left the
+    image's anonymous data volume on disk. Both calls now use `docker rm -f -v`. Run twice after
+    the fix: `ACCEPTANCE PASSED`, and no container or volume left.
 - [ ] T148 Run the five gates one last time and confirm `CLAUDE.md` still matches the constitution
 
 ---
