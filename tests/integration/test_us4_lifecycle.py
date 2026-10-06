@@ -2793,7 +2793,7 @@ def test_down_dry_run_fails_a_database_it_cannot_check_and_keeps_the_block_and_e
 ) -> None:
     worktree = add_worktree(repo, "one", "one")
     up(run_wtenv, worktree)
-    name = "wtenv_one_aabbccdd"
+    name = postgres_database_name("one", git_dir_of(worktree))  # one wtenv generated for it
     record_postgres_database(git_dir_of(worktree), name)
     registry_before = registry_path().read_bytes()
 
@@ -2812,7 +2812,7 @@ def test_the_dry_run_lists_exactly_what_the_real_run_removes_and_fails(
 ) -> None:
     worktree = add_worktree(repo, "one", "one")
     up(run_wtenv, worktree)
-    name = "wtenv_one_aabbccdd"
+    name = postgres_database_name("one", git_dir_of(worktree))  # one wtenv generated for it
     record_postgres_database(git_dir_of(worktree), name)
 
     _, planned = down(run_wtenv, worktree, "--dry-run")
@@ -2832,7 +2832,7 @@ def test_gc_release_dry_run_does_not_promise_to_release_an_entry_with_an_unreach
     outside: Path,
 ) -> None:
     stray, stray_dir = stray_of_a_deleted_repository(run_wtenv, make_repo, add_worktree)
-    name = "wtenv_stray_aabbccdd"
+    name = postgres_database_name("stray", stray_dir)  # one wtenv generated for it
     record_postgres_database(stray_dir, name)
     registry_before = registry_path().read_bytes()
 
@@ -2997,7 +2997,7 @@ def test_a_registry_that_names_another_host_drops_nothing_on_this_server(
     an unguarded drop would reach the test server there; on macOS it would only fail to connect."""
     worktree = add_worktree(repo, "one", "one")
     up(run_wtenv, worktree)
-    name = f"wtenv_remote_{uuid.uuid4().hex[:8]}"
+    name = postgres_database_name("one", git_dir_of(worktree))  # well-formed, and its own
     database_cleanup.append(name)
     create_database(postgres_server, name)
     with transaction() as registry:

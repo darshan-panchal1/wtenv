@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from wtenv.database import PostgresTarget, remove_postgres_database, remove_sqlite_copy
+from wtenv.identity import short_id
 from wtenv.output import Item, ItemKind
 
 SIDE_SUFFIXES = ("-wal", "-shm", "-journal")
@@ -159,6 +160,11 @@ def test_a_side_file_that_cannot_be_removed_is_failed_and_the_copy_is_kept(
 # --- Postgres: failures never carry the password (FR-019) ----------------------------------------
 
 
+GIT_DIR = "/repos/app/.git/worktrees/app"
+ID = short_id(GIT_DIR, 8)  # the `<id8>` of the entry that records the database
+GENERATED = f"wtenv_app_{ID}"
+
+
 def refused_port() -> int:
     """Return a local port on which nothing listens."""
     with socket.socket() as probe:
@@ -174,9 +180,9 @@ def unreachable_target() -> PostgresTarget:
 
 
 def test_a_failed_connection_is_a_failure_reason_without_the_password() -> None:
-    result = remove_postgres_database(unreachable_target(), "wtenv_app_91c2d0aa")
+    result = remove_postgres_database(unreachable_target(), GENERATED, GIT_DIR)
 
-    item = Item(kind=ItemKind.POSTGRES_DATABASE, name="wtenv_app_91c2d0aa")
+    item = Item(kind=ItemKind.POSTGRES_DATABASE, name=GENERATED)
     assert result.removed == [] and result.already_absent == []
     assert [(failed.kind, failed.name) for failed in result.failed] == [(item.kind, item.name)]
     assert result.failed[0].reason
@@ -186,12 +192,10 @@ def test_a_failed_connection_is_a_failure_reason_without_the_password() -> None:
 
 def test_listing_only_with_no_server_to_ask_fails_the_database_and_does_not_list_it() -> None:
     """LOW-2, FR-040: a dry run that cannot ask the server must not promise a removal."""
-    result = remove_postgres_database(unreachable_target(), "wtenv_app_91c2d0aa", dry_run=True)
+    result = remove_postgres_database(unreachable_target(), GENERATED, GIT_DIR, dry_run=True)
 
     assert result.removed == [] and result.already_absent == []
-    assert [(f.kind, f.name) for f in result.failed] == [
-        (ItemKind.POSTGRES_DATABASE, "wtenv_app_91c2d0aa")
-    ]
+    assert [(f.kind, f.name) for f in result.failed] == [(ItemKind.POSTGRES_DATABASE, GENERATED)]
     assert "postgres" in result.failed[0].reason.lower()
     assert SECRET not in result.failed[0].reason and SECRET not in repr(result)
 
@@ -199,8 +203,8 @@ def test_listing_only_with_no_server_to_ask_fails_the_database_and_does_not_list
 def test_listing_only_gives_the_same_failure_as_the_real_run_when_the_server_is_not_there() -> None:
     target = unreachable_target()
 
-    planned = remove_postgres_database(target, "wtenv_app_91c2d0aa", dry_run=True)
-    actual = remove_postgres_database(target, "wtenv_app_91c2d0aa")
+    planned = remove_postgres_database(target, GENERATED, GIT_DIR, dry_run=True)
+    actual = remove_postgres_database(target, GENERATED, GIT_DIR)
 
     assert planned.failed == actual.failed and planned.removed == actual.removed == []
 
@@ -208,7 +212,7 @@ def test_listing_only_gives_the_same_failure_as_the_real_run_when_the_server_is_
 @pytest.mark.parametrize("name", ["postgres", "template1", "my_app"])
 def test_a_name_wtenv_would_not_have_generated_is_never_dropped(name: str) -> None:
     """Every database wtenv creates is `wtenv_<slug>_<id8>` (FR-022); nothing else is dropped."""
-    result = remove_postgres_database(unreachable_target(), name)
+    result = remove_postgres_database(unreachable_target(), name, GIT_DIR)
 
     assert result.removed == []
     assert [failed.name for failed in result.failed] == [name]
@@ -221,8 +225,6 @@ def test_a_name_wtenv_would_not_have_generated_is_never_dropped(name: str) -> No
 # whose name wtenv could not have generated (`wtenv_<slug>_<id8>`, files.md, Names), and never
 # connect to a host that is not this machine (FR-025, FR-039). The guard comes before any
 # connection: a spy stands in for the connection and fails the test if it is opened.
-
-GENERATED = "wtenv_app_91c2d0aa"
 
 
 class ConnectionSpy:
@@ -258,22 +260,22 @@ def local_target(host: str = "127.0.0.1") -> PostgresTarget:
         "wtenv_",
         "wtenv_precious",  # a developer's own database that happens to start with the prefix
         "wtenv_app",
-        "wtenv__91c2d0aa",  # no slug
-        "wtenv_app_91c2d0a",  # seven hex digits
-        "wtenv_app_91c2d0aaa",  # nine
-        "wtenv_app_91c2d0AA",  # upper case
-        "wtenv_app_91c2d0ag",  # not hex
-        "wtenv_app-x_91c2d0aa",  # a hyphen
-        "wtenv_app_91c2d0aa; DROP DATABASE postgres",
-        "Wtenv_app_91c2d0aa",
-        "wtenv_" + "a" * 41 + "_91c2d0aa",  # a slug longer than wtenv makes
+        f"wtenv__{ID}",  # no slug
+        f"wtenv_app_{ID[:-1]}",  # seven hex digits
+        f"wtenv_app_{ID}a",  # nine
+        f"wtenv_app_{ID[:-2].upper()}AA",  # upper case
+        f"wtenv_app_{ID[:-1]}g",  # not hex
+        f"wtenv_app-x_{ID}",  # a hyphen
+        f"wtenv_app_{ID}; DROP DATABASE postgres",
+        f"Wtenv_app_{ID}",
+        "wtenv_" + "a" * 41 + f"_{ID}",  # a slug longer than wtenv makes
     ],
 )
 @pytest.mark.parametrize("dry_run", [False, True])
 def test_a_recorded_name_wtenv_would_not_have_generated_is_failed_without_a_connection(
     spy: ConnectionSpy, name: str, dry_run: bool
 ) -> None:
-    result = remove_postgres_database(local_target(), name, dry_run=dry_run)
+    result = remove_postgres_database(local_target(), name, GIT_DIR, dry_run=dry_run)
 
     assert spy.targets == []  # no connection was made
     assert result.removed == [] and result.already_absent == []
@@ -283,10 +285,10 @@ def test_a_recorded_name_wtenv_would_not_have_generated_is_failed_without_a_conn
 
 @pytest.mark.parametrize(
     "name",
-    [GENERATED, "wtenv_a_00000000", "wtenv_" + "a" * 40 + "_91c2d0aa", "wtenv_a_b_c_91c2d0aa"],
+    [GENERATED, f"wtenv_a_{ID}", "wtenv_" + "a" * 40 + f"_{ID}", f"wtenv_a_b_c_{ID}"],
 )
 def test_every_name_wtenv_generates_passes_the_name_guard(spy: ConnectionSpy, name: str) -> None:
-    remove_postgres_database(local_target(), name)
+    remove_postgres_database(local_target(), name, GIT_DIR)
 
     assert len(spy.targets) == 1  # the guard let it through to the server
 
@@ -299,7 +301,7 @@ def test_every_name_wtenv_generates_passes_the_name_guard(spy: ConnectionSpy, na
 def test_a_recorded_host_that_is_not_this_machine_is_failed_without_a_connection(
     spy: ConnectionSpy, host: str, dry_run: bool
 ) -> None:
-    result = remove_postgres_database(local_target(host), GENERATED, dry_run=dry_run)
+    result = remove_postgres_database(local_target(host), GENERATED, GIT_DIR, dry_run=dry_run)
 
     assert spy.targets == []
     assert result.removed == [] and result.already_absent == []
@@ -309,6 +311,54 @@ def test_a_recorded_host_that_is_not_this_machine_is_failed_without_a_connection
 
 @pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "::1"])
 def test_the_three_local_hosts_pass_the_host_guard(spy: ConnectionSpy, host: str) -> None:
-    remove_postgres_database(local_target(host), GENERATED)
+    remove_postgres_database(local_target(host), GENERATED, GIT_DIR)
 
     assert [target.host for target in spy.targets] == [host]
+
+
+# --- another worktree's database is never dropped (T207; L7; FR-039) --------------------------------
+#
+# A name of the right form, `wtenv_<slug>_<id8>`, is still not this entry's unless its `<id8>` is the
+# one of the entry's own git directory: an edited record could name the database of another worktree
+# of the same repository, or of the main checkout.
+
+OTHERS_GIT_DIR = "/repos/app/.git/worktrees/other"
+OTHERS = f"wtenv_other_{short_id(OTHERS_GIT_DIR, 8)}"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        OTHERS,
+        f"wtenv_app_{short_id(OTHERS_GIT_DIR, 8)}",  # the slug of this worktree, the id of another
+        "wtenv_app_00000000",
+    ],
+)
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_a_name_of_the_right_form_with_the_id_of_another_git_directory_is_failed_without_a_connection(
+    spy: ConnectionSpy, name: str, dry_run: bool
+) -> None:
+    result = remove_postgres_database(local_target(), name, GIT_DIR, dry_run=dry_run)
+
+    assert spy.targets == []  # no connection, so nothing is dropped
+    assert result.removed == [] and result.already_absent == []
+    assert [(f.kind, f.name) for f in result.failed] == [(ItemKind.POSTGRES_DATABASE, name)]
+    assert "wtenv_" in result.failed[0].reason
+
+
+def test_the_name_with_the_entrys_own_id_passes_the_guard(spy: ConnectionSpy) -> None:
+    remove_postgres_database(local_target(), GENERATED, GIT_DIR)
+
+    assert len(spy.targets) == 1
+
+
+def test_the_id_is_matched_at_the_end_of_the_name_and_after_an_underscore(
+    spy: ConnectionSpy,
+) -> None:
+    """`wtenv_app<id8>` has the id but not after an underscore, and the id inside the slug is not the
+    last eight digits."""
+    for name in (f"wtenv_app{ID}", f"wtenv_{ID}_app_00000000"):
+        result = remove_postgres_database(local_target(), name, GIT_DIR)
+        assert [f.name for f in result.failed] == [name]
+
+    assert spy.targets == []

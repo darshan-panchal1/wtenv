@@ -335,14 +335,14 @@ def _database_step(
                 continue  # not marked `removing`, and no side file is looked for
         if not dry_run and record.state is not ResourceState.REMOVING:
             _set_database_state(entry.git_dir, record.kind, ResourceState.REMOVING)
-        removal = _remove_database(record, root, password, dry_run)
+        removal = _remove_database(record, entry.git_dir, root, password, dry_run)
         release.add(removal)
         if not dry_run and not removal.failed:
             _drop_database_record(entry.git_dir, record.kind)
 
 
 def _remove_database(
-    record: DatabaseRecord, root: Path, password: str | None, dry_run: bool
+    record: DatabaseRecord, git_dir: str, root: Path, password: str | None, dry_run: bool
 ) -> Removal:
     """Remove the one database `record` describes; only what it records is touched."""
     if record.kind == "sqlite":
@@ -355,7 +355,7 @@ def _remove_database(
         user=record.user,
         password=password,
     )
-    return database.remove_postgres_database(target, record.name, dry_run=dry_run)
+    return database.remove_postgres_database(target, record.name, git_dir, dry_run=dry_run)
 
 
 def _set_database_state(git_dir: str, kind: str, state: ResourceState) -> None:

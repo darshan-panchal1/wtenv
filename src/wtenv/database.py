@@ -592,15 +592,16 @@ def _drop_failure_reason(error: Exception, target: PostgresTarget, *, dry_run: b
 
 
 def remove_postgres_database(
-    target: PostgresTarget, name: str, *, dry_run: bool = False
+    target: PostgresTarget, name: str, git_dir: str, *, dry_run: bool = False
 ) -> Removal:
     """Drop the recorded database `name` with `DROP DATABASE IF EXISTS … WITH (FORCE)`.
 
     `target` is the server the registry records for it; with no password in it, libpq looks in
     `PGPASSWORD`, `PGPASSFILE`, and `~/.pgpass`. A database that is not on the server is
     `already_absent` (FR-042). Only `name` is ever dropped, and only a name wtenv would have
-    generated (`wtenv_<slug>_<id8>`, FR-022) on a server on this machine (FR-025), both checked
-    before any connection; the template is never touched (FR-027). Every
+    generated for the entry whose git directory is `git_dir` (`wtenv_<slug>_<id8>` with that
+    directory's `<id8>`, FR-022) on a server on this machine (FR-025), both checked before any
+    connection; the template is never touched (FR-027). Every
     failure is returned in `failed`, never raised, with a reason that holds no password. With
     `dry_run` the server is asked and nothing is dropped; when it cannot be asked, the database is
     `failed` as in a real run, and not listed as removed (FR-040).
@@ -610,8 +611,11 @@ def remove_postgres_database(
 
     item = Item(kind=ItemKind.POSTGRES_DATABASE, name=name)
     # The registry is a file a person can edit, so both facts are checked before a connection.
-    if not _GENERATED_NAME.fullmatch(name):
-        reason = "not a database name wtenv generates (wtenv_<name>_<id>); it was left alone"
+    if not _GENERATED_NAME.fullmatch(name) or not name.endswith(f"_{short_id(git_dir, 8)}"):
+        reason = (
+            "not a database name wtenv generates (wtenv_<name>_<id>, with the id of this "
+            "worktree's git directory); it was left alone"
+        )
         return Removal(failed=[FailedItem(kind=item.kind, name=name, reason=reason)])
     if target.host not in LOCAL_HOSTS:
         reason = (

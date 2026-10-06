@@ -1523,10 +1523,10 @@ exit status is 13 (0 for a dry run). Every test removes its decoys.
     link, before anything changes.
 - [X] T206 Check `symlinked_part(repository, "info/exclude")` before writing the exclude block, in `src/wtenv/exclude.py`, `src/wtenv/teardown.py`, and `src/wtenv/provision.py`
   - cli.md, `wtenv up`, step 4, and `wtenv down`, symbolic links.
-- [ ] T207 Add failing tests for another worktree's database name to `tests/unit/test_database_remove.py`
+- [X] T207 Add failing tests for another worktree's database name to `tests/unit/test_database_remove.py`
   - L7, FR-039: a recorded name of the right form whose `<id8>` is not that of the entry's
     git directory → failed item, no connection, nothing dropped; dry run too.
-- [ ] T208 Require the entry's own `<id8>` in the drop guard, in `src/wtenv/database.py`
+- [X] T208 Require the entry's own `<id8>` in the drop guard, in `src/wtenv/database.py`
   - Extends T169: `name.endswith("_" + short_id(entry.git_dir, 8))`.
 - [ ] T209 Add failing tests for a SQLite side file that is a link to `tests/unit/test_database_remove.py`
   - L8, FR-039, FR-086: `<copy>-wal` is a link to a file elsewhere → the copy and each side

@@ -26,6 +26,7 @@ import pytest
 from helpers import (
     BEGIN,
     END,
+    PostgresServer,
     clean_environment,
     commit_all,
     git,
@@ -37,6 +38,7 @@ from helpers import (
     snapshot_tree,
 )
 
+from wtenv.database import postgres_database_name
 from wtenv.identity import current_worktree, short_id
 from wtenv.output import FailedItem, Item
 from wtenv.registry import load, registry_path
@@ -558,6 +560,95 @@ def test_up_refuses_a_recorded_override_that_is_not_wtenvs_before_changing_anyth
     assert snapshot_tree(case.worktree) == tree_before
     assert files_of(decoy) == decoy_before
     assert registry_path().read_bytes() == registry_before
+
+
+# === T178a: the Postgres record ===
+
+PG_PASSWORD = "MYAPP_DB_PASSWORD"
+
+
+def postgres_toml(server: PostgresServer) -> str:
+    url = f"postgresql://{server.user}:{{env:{PG_PASSWORD}}}@{server.host}:{server.port}/{{name}}"
+    return f'[database]\ntype = "postgres"\ntemplate = "{server.template}"\nurl = "{url}"\n'
+
+
+@pytest.mark.parametrize("mode", MODES)
+@pytest.mark.parametrize("decoy", ["precious", "another worktrees database"])
+def test_a_recorded_database_name_that_is_not_the_worktrees_own_is_never_dropped(
+    decoy: str,
+    mode: str,
+    run_wtenv: Run,
+    make_repo: MakeRepo,
+    add_worktree: AddWorktree,
+    tmp_path: Path,
+    postgres_server: PostgresServer,
+) -> None:
+    other_git_dir = current_worktree(make_repo("other")).git_dir
+    name = (
+        f"precious_{uuid.uuid4().hex[:8]}"
+        if decoy == "precious"
+        else f"wtenv_other_{short_id(other_git_dir, 8)}"
+    )
+    env = {PG_PASSWORD: postgres_server.password, "PGPASSWORD": postgres_server.password}
+    case = provision(
+        run_wtenv,
+        make_repo,
+        add_worktree,
+        tmp_path,
+        toml=postgres_toml(postgres_server),
+        env=env,
+    )
+    real = postgres_database_name(case.worktree.name, case.git_dir)
+    with postgres_server.connect() as connection:
+        connection.execute(f'CREATE DATABASE "{name}"')
+    try:
+        hand_edit(case, lambda entry: entry["databases"][0].update(name=name))  # type: ignore[index]
+
+        status, failed, _, _ = execute(mode, case, run_wtenv)
+
+        assert postgres_server.database_exists(name)
+        assert status == expected_status(mode, failed=True)
+        assert "postgres_database" in [item.kind.value for item in failed]
+        assert is_recorded(case)
+    finally:
+        with postgres_server.connect() as connection:
+            connection.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+            connection.execute(f'DROP DATABASE IF EXISTS "{real}" WITH (FORCE)')
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_a_recorded_server_that_is_not_local_is_never_connected_to(
+    mode: str,
+    run_wtenv: Run,
+    make_repo: MakeRepo,
+    add_worktree: AddWorktree,
+    tmp_path: Path,
+    postgres_server: PostgresServer,
+) -> None:
+    env = {PG_PASSWORD: postgres_server.password, "PGPASSWORD": postgres_server.password}
+    case = provision(
+        run_wtenv,
+        make_repo,
+        add_worktree,
+        tmp_path,
+        toml=postgres_toml(postgres_server),
+        env=env,
+    )
+    real = postgres_database_name(case.worktree.name, case.git_dir)
+    try:
+        # `127.0.0.2` is loopback on Linux, so an unguarded drop would reach the test server there.
+        hand_edit(case, lambda entry: entry["databases"][0].update(host="127.0.0.2"))  # type: ignore[index]
+
+        status, failed, _, _ = execute(mode, case, run_wtenv)
+
+        assert postgres_server.database_exists(real)
+        assert status == expected_status(mode, failed=True)
+        assert [item.kind.value for item in failed] == ["postgres_database"]
+        assert "not on this machine" in failed[0].reason
+        assert is_recorded(case)
+    finally:
+        with postgres_server.connect() as connection:
+            connection.execute(f'DROP DATABASE IF EXISTS "{real}" WITH (FORCE)')
 
 
 # === T178b: volume names ===
