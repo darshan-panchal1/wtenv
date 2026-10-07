@@ -123,6 +123,7 @@ def test_json_at_the_root_is_accepted_only_with_version(
 # --- --help ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("ci_like_terminal")
 def test_help_works_and_offers_no_shell_completion(run_wtenv: RunWtenv, tmp_path: Path) -> None:
     result = run_wtenv(["--help"], cwd=tmp_path)
 

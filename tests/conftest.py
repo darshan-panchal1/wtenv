@@ -37,6 +37,19 @@ def git_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
 
 
+@pytest.fixture
+def ci_like_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make this process look like a CI job on a narrow terminal.
+
+    `GITHUB_ACTIONS` and `FORCE_COLOR` make Typer colour `--help` even when it is piped, and
+    `COLUMNS` sets the width Rich wraps to. A test that uses this fixture and still passes shows
+    that `run_wtenv` does not let the caller's terminal reach the command (T227, T228).
+    """
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.setenv("COLUMNS", "60")
+
+
 def _git(cwd: Path, *args: str) -> None:
     """Run git in `cwd`; raise with git's own message when it fails."""
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
@@ -70,22 +83,38 @@ def add_worktree() -> Callable[[Path, str, str], Path]:
     return add
 
 
+# Variables that change how Typer and Rich draw `--help`. The first four force colour (`CI` is
+# removed too, as CI systems set it beside the others); `TERMINAL_WIDTH` is Typer's own width,
+# which beats `COLUMNS`.
+_TERMINAL_VARIABLES = (
+    "GITHUB_ACTIONS",
+    "FORCE_COLOR",
+    "PY_COLORS",
+    "TTY_COMPATIBLE",
+    "CI",
+    "TERMINAL_WIDTH",
+)
+
+
 @pytest.fixture
 def run_wtenv() -> Callable[..., subprocess.CompletedProcess[str]]:
     """Return a function that runs `python -m wtenv` and returns the finished process.
 
     Standard input is closed, so a command that prompts fails the test (FR-004). The result has
-    `returncode`, `stdout`, and `stderr`.
+    `returncode`, `stdout`, and `stderr`. The command sees no colour and a 200-column terminal
+    whatever the caller's environment is, so a test gives the same result on a laptop and in CI
+    (T228).
     """
 
     def run(
         args: list[str], cwd: Path, env: Mapping[str, str] | None = None
     ) -> subprocess.CompletedProcess[str]:
         """Run wtenv with `args` in `cwd`; `env` adds to or overrides the inherited environment."""
+        inherited = {k: v for k, v in os.environ.items() if k not in _TERMINAL_VARIABLES}
         return subprocess.run(
             [sys.executable, "-m", "wtenv", *args],
             cwd=cwd,
-            env={**os.environ, **(env or {})},
+            env={**inherited, "NO_COLOR": "1", "COLUMNS": "200", **(env or {})},
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,

@@ -1666,6 +1666,24 @@ Runs after group 9S.
   - Found by the T141 minimums job on 2026-10-06 (maintainer approved). `git worktree add --orphan`
     exists from git 2.42, so on 2.31.0 git exits 129 before any hook could run. The skip names the
     reason. The minimums job allows this one skip; the other jobs allow none.
+- [X] T227 Write a failing test: the help tests under a CI-like environment, in `tests/conftest.py`, `tests/contract/test_cli_shell.py`, `tests/contract/test_command_surface.py`
+  - Found by CI run 37663295890 (2026-10-07): on all five jobs that run the unit suite,
+    `test_help_works_and_offers_no_shell_completion` and
+    `test_the_root_answers_help_and_names_every_command` fail. `GITHUB_ACTIONS=true` (and likewise
+    `FORCE_COLOR=1`, `PY_COLORS=1`) makes Typer force Rich to colour, so `--help` carries ANSI codes
+    and the box-drawing assertions no longer match. `CI=true` alone does not. The product is not
+    wrong: no `--json` or error output carries ANSI codes under forced colour; only `--help` does.
+  - A `ci_like_terminal` fixture sets `GITHUB_ACTIONS=true`, `FORCE_COLOR=1`, and `COLUMNS=60` in
+    the test process; the two help tests use it, and a new test asserts a command's row in the root
+    help is not wrapped. Seen to fail on a laptop before T228.
+- [X] T228 Make the `run_wtenv` fixture hermetic, in `tests/conftest.py`
+  - The child gets `NO_COLOR=1` and `COLUMNS=200`, and loses `GITHUB_ACTIONS`, `FORCE_COLOR`,
+    `PY_COLORS`, and `CI`. `NO_COLOR` alone is not enough: with `GITHUB_ACTIONS` set, bold and dim
+    codes remain. Also removed, because each was seen to change `--help`: `TTY_COMPATIBLE` (forces
+    colour) and `TERMINAL_WIDTH` (Typer's width, which beats `COLUMNS`). A test's own `env`
+    argument still wins. `src/wtenv/` is unchanged.
+  - Done when T227 passes, and the unit suite passes both plain and with
+    `GITHUB_ACTIONS=true CI=true FORCE_COLOR=1`.
 - [X] T144 [P] Write the release workflow `.github/workflows/release.yml`
   - On `v*` tags: a `build` job running `uv build` and uploading `dist/`, and a separate
     `publish` job with `environment: pypi` and `permissions: id-token: write` running

@@ -114,12 +114,38 @@ def test_every_command_answers_help(run_wtenv: RunWtenv, tmp_path: Path, command
     assert "Usage:" in process.stdout
 
 
+@pytest.mark.usefixtures("ci_like_terminal")
 def test_the_root_answers_help_and_names_every_command(run_wtenv: RunWtenv, tmp_path: Path) -> None:
     process = run_wtenv(["--help"], cwd=tmp_path)
 
     assert process.returncode == 0
     for name in ("up", "down", "gc", "ls", "exec", "doctor", "hook"):
         assert re.search(rf"│\s*{name}\s", process.stdout), name
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("GITHUB_ACTIONS", "true"),
+        ("CI", "true"),
+        ("FORCE_COLOR", "1"),
+        ("PY_COLORS", "1"),
+        ("TTY_COMPATIBLE", "1"),
+        ("COLUMNS", "60"),
+        ("TERMINAL_WIDTH", "60"),
+    ],
+)
+def test_help_is_plain_and_unwrapped_whatever_the_callers_terminal(
+    run_wtenv: RunWtenv, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    process = run_wtenv(["--help"], cwd=tmp_path)
+
+    assert process.returncode == 0
+    assert "\x1b" not in process.stdout
+    row = next(line for line in process.stdout.splitlines() if re.search(r"│\s*up\s", line))
+    assert "bring it up to date." in row
 
 
 def test_no_completion_options_are_installed(run_wtenv: RunWtenv, tmp_path: Path) -> None:
