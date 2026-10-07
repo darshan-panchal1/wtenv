@@ -33,6 +33,9 @@ dev = [
 [tool.hatch.version]
 path = "src/wtenv/__init__.py"
 
+[tool.hatch.build.targets.sdist]
+include = ["src/wtenv", "pyproject.toml", "README.md", "LICENSE", "CHANGELOG.md"]
+
 [tool.mypy]
 strict = true
 python_version = "3.11"

@@ -1671,6 +1671,13 @@ Runs after group 9S.
     `publish` job with `environment: pypi` and `permissions: id-token: write` running
     `uv publish` with PyPI trusted publishing; no stored credentials (plan.md; research.md
     §5, §11). The first release uses a "pending" publisher.
+  - [X] T225 Write a failing build test in `tests/integration/test_build_contents.py`
+    - Maintainer request, 2026-10-07. Runs `uv build` in a temporary directory; the sdist holds
+      none of `.claude/`, `.specify/`, `specs/`, `tests/`, `.github/`, `docs/benchmarks.md`,
+      `CLAUDE.md`, and holds `src/wtenv/`, `pyproject.toml`, `README.md`, `LICENSE`,
+      `CHANGELOG.md`; the wheel holds only `wtenv/` and `*.dist-info/`. Seen to fail first.
+  - [X] T226 Limit the sdist in `pyproject.toml` (`[tool.hatch.build.targets.sdist]`)
+    - Done when T225 passes and the wheel is unchanged.
 - [X] T145 [P] Write `README.md` and add `readme = "README.md"` to `pyproject.toml`
   - Install (`uv tool install wtenv` or `pipx install wtenv`); the nine commands with one
     example each; `wtenv.toml` (config.md); `--json` and exit statuses (cli.md); platforms

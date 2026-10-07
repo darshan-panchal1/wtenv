@@ -107,6 +107,5 @@ Source: T141, T144, and T145, while writing CI and checking `uv build`.
 
 | Idea | Why it is not in v1 |
 |------|---------------------|
-| **Keep the source distribution small.** `uv build` puts `.claude/`, `.specify/`, `specs/`, and `tests/` in the sdist, because hatchling includes every file git does not ignore. A `[tool.hatch.build.targets.sdist]` `include` list would limit it to the source, the license, the README, the changelog, and `pyproject.toml`. The wheel holds only `wtenv/` and its metadata. | Packaging beyond T144 and T145 (Principle X). Nothing breaks: the sdist builds a correct wheel. |
 | **Keep the pins in CI current.** The actions in `.github/workflows/` are pinned to full commit SHAs, and the `minimums` job pins git 2.31.0 and Compose 2.24.4 by SHA-256. Dependabot (`github-actions` ecosystem) would propose new action SHAs. The two downloads would still be updated by hand. | A new file and a policy decision outside T141. The pins are what make the workflows reproducible, so they change only on purpose. |
 | **Run the suite against Compose 2.24.4 on the machine that supports it.** The `minimums` job runs on x86-64 Linux only; wtenv's own Docker tests have not been run on an Arm host with Compose 2.24.4. | No such runner is in the CI plan (plan.md, Build, CI and release). |
