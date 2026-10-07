@@ -581,7 +581,11 @@ def test_a_port_that_is_both_a_variable_and_published_is_checked_once(tmp_path: 
 
 
 def versions(
-    *, git: str = "git version 2.50.1", compose: str = "v2.30.0", engine_up: bool = True
+    *,
+    git: str = "git version 2.50.1",
+    compose: str = "v2.30.0",
+    engine_up: bool = True,
+    engine_stdout: str = "27.0.1\n",
 ) -> Callable[[Sequence[str], Mapping[str, str], Path | None], "subprocess.CompletedProcess[str]"]:
     """A runner that answers the version and engine commands of the dependency checks."""
 
@@ -596,7 +600,7 @@ def versions(
         if words[:3] == ["docker", "compose", "version"]:
             return process(compose + "\n")
         if words[:2] == ["docker", "info"]:
-            return process("27.0.1\n", returncode=0 if engine_up else 1)
+            return process(engine_stdout, returncode=0 if engine_up else 1)
         raise AssertionError(f"unexpected command {words}")
 
     return run
@@ -652,6 +656,17 @@ def test_docker_that_a_configuration_needs_and_that_runs_is_ok() -> None:
 
 def test_docker_that_a_configuration_needs_and_that_does_not_answer_is_unavailable() -> None:
     status = doctor.docker_status(compose_config(), run=versions(engine_up=False), environ=ENVIRON)
+
+    assert status.status == "unavailable"
+    assert status.detail is not None and "does not answer" in status.detail
+
+
+@pytest.mark.parametrize("stdout", ["", "  \n"], ids=["empty", "whitespace_only"])
+def test_docker_that_exits_0_without_a_server_version_is_unavailable(stdout: str) -> None:
+    # Docker CLI 26.x to 28.0.x does this when the daemon is dead (T229).
+    run = versions(engine_stdout=stdout)
+
+    status = doctor.docker_status(compose_config(), run=run, environ=ENVIRON)
 
     assert status.status == "unavailable"
     assert status.detail is not None and "does not answer" in status.detail

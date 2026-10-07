@@ -10,6 +10,7 @@ networks, or volumes.
 
 import json
 import os
+import socket
 import stat
 import subprocess
 import sys
@@ -526,6 +527,25 @@ def test_a_remote_docker_engine_is_not_local_and_is_never_contacted(
     assert error["details"]["dependency"] == "docker"
     assert error["details"]["reason"] == "not_local"
     assert not log.exists()
+    assert not is_recorded(worktree)
+    nothing_for_compose(worktree)
+
+
+def test_a_docker_engine_that_does_not_answer_is_not_running_for_up(
+    repo: Path, add_worktree: AddWorktree, run_wtenv: Run, compose_docker: None
+) -> None:
+    # Docker CLI 26.x to 28.0.x exits 0 with empty stdout from `docker info` on a dead daemon (T229).
+    worktree = make_worktree(repo, add_worktree, "dead")
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        closed = probe.getsockname()[1]
+
+    status, error = failed_up(run_wtenv, worktree, {"DOCKER_HOST": f"tcp://127.0.0.1:{closed}"})
+
+    assert (status, error["code"]) == (8, "dependency_unavailable")
+    assert error["details"]["dependency"] == "docker"
+    assert error["details"]["reason"] == "not_running"
+    assert "does not answer" in error["message"]  # from `check_docker`, not a later docker call
     assert not is_recorded(worktree)
     nothing_for_compose(worktree)
 

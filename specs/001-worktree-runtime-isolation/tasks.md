@@ -1684,6 +1684,23 @@ Runs after group 9S.
     argument still wins. `src/wtenv/` is unchanged.
   - Done when T227 passes, and the unit suite passes both plain and with
     `GITHUB_ACTIONS=true CI=true FORCE_COLOR=1`.
+- [X] T229 Write failing tests: a `docker info` that exits 0 with no server version is not running, in `tests/unit/test_compose_checks.py`, `tests/unit/test_doctor_checks.py`, `tests/integration/test_us3_compose.py`
+  - Found by CI run 37663295890 (2026-10-07): `test_a_docker_engine_that_a_configuration_needs_and_that_does_not_answer_is_a_problem`
+    (US6) fails on the runner, whose Docker CLI is 28.0.4. Docker CLI 26.x to 28.0.x exits 0 with
+    empty stdout from `docker info --format {{.ServerVersion}}` when the daemon is dead; 28.1.1 and
+    later exit 1. `check_docker` tested only the exit status, so a dead engine counted as up
+    (FR-060(e), FR-061; cli.md, `dependency_unavailable` with reason `not_running`).
+  - `check_docker`: exit 0 with empty stdout, exit 0 with only whitespace, and exit 1 each raise
+    `dependency_unavailable` with reason `not_running`; exit 0 with a version passes.
+  - `doctor` (`docker_status`) and `up` (`provision._compose_plan`): the exit-0, empty-stdout case
+    is `unavailable` for `doctor` and `dependency_unavailable` for `up`.
+  - One integration check: `up` with `[compose]` configured and a dead `DOCKER_HOST` exits 8 with
+    `dependency_unavailable`, reason `not_running`.
+  - Seen to fail first, before T230.
+- [X] T230 Require a server version from `docker info` in `check_docker`, in `src/wtenv/compose.py`
+  - The engine counts as running only if `docker info --format {{.ServerVersion}}` exits 0 and
+    prints a non-empty version. Nothing else changes.
+  - Done when T229 passes, and the US6 test passes against Docker CLI 28.0.4.
 - [X] T144 [P] Write the release workflow `.github/workflows/release.yml`
   - On `v*` tags: a `build` job running `uv build` and uploading `dist/`, and a separate
     `publish` job with `environment: pypi` and `permissions: id-token: write` running

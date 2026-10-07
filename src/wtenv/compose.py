@@ -343,7 +343,9 @@ def check_docker(*, run: Runner = run_command, environ: Mapping[str, str] | None
             required="2.24.4",
             found=found,
         )
-    if _command(run, ["docker", "info", "--format", "{{.ServerVersion}}"], base).returncode != 0:
+    engine = _command(run, ["docker", "info", "--format", "{{.ServerVersion}}"], base)
+    # Docker CLI 26.x to 28.0.x exits 0 with empty stdout when the daemon is dead.
+    if engine.returncode != 0 or not engine.stdout.strip():
         raise _docker_unavailable("not_running", "the Docker engine does not answer")
 
 

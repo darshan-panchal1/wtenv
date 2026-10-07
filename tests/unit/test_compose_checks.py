@@ -1,14 +1,18 @@
 """The compose limit checks of `up` (research.md §4, "v1 limits", and §11; FR-033, FR-035).
 The checks take the command runner and the environment as parameters, so no Docker is needed."""
 
+import os
+import stat
 import subprocess
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import pytest
 
-from wtenv import compose
+from wtenv import compose, provision
+from wtenv.config import load_config
 from wtenv.errors import ErrorCode, WtenvError
+from wtenv.identity import WorktreeIdentity
 
 CONTEXT_COMMAND = ["docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}"]
 VERSION_COMMAND = ["docker", "compose", "version", "--short"]
@@ -146,6 +150,72 @@ def test_an_engine_that_does_not_answer_is_not_running() -> None:
     error = unavailable(FakeDocker(engine_up=False))
 
     assert error.details["reason"] == "not_running"
+
+
+def _engine_answers(stdout: str, returncode: int) -> "subprocess.CompletedProcess[str]":
+    """What `docker info --format {{.ServerVersion}}` printed, byte for byte."""
+    return subprocess.CompletedProcess([], returncode, stdout, "")
+
+
+# Docker CLI 26.x to 28.0.x exits 0 with empty stdout when the daemon is dead (T229).
+@pytest.mark.parametrize(
+    ("stdout", "returncode"),
+    [("", 0), ("  \n\t\n", 0), ("", 1)],
+    ids=["exit_0_empty_stdout", "exit_0_whitespace_only", "exit_1"],
+)
+def test_an_engine_answer_without_a_server_version_is_not_running(
+    stdout: str, returncode: int
+) -> None:
+    runner = FakeDocker()
+    runner.answers[tuple(ENGINE_COMMAND)] = _engine_answers(stdout, returncode)
+
+    error = unavailable(runner)
+
+    assert error.details["reason"] == "not_running"
+
+
+def test_an_engine_that_exits_0_with_a_server_version_passes() -> None:
+    runner = FakeDocker()
+    runner.answers[tuple(ENGINE_COMMAND)] = _engine_answers("29.0.0\n", 0)
+
+    compose.check_docker(run=runner, environ={})
+
+
+def test_up_reports_a_docker_that_exits_0_with_no_server_version_as_not_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `up` calls `check_docker()` with the real runner, so a stand-in `docker` goes first on PATH.
+    shim_dir = tmp_path / "shim"
+    shim_dir.mkdir()
+    shim = shim_dir / "docker"
+    shim.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        "  context) echo unix:///var/run/docker.sock;;\n"
+        "  compose) echo 2.30.0;;\n"
+        "  info) ;;\n"  # exit 0, nothing on stdout
+        "  *) exit 1;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    shim.chmod(shim.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", f"{shim_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    root = tmp_path / "feature-x"
+    root.mkdir()
+    (root / "wtenv.toml").write_text('[compose]\nfile = "compose.yaml"\n', encoding="utf-8")
+    where = WorktreeIdentity(
+        git_dir="/repos/app/.git/worktrees/feature-x", path=str(root), repository="/repos/app/.git"
+    )
+
+    with pytest.raises(WtenvError) as caught:
+        provision._compose_plan(root, where, load_config(root), None)
+
+    assert caught.value.code is ErrorCode.DEPENDENCY_UNAVAILABLE
+    assert caught.value.details["dependency"] == "docker"
+    assert caught.value.details["reason"] == "not_running"
+    # Not the later "cannot list the project's resources": `check_docker` itself must refuse.
+    assert "does not answer" in caught.value.message
 
 
 @pytest.mark.parametrize("found", ["2.24.3", "2.23.9", "2.0.0", "1.29.2", "v2.24.3"])
