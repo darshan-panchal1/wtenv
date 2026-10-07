@@ -1,0 +1,154 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_LOCKED: "1"
+
+jobs:
+  # The five gates (constitution; plan.md, Build, CI and release; NFR-004).
+  # On macOS there is no Docker, so the Docker and Postgres tests skip themselves.
+  # On Ubuntu Docker is present, so they run, and no integration test may be skipped.
+  gates:
+    name: gates (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      - name: Install lsof (the port-holder tests need it)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y --no-install-recommends lsof
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy src
+      - run: uv run pytest -m "not integration"
+      - name: Pull the images the Docker tests use
+        if: runner.os == 'Linux'
+        run: |
+          docker pull postgres:17
+          docker pull valkey/valkey:latest
+      - name: Integration tests
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run pytest -m integration -rs | tee integration.log
+      - name: No integration test may be skipped on Linux
+        if: runner.os == 'Linux'
+        run: |
+          if grep -q '^SKIPPED' integration.log; then
+            echo "an integration test was skipped although Docker is available" >&2
+            grep '^SKIPPED' integration.log >&2
+            exit 1
+          fi
+
+  # NFR-003: at least 80% line coverage for each core area on its own, from a run where
+  # Docker and Postgres are available so nothing is skipped (plan.md, Coverage map).
+  coverage:
+    name: coverage (NFR-003)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install lsof (the port-holder tests need it)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y --no-install-recommends lsof
+      - run: uv sync --locked
+      - name: Pull the images the Docker tests use
+        run: |
+          docker pull postgres:17
+          docker pull valkey/valkey:latest
+      - name: Run the whole suite with coverage
+        run: uv run pytest --cov=wtenv -rs
+      - name: Registry and locks
+        run: uv run coverage report --fail-under=80 --include='*/wtenv/registry.py,*/wtenv/locks.py'
+      - name: Port allocation
+        run: uv run coverage report --fail-under=80 --include='*/wtenv/ports.py'
+      - name: Worktree identity
+        run: uv run coverage report --fail-under=80 --include='*/wtenv/identity.py'
+      - name: Config parsing and validation
+        run: uv run coverage report --fail-under=80 --include='*/wtenv/config.py'
+      - name: Database provisioning
+        run: uv run coverage report --fail-under=80 --include='*/wtenv/database.py'
+      - name: Compose override generation
+        run: uv run coverage report --fail-under=80 --include='*/wtenv/compose.py'
+      - name: Garbage collection
+        run: uv run coverage report --fail-under=80 --include='*/wtenv/orphans.py'
+      - name: Env-file writing
+        run: uv run coverage report --fail-under=80 --include='*/wtenv/envfile.py'
+
+  # The supported minimums: git 2.31 (research.md, section 6) and Docker Compose 2.24.4
+  # (FR-031). Both are installed from pinned, checksummed downloads, and the whole suite
+  # runs against them.
+  minimums:
+    name: minimums (git 2.31.0, Compose 2.24.4)
+    runs-on: ubuntu-latest
+    env:
+      GIT_VERSION: "2.31.0"
+      GIT_SHA256: e8f162cbdb3283e13cd7388d864ed23485f1b046a19e969f12ed2685fb789a40
+      COMPOSE_VERSION: "2.24.4"
+      COMPOSE_SHA256: b506272a7f34ea056e36ba23e83593c491fd8419b0ed30ecacc42fe2eee8c964
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.11"
+          enable-cache: true
+      - name: Build git ${{ env.GIT_VERSION }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends make gcc zlib1g-dev lsof
+          curl -fsSL -o git.tar.xz \
+            "https://mirrors.edge.kernel.org/pub/software/scm/git/git-${GIT_VERSION}.tar.xz"
+          echo "${GIT_SHA256}  git.tar.xz" | sha256sum --check
+          tar -xf git.tar.xz
+          make -C "git-${GIT_VERSION}" -j"$(nproc)" prefix="$HOME/git-min" \
+            NO_GETTEXT=1 NO_TCLTK=1 NO_CURL=1 NO_EXPAT=1 NO_PERL=1 NO_PYTHON=1 NO_OPENSSL=1 \
+            all install
+          echo "$HOME/git-min/bin" >> "$GITHUB_PATH"
+      - name: Install Docker Compose ${{ env.COMPOSE_VERSION }}
+        run: |
+          curl -fsSL -o docker-compose \
+            "https://github.com/docker/compose/releases/download/v${COMPOSE_VERSION}/docker-compose-linux-x86_64"
+          echo "${COMPOSE_SHA256}  docker-compose" | sha256sum --check
+          mkdir -p "$HOME/.docker/cli-plugins"
+          install -m 755 docker-compose "$HOME/.docker/cli-plugins/docker-compose"
+      - name: Check the versions
+        run: |
+          git --version | grep -x "git version ${GIT_VERSION}"
+          docker compose version --short | grep -x "v\?${COMPOSE_VERSION}"
+      - run: uv sync --locked
+      - name: Pull the images the Docker tests use
+        run: |
+          docker pull postgres:17
+          docker pull valkey/valkey:latest
+      - run: uv run pytest -m "not integration"
+      - name: Integration tests, none skipped but the one that needs a newer git
+        run: |
+          set -o pipefail
+          uv run pytest -m integration -rs | tee integration.log
+          # `git worktree add --orphan` exists from git 2.42 (T224); nothing else may skip.
+          if grep '^SKIPPED' integration.log | grep -v -- '--orphan'; then
+            echo "an integration test was skipped although Docker is available" >&2
+            exit 1
+          fi
