@@ -501,7 +501,7 @@ def _finish(
     exclude_item = Item(kind=ItemKind.EXCLUDE_ENTRIES, name=str(exclude_path))
     try:
         if dry_run:
-            with registry_lock():
+            with registry_lock(create=False):
                 last = _is_last(registry.load().worktrees, entry, gone)
                 block_there = _remove_exclude_block(exclude_path, dry_run=True) if last else None
         else:
@@ -576,7 +576,7 @@ def down(
 
 def _down(identity: WorktreeIdentity, *, dry_run: bool) -> DownResult:
     """Run `down` for `identity`, whose worktree lock is held unless this is a dry run."""
-    with registry_lock():
+    with registry_lock(create=False):
         entry = registry.load().worktrees.get(identity.git_dir)
     if entry is None:
         return DownResult(ok=True, dry_run=dry_run, worktree_path=identity.path)

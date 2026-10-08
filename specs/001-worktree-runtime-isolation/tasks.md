@@ -1793,6 +1793,18 @@ separate spec.
     0.1.1 entry listing T231 to T235. No tag.
   - Done when the five gates pass with no skipped integration test, `uv build` succeeds, and the
     sdist test (T225) passes.
+- [X] T237 Write failing tests: no read-only command changes a fresh state directory, in `tests/integration/test_read_only_commands.py`
+  - Finding 2 again (FR-050: `ls` MUST NOT change anything; FR-040: `--dry-run` changes
+    nothing). With `XDG_STATE_HOME` pointing at a directory that does not exist, `ls`, `gc
+    --dry-run` and `down --dry-run` each create `<state>/wtenv/registry.lock`.
+  - Integration, parametrized, text and `--json`: `ls`, `doctor`, `gc --dry-run`, `down
+    --dry-run` (inside a worktree), `--version`, `--help`. The state directory does not exist
+    before and does not exist after.
+  - Seen to fail first, before T238.
+- [X] T238 Make `ls`, `gc --dry-run` and `down --dry-run` take the registry lock without creating it, in `src/wtenv/listing.py`, `src/wtenv/orphans.py`, `src/wtenv/teardown.py`
+  - Each read of the registry that a read-only path makes passes `registry_lock(create=False)`
+    (T234). Writing paths are unchanged. No spec change.
+  - Done when T237 passes.
 
 ---
 
