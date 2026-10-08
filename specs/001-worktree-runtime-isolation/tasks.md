@@ -1778,7 +1778,7 @@ separate spec.
     block runs without a lock; otherwise the lock is taken as before. `diagnose` passes
     `create=False`. Other read-only commands are not touched (see the report of this task group).
   - Done when T233 passes.
-- [ ] T235 Correct the README, in `README.md`
+- [X] T235 Correct the README, in `README.md`
   - Finding 3, items (a) to (e) only; nothing is claimed that wtenv does not do. (a) the override
     is named after the compose file (`compose.override.yaml` for `compose.yaml`,
     `compose.override.yml` for `compose.yml`, and so on); (b) the registry lives under
