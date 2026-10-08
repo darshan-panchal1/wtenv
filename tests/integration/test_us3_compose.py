@@ -27,6 +27,7 @@ from helpers import (
     commit_all,
     exclude_file,
     git,
+    parse_ls,
     parse_up,
     project_resources,
     snapshot_tree,
@@ -64,6 +65,22 @@ volumes:
   cache-data:
 """
 TOML = 'ports = ["PORT", "CACHE_PORT"]\nblock_size = 10\n\n[compose]\nfile = "compose.yaml"\n'
+
+# Two services that publish fixed host ports, which `up` remaps into the block (T231).
+REMAPPED_STACK = f"""\
+services:
+  backend:
+    image: {COMPOSE_IMAGE}
+    pull_policy: never
+    ports:
+      - "8000:6379"
+  frontend:
+    image: {COMPOSE_IMAGE}
+    pull_policy: never
+    ports:
+      - "5173:6379"
+"""
+REMAPPED_TOML = 'ports = ["PORT"]\nblock_size = 10\n\n[compose]\nfile = "compose.yaml"\n'
 
 
 @pytest.fixture
@@ -379,6 +396,35 @@ def test_the_text_output_shows_the_published_ports_and_the_compose_project(
         for line in lines
     ), process.stdout
     assert f"  compose    {project_of(worktree)}  compose.override.yaml (created)" in lines
+
+
+def test_ls_shows_the_remapped_published_ports_in_text_and_in_json(
+    repo: Path, add_worktree: AddWorktree, run_wtenv: Run, compose_projects: ComposeProjects
+) -> None:
+    """T231 (FR-031): `ls` names the ports the compose services publish, as `up` does."""
+    worktree = make_worktree(
+        repo, add_worktree, "remapped", toml=REMAPPED_TOML, stack=REMAPPED_STACK
+    )
+    up(run_wtenv, worktree)
+    compose_projects.track(project_of(worktree))
+    start = entry_of(worktree).block.start
+
+    text = run_wtenv(["ls"], worktree)
+    document = run_wtenv(["ls", "--json"], worktree)
+
+    assert text.returncode == 0 and document.returncode == 0, text.stderr + document.stderr
+    header, *rows = text.stdout.splitlines()
+    (row,) = [line for line in rows if line.endswith(str(worktree))]
+    assert "PUBLISHED" in header
+    assert f"PORT={start}" in row
+    assert f"backend:6379->{start + 1}" in row
+    assert f"frontend:6379->{start + 2}" in row
+    listed = parse_ls(document)
+    (view,) = [v for v in listed.worktrees if v.path == str(worktree)]
+    assert [(p.service, p.target, p.protocol, p.port) for p in view.ports if p.service] == [
+        ("backend", 6379, "tcp", start + 1),
+        ("frontend", 6379, "tcp", start + 2),
+    ]
 
 
 # --- research.md §8: compose code is loaded only when it is configured --------------------------

@@ -1746,7 +1746,7 @@ or JSON model changes in this group; behavior the run showed to be missing (over
 port variables for published ports, `up --dry-run`, and the like) goes to `docs/roadmap.md` and a
 separate spec.
 
-- [ ] T231 Write failing tests: `ls` shows the remapped published ports, in `tests/unit/test_render_ls.py`, `tests/integration/test_us3_compose.py`
+- [X] T231 Write failing tests: `ls` shows the remapped published ports, in `tests/unit/test_render_ls.py`, `tests/integration/test_us3_compose.py`
   - Finding 1 (FR-031: published ports "MUST be shown in the output of `up` and `ls`"). `up`
     prints a `published` line; the text of `ls` shows `PORT=20000` and nothing for the ports the
     compose services publish.
@@ -1758,7 +1758,7 @@ separate spec.
     `frontend`) is provisioned; the `ls` row names both remapped ports, and `ls --json` carries
     `service`, `target`, `protocol`, and `port` for each (the JSON already does; the test pins it).
   - Seen to fail first, before T232.
-- [ ] T232 Show the published ports in the text of `ls`, in `src/wtenv/output.py`
+- [X] T232 Show the published ports in the text of `ls`, in `src/wtenv/output.py`
   - `render_ls_text` adds a `PUBLISHED` column between `VARIABLES` and `DATABASE`, only when at
     least one row has a published port. Text is "not a stable interface" (cli.md, Rules), so
     `LsResult` and the JSON are unchanged. The `cli.md` text example is brought in line.

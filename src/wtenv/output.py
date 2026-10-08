@@ -522,18 +522,36 @@ def render_ls_text(result: LsResult) -> str:
     """Return the table `wtenv ls` prints for people (cli.md, `wtenv ls`; not a stable interface).
 
     One row per worktree under the header STATUS, PORTS, VARIABLES, DATABASE, COMPOSE, PATH; a part
-    that is not there shows `-`. An unverifiable row ends with its reason in parentheses. A
+    that is not there shows `-`. When any worktree publishes a compose port, a PUBLISHED column
+    follows VARIABLES (FR-031). An unverifiable row ends with its reason in parentheses. A
     database is shown by kind and name or path, never by a URL, which can hold a password.
     """
     if not result.worktrees:
         return "wtenv: no worktrees"
-    rows = [_LS_HEADER] + [_ls_row(view) for view in result.worktrees]
-    widths = [max(len(row[column]) for row in rows) + 2 for column in range(len(_LS_HEADER) - 1)]
+    rows: list[tuple[str, ...]] = [_LS_HEADER, *(_ls_row(view) for view in result.worktrees)]
+    if any(port.service for view in result.worktrees for port in view.ports):
+        rows = [row[:3] + (cell,) + row[3:] for row, cell in zip(rows, _published_cells(result))]
+    widths = [max(len(row[column]) for row in rows) + 2 for column in range(len(rows[0]) - 1)]
     return "\n".join(
         "".join(cell.ljust(width) for cell, width in zip(row, widths, strict=False))
         + row[len(widths)]
         for row in rows
     )
+
+
+def _published_cells(result: LsResult) -> list[str]:
+    """Return the PUBLISHED cell of the header and of each row: `service:target->port`, or `-`."""
+    cells = ["PUBLISHED"]
+    for view in result.worktrees:
+        published = [_published_cell(port) for port in view.ports if port.service is not None]
+        cells.append(" ".join(published) or "-")
+    return cells
+
+
+def _published_cell(port: PortView) -> str:
+    """Return `service:target->port`; a port that is not tcp shows `/protocol`."""
+    protocol = "" if port.protocol in (None, "tcp") else f"/{port.protocol}"
+    return f"{port.service}:{port.target}{protocol}->{port.port}"
 
 
 def _ls_row(view: WorktreeView) -> tuple[str, str, str, str, str, str]:
