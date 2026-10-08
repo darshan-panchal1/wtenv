@@ -145,7 +145,7 @@ standard error:
 
 ```text
 $ wtenv --version --json
-{"schema_version":1,"command":"version","ok":true,"error":null,"warnings":[],"version":"0.1.0"}
+{"schema_version":1,"command":"version","ok":true,"error":null,"warnings":[],"version":"0.1.1"}
 
 $ cd /tmp && wtenv up --json
 {"schema_version":1,"command":"up","ok":false,"error":{"code":"not_in_worktree","exit_status":4,"message":"not inside a git worktree: /tmp","hint":"Run wtenv from a directory inside a git worktree.","details":{"cwd":"/tmp"}},"warnings":[],"worktree":null,"changes":[],"post_up":[]}

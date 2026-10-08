@@ -17,6 +17,9 @@ Fixes from a run of 0.1.0 on `fastapi/full-stack-fastapi-template`.
   appears only when some worktree publishes a port. `ls --json` already carried them.
 - `wtenv doctor` no longer creates the state directory or `registry.lock` when there is no
   registry yet; it changes nothing, as `--help` says (FR-060; T233, T234).
+- `wtenv ls`, `wtenv gc --dry-run` and `wtenv down --dry-run` no longer create the state
+  directory or `registry.lock` on a fresh `XDG_STATE_HOME`, in text or `--json` (FR-040,
+  FR-050; T237, T238).
 
 ### Documentation
 
@@ -26,7 +29,7 @@ Fixes from a run of 0.1.0 on `fastapi/full-stack-fastapi-template`.
   worktrees share volumes; Compose reads `.env`, not `.env.local`; stop `docker compose watch`
   and any foreground `up` before `wtenv down` (T235).
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-10-08
 
 First release. Nine commands, one registry, no daemon.
 
