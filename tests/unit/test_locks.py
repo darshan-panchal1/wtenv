@@ -174,6 +174,43 @@ def test_the_registry_lock_cannot_be_taken_twice() -> None:
     assert raised.value.code is ErrorCode.REGISTRY_BUSY
 
 
+def test_a_registry_lock_that_may_not_create_creates_nothing_when_there_is_no_lock_file(
+    state_home: Path,
+) -> None:
+    with registry_lock(create=False):
+        pass
+
+    assert not state_home.exists()  # T233, FR-060
+
+
+def test_a_registry_lock_that_may_not_create_still_takes_the_lock_when_the_file_exists() -> None:
+    with registry_lock():
+        pass
+
+    with (
+        registry_lock(create=False),
+        pytest.raises(WtenvError) as raised,
+        registry_lock(timeout=0.1),
+    ):
+        pass
+
+    assert raised.value.code is ErrorCode.REGISTRY_BUSY
+
+
+def test_a_registry_lock_that_may_not_create_waits_for_a_holder_and_then_busy() -> None:
+    with registry_lock():
+        pass
+
+    with (
+        _held_by_another_process(REGISTRY_HOLDER),
+        pytest.raises(WtenvError) as raised,
+        registry_lock(timeout=0.3, create=False),
+    ):
+        pass
+
+    assert raised.value.code is ErrorCode.REGISTRY_BUSY
+
+
 # --- the worktree lock ----------------------------------------------------------------
 
 

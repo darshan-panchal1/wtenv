@@ -1763,7 +1763,7 @@ separate spec.
     least one row has a published port. Text is "not a stable interface" (cli.md, Rules), so
     `LsResult` and the JSON are unchanged. The `cli.md` text example is brought in line.
   - Done when T231 passes.
-- [ ] T233 Write failing tests: `doctor` changes nothing on a fresh state directory, in `tests/unit/test_locks.py`, `tests/integration/test_us6_diagnostics.py`
+- [X] T233 Write failing tests: `doctor` changes nothing on a fresh state directory, in `tests/unit/test_locks.py`, `tests/integration/test_us6_diagnostics.py`
   - Finding 2 (FR-060: "without changing anything"). With `XDG_STATE_HOME` pointing at a directory
     that does not exist, `wtenv doctor` creates `<state>/wtenv/registry.lock`.
   - Integration: `XDG_STATE_HOME` is a temporary directory with nothing under it; `doctor` and
@@ -1772,7 +1772,7 @@ separate spec.
   - Unit: a read-only registry lock creates nothing when there is no lock file, and still takes
     the lock when there is one.
   - Seen to fail first, before T234.
-- [ ] T234 Make `doctor` take the registry lock without creating it, in `src/wtenv/locks.py`, `src/wtenv/doctor.py`
+- [X] T234 Make `doctor` take the registry lock without creating it, in `src/wtenv/locks.py`, `src/wtenv/doctor.py`
   - `registry_lock` gets a keyword `create` (default `True`, so every other caller is unchanged).
     With `create=False` and no lock file there is no registry and no writer has ever run, so the
     block runs without a lock; otherwise the lock is taken as before. `diagnose` passes
