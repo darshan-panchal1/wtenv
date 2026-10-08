@@ -109,3 +109,11 @@ Source: T141, T144, and T145, while writing CI and checking `uv build`.
 |------|---------------------|
 | **Keep the pins in CI current.** The actions in `.github/workflows/` are pinned to full commit SHAs, and the `minimums` job pins git 2.31.0 and Compose 2.24.4 by SHA-256. Dependabot (`github-actions` ecosystem) would propose new action SHAs. The two downloads would still be updated by hand. | A new file and a policy decision outside T141. The pins are what make the workflows reproducible, so they change only on purpose. |
 | **Run the suite against Compose 2.24.4 on the machine that supports it.** The `minimums` job runs on x86-64 Linux only; wtenv's own Docker tests have not been run on an Arm host with Compose 2.24.4. | No such runner is in the CI plan (plan.md, Build, CI and release). |
+
+## From the release work, after v0.1.0
+
+Source: a read of the code after v0.1.0 was published.
+
+| Idea | Why it is not in v1 |
+|------|---------------------|
+| **Exit-code-only checks.** Places that treat exit status 0 as success without checking the output: `_list_project` (`compose.py`, ~719), `_unlabelled_mounts` (`compose.py`, ~749), `_container_ports` (`doctor.py`, ~299), `git_status` (`doctor.py`, ~392), `git_listing` (`gitutil.py`, ~160), `git_path` (`gitutil.py`, ~168), and the `docker` fixture (`tests/conftest.py`, ~131). Each could check that the output has the expected shape, as the `docker info` check already does for the server version. | Not in spec 001 (Principle X). Each needs a task pair of its own, and the output of a wrong-but-successful command has to be probed first. |
