@@ -117,3 +117,20 @@ Source: a read of the code after v0.1.0 was published.
 | Idea | Why it is not in v1 |
 |------|---------------------|
 | **Exit-code-only checks.** Places that treat exit status 0 as success without checking the output: `_list_project` (`compose.py`, ~719), `_unlabelled_mounts` (`compose.py`, ~749), `_container_ports` (`doctor.py`, ~299), `git_status` (`doctor.py`, ~392), `git_listing` (`gitutil.py`, ~160), `git_path` (`gitutil.py`, ~168), and the `docker` fixture (`tests/conftest.py`, ~131). Each could check that the output has the expected shape, as the `docker info` check already does for the server version. | Not in spec 001 (Principle X). Each needs a task pair of its own, and the output of a wrong-but-successful command has to be probed first. |
+
+## From the fastapi-template dogfood run
+
+Source: running v0.1.0 on `fastapi/full-stack-fastapi-template` (2026-10-08). The v0.1.1 fixes
+(T231 to T236) cover only what was wrong in what v0.1.0 already promised; everything here is new
+behavior and needs a spec first (Principle X).
+
+| Idea | Why it is not in v0.1.1 |
+|------|-------------------------|
+| **Repo-owned override file support. BLOCKER for repos like full-stack-fastapi-template**, which keep their own compose override. wtenv would work with the file the repository owns instead of refusing it. See also "Compose files with other names, several compose files, or a developer's own override file" above. | `up` refuses any override file wtenv did not write (`ownership_conflict`), because Compose loads only one and wtenv never edits a developer's (research section 4). Supporting one changes how the override is generated, and with it FR-030 and files.md. For now the README tells the developer how to merge it by hand. |
+| **Export the remapped published ports as variables**, for example `WTENV_BACKEND_8000` for the host port given to the `backend` service's container port 8000, so that other settings can refer to the port a service was given. | FR-031 ties a port to a variable through `${VAR}` in the compose file, and FR-063's list of settings is closed. New variables are a change to the env-file contract. |
+| **A way to point `[database]` at the compose db service**, instead of a Postgres server on the host or a SQLite file. | `[database]` names a local Postgres server and a template, or a SQLite template (FR-063). A database inside the worktree's own compose project is a different provisioning path. |
+| **`wtenv up --dry-run`**, which shows what `up` would create and change, as `down` and `gc` already do. | Not in spec 001. `--dry-run` exists for the commands that remove things. |
+| **`doctor` validates `wtenv.toml`, existing override files, and the Compose version.** It would report an invalid setting, an override file that would make `up` fail, and a Compose older than 2.24.4, before `up` is run. | FR-060 lists the checks of `doctor`, and none of these is in it. `up` already finds each of them, and fails before changing anything. |
+| **`doctor` shows the Docker version** (the engine and the Compose plugin) next to the dependency status. | The `dependencies` list holds a status per dependency (cli.md, `wtenv doctor`); a version is a change to the `DoctorResult` model. |
+| **Warn about a fixed `image:` name that worktrees share**, like `compose_fixed_volume_name`. A service with a fixed `image:` (usually with `build:`) gets the same image name in every worktree, so one worktree's build replaces the tag another one runs. | A new warning code is a change to the JSON models and to cli.md. |
+| **`down` warns when a compose client for the released project is still running**, such as `docker compose watch`, which re-creates the containers after `down`. | wtenv records no process and has no way to find a client. Finding one needs a probe of its own. The README says to stop such clients first. |

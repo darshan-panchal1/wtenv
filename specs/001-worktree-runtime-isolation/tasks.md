@@ -1786,7 +1786,7 @@ separate spec.
     why not to paste `docker compose config` output; (d) Compose reads `.env`, not `.env.local`;
     (e) stop `docker compose watch` and a foreground `up` before `wtenv down`.
   - Each statement was checked against the code or against `docker compose` 5.1.4 first.
-- [ ] T236 Record the dogfood ideas, and release 0.1.1, in `docs/roadmap.md`, `src/wtenv/__init__.py`, `CHANGELOG.md`
+- [X] T236 Record the dogfood ideas, and release 0.1.1, in `docs/roadmap.md`, `src/wtenv/__init__.py`, `CHANGELOG.md`
   - `docs/roadmap.md`: one heading, "From the fastapi-template dogfood run", with the eight ideas
     the maintainer listed (repo-owned override file support is marked BLOCKER). `__version__` and
     the package version (hatch reads it from `__init__.py`) become 0.1.1; `CHANGELOG.md` gets a
