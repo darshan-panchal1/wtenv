@@ -6,7 +6,7 @@ All notable changes to wtenv are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.1.1] - Unreleased
+## [0.1.1] - 2026-10-09
 
 Fixes from a run of 0.1.0 on `fastapi/full-stack-fastapi-template`.
 
