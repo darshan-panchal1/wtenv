@@ -448,6 +448,35 @@ def test_doctor_does_not_create_a_registry_where_there_is_none(
     assert not registry_path().exists()
 
 
+def test_doctor_creates_nothing_on_a_fresh_state_directory(
+    run_wtenv: Run, tmp_path: Path, state_home: Path
+) -> None:
+    """T233 (FR-060): not the state directory, not `registry.lock`, in text or in JSON."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert not state_home.exists()
+
+    text = run_wtenv(["doctor"], plain)
+    json_status, _, _ = doctor(run_wtenv, plain)
+
+    assert (text.returncode, json_status) == (0, 0), text.stdout + text.stderr
+    assert sorted(state_home.rglob("*")) == []
+    assert not state_home.exists()
+
+
+def test_doctor_leaves_an_existing_state_directory_byte_identical(
+    run_wtenv: Run, repo: Path, add_worktree: AddWorktree, state_home: Path
+) -> None:
+    worktree = add_worktree(repo, "one", "one")
+    up(run_wtenv, worktree)
+    before = snapshot_tree(state_home)
+
+    status, _, _ = doctor(run_wtenv, worktree)
+
+    assert status == 0
+    assert snapshot_tree(state_home) == before
+
+
 # --- FR-003: anywhere; FR-076: no worktree lock --------------------------------------------------
 
 

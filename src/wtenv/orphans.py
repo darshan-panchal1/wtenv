@@ -205,14 +205,14 @@ def _plan(result: GcResult, entry: WorktreeEntry, planned: set[str]) -> None:
 
 def _entries() -> list[WorktreeEntry]:
     """Read the registry once, under its lock; return its entries in the order of their blocks."""
-    with registry_lock():
+    with registry_lock(create=False):
         entries = list(registry.load().worktrees.values())
     return sorted(entries, key=lambda entry: entry.block.start)
 
 
 def _entry(git_dir: str) -> WorktreeEntry | None:
     """Read one entry under the registry lock; None when the registry no longer holds it."""
-    with registry_lock():
+    with registry_lock(create=False):
         return registry.load().worktrees.get(git_dir)
 
 

@@ -407,7 +407,9 @@ def test_14_registry_busy_is_a_registry_lock_that_stays_held(
     contract: ModuleType,
 ) -> None:
     # The same command, in this process, with a wait of a fraction of a second instead of ten.
-    monkeypatch.setattr(listing, "registry_lock", lambda: locks.registry_lock(0.2))
+    monkeypatch.setattr(
+        listing, "registry_lock", lambda create=True: locks.registry_lock(0.2, create=create)
+    )
 
     with locks.registry_lock():
         status = cli.main(["ls", "--json"])

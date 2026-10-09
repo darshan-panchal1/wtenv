@@ -68,12 +68,23 @@ def _acquire(path: Path, timeout: float) -> filelock.FileLock | None:
 
 
 @contextmanager
-def registry_lock(timeout: float = REGISTRY_LOCK_TIMEOUT) -> Iterator[None]:
+def registry_lock(timeout: float = REGISTRY_LOCK_TIMEOUT, *, create: bool = True) -> Iterator[None]:
     """Hold the registry lock for the block. Every read-check-write of the registry takes it.
 
     Raises `registry_busy` when another process still holds it after `timeout` seconds.
+
+    A command that only reads passes `create=False` so that it creates nothing (FR-060). With no
+    lock file, no command that writes has ever run, so there is no registry to protect and the
+    block runs without the lock.
     """
-    lock = _acquire(ensure_state_dir() / "registry.lock", timeout)
+    if create:
+        path = ensure_state_dir() / "registry.lock"
+    else:
+        path = state_dir() / "registry.lock"
+        if not path.exists():
+            yield
+            return
+    lock = _acquire(path, timeout)
     if lock is None:
         raise WtenvError(
             ErrorCode.REGISTRY_BUSY,

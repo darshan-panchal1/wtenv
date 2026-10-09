@@ -1738,6 +1738,74 @@ Runs after group 9S.
     the fix: `ACCEPTANCE PASSED`, and no container or volume left.
 - [X] T148 Run the five gates one last time and confirm `CLAUDE.md` still matches the constitution
 
+### v0.1.1 fixes
+
+Findings of the dogfood run of 0.1.0 on `fastapi/full-stack-fastapi-template`, confirmed by the
+maintainer and checked again before any change. Maintainer request, 2026-10-08. No FR, contract,
+or JSON model changes in this group; behavior the run showed to be missing (override-file support,
+port variables for published ports, `up --dry-run`, and the like) goes to `docs/roadmap.md` and a
+separate spec.
+
+- [X] T231 Write failing tests: `ls` shows the remapped published ports, in `tests/unit/test_render_ls.py`, `tests/integration/test_us3_compose.py`
+  - Finding 1 (FR-031: published ports "MUST be shown in the output of `up` and `ls`"). `up`
+    prints a `published` line; the text of `ls` shows `PORT=20000` and nothing for the ports the
+    compose services publish.
+  - Unit: `render_ls_text` for a worktree with a variable port and two published ports shows each
+    as `service:target->port` in a `PUBLISHED` column; a port tied to a variable shows in both
+    columns; a port that is not tcp shows `/protocol`; when no row publishes a port the header is
+    the six columns of today.
+  - Integration (Docker): a compose file whose services publish fixed host ports (`backend`,
+    `frontend`) is provisioned; the `ls` row names both remapped ports, and `ls --json` carries
+    `service`, `target`, `protocol`, and `port` for each (the JSON already does; the test pins it).
+  - Seen to fail first, before T232.
+- [X] T232 Show the published ports in the text of `ls`, in `src/wtenv/output.py`
+  - `render_ls_text` adds a `PUBLISHED` column between `VARIABLES` and `DATABASE`, only when at
+    least one row has a published port. Text is "not a stable interface" (cli.md, Rules), so
+    `LsResult` and the JSON are unchanged. The `cli.md` text example is brought in line.
+  - Done when T231 passes.
+- [X] T233 Write failing tests: `doctor` changes nothing on a fresh state directory, in `tests/unit/test_locks.py`, `tests/integration/test_us6_diagnostics.py`
+  - Finding 2 (FR-060: "without changing anything"). With `XDG_STATE_HOME` pointing at a directory
+    that does not exist, `wtenv doctor` creates `<state>/wtenv/registry.lock`.
+  - Integration: `XDG_STATE_HOME` is a temporary directory with nothing under it; `doctor` and
+    `doctor --json` exit 0 and the listing of the directory is the same before and after. A second
+    test: with a registry in place, the state directory is byte-identical after `doctor` too.
+  - Unit: a read-only registry lock creates nothing when there is no lock file, and still takes
+    the lock when there is one.
+  - Seen to fail first, before T234.
+- [X] T234 Make `doctor` take the registry lock without creating it, in `src/wtenv/locks.py`, `src/wtenv/doctor.py`
+  - `registry_lock` gets a keyword `create` (default `True`, so every other caller is unchanged).
+    With `create=False` and no lock file there is no registry and no writer has ever run, so the
+    block runs without a lock; otherwise the lock is taken as before. `diagnose` passes
+    `create=False`. Other read-only commands are not touched (see the report of this task group).
+  - Done when T233 passes.
+- [X] T235 Correct the README, in `README.md`
+  - Finding 3, items (a) to (e) only; nothing is claimed that wtenv does not do. (a) the override
+    is named after the compose file (`compose.override.yaml` for `compose.yaml`,
+    `compose.override.yml` for `compose.yml`, and so on); (b) the registry lives under
+    `XDG_STATE_HOME`; (c) the safe way to merge an override of your own into the compose file, and
+    why not to paste `docker compose config` output; (d) Compose reads `.env`, not `.env.local`;
+    (e) stop `docker compose watch` and a foreground `up` before `wtenv down`.
+  - Each statement was checked against the code or against `docker compose` 5.1.4 first.
+- [X] T236 Record the dogfood ideas, and release 0.1.1, in `docs/roadmap.md`, `src/wtenv/__init__.py`, `CHANGELOG.md`
+  - `docs/roadmap.md`: one heading, "From the fastapi-template dogfood run", with the eight ideas
+    the maintainer listed (repo-owned override file support is marked BLOCKER). `__version__` and
+    the package version (hatch reads it from `__init__.py`) become 0.1.1; `CHANGELOG.md` gets a
+    0.1.1 entry listing T231 to T235. No tag.
+  - Done when the five gates pass with no skipped integration test, `uv build` succeeds, and the
+    sdist test (T225) passes.
+- [X] T237 Write failing tests: no read-only command changes a fresh state directory, in `tests/integration/test_read_only_commands.py`
+  - Finding 2 again (FR-050: `ls` MUST NOT change anything; FR-040: `--dry-run` changes
+    nothing). With `XDG_STATE_HOME` pointing at a directory that does not exist, `ls`, `gc
+    --dry-run` and `down --dry-run` each create `<state>/wtenv/registry.lock`.
+  - Integration, parametrized, text and `--json`: `ls`, `doctor`, `gc --dry-run`, `down
+    --dry-run` (inside a worktree), `--version`, `--help`. The state directory does not exist
+    before and does not exist after.
+  - Seen to fail first, before T238.
+- [X] T238 Make `ls`, `gc --dry-run` and `down --dry-run` take the registry lock without creating it, in `src/wtenv/listing.py`, `src/wtenv/orphans.py`, `src/wtenv/teardown.py`
+  - Each read of the registry that a read-only path makes passes `registry_lock(create=False)`
+    (T234). Writing paths are unchanged. No spec change.
+  - Done when T237 passes.
+
 ---
 
 ## Dependencies & Execution Order

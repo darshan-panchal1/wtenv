@@ -97,7 +97,7 @@ def list_worktrees(cwd: str | Path | None = None) -> LsResult:
     Entries come first, in the order of their port blocks. Raises `registry_busy` or
     `registry_unreadable`; it changes nothing (FR-050).
     """
-    with registry_lock():
+    with registry_lock(create=False):
         entries = list(registry.load().worktrees.values())
     listings: dict[str, list[WorktreeRecord] | None] = {}
     for entry in entries:

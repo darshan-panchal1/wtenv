@@ -131,6 +131,13 @@ which passes it to the command it runs).
 
 Every command takes `--json`.
 
+wtenv keeps one registry per user, not one per repository: `registry.json` in the state
+directory, which is `~/Library/Application Support/wtenv` on macOS and
+`$XDG_STATE_HOME/wtenv` (default `~/.local/state/wtenv`) on Linux and WSL2. Setting
+`XDG_STATE_HOME` moves it on both. Two shells with different values use two registries that know
+nothing of each other's port blocks, so set it the same way everywhere you run wtenv, including
+in the agents' environments.
+
 ### `--json` and exit statuses
 
 With `--json`, standard output holds exactly one JSON document, and everything else goes to
@@ -138,7 +145,7 @@ standard error:
 
 ```text
 $ wtenv --version --json
-{"schema_version":1,"command":"version","ok":true,"error":null,"warnings":[],"version":"0.1.0"}
+{"schema_version":1,"command":"version","ok":true,"error":null,"warnings":[],"version":"0.1.1"}
 
 $ cd /tmp && wtenv up --json
 {"schema_version":1,"command":"up","ok":false,"error":{"code":"not_in_worktree","exit_status":4,"message":"not inside a git worktree: /tmp","hint":"Run wtenv from a directory inside a git worktree.","details":{"cwd":"/tmp"}},"warnings":[],"worktree":null,"changes":[],"post_up":[]}
@@ -233,7 +240,9 @@ Passwords are never printed in any mode and never recorded in the registry.
 
 ### Compose
 
-With `[compose]`, `up` writes a `compose.override.yaml` beside your compose file. It sets the
+With `[compose]`, `up` writes an override file beside your compose file, named after it:
+`compose.override.yaml` for `compose.yaml`, `compose.override.yml` for `compose.yml`, and
+`docker-compose.override.yaml` or `.yml` for the `docker-compose.*` names. It sets the
 project name to a name unique to the worktree and remaps every published host port to a port
 of the worktree's block. Plain `docker compose up` in the worktree then uses them, with no
 extra flags. Tie a service's port to one of your variables inside the compose file, the way
@@ -250,6 +259,34 @@ services:
 with `ports = ["PORT", "CACHE_PORT"]` in `wtenv.toml`. A published port that is not tied to a
 variable gets the next free port of the block. The override file is added to
 `.git/info/exclude`, as is the env file, so `git status` stays clean.
+
+**If you already have an override file.** Compose loads only one override beside the compose
+file, and wtenv never edits yours, so `up` stops with `ownership_conflict` and changes nothing.
+Move your override into the compose file by hand: copy each setting you want to keep into the
+matching service, in the same YAML shape, then delete or move the override file and run
+`wtenv up` again. This changes the compose file everyone shares; wtenv has no support yet for an
+override file that the repository owns. Do not build the merged file from the output of
+`docker compose config`. It adds a `name:` for the project, one for the default network, and one
+for every volume. A fixed `name:` is the same in every worktree, so the main checkout and every
+worktree would share those volumes (`up` warns with `compose_fixed_volume_name`, and `down` keeps
+them). Use `docker compose config` to look at the result, not to copy from it.
+
+**Compose does not read `.env.local`.** Compose reads `.env` in the project directory, and
+nothing else unless you pass `--env-file`. wtenv's default env file is `.env.local`, so
+`docker compose` does not see its variables. The project name and the published ports do not
+need them, because the override file sets both. If your compose file interpolates one of
+wtenv's variables (for example `${DATABASE_URL}`), either set `env_file = ".env"` in
+`wtenv.toml`, so that wtenv writes its marked section into `.env` and leaves your other lines
+alone (the file must not be tracked by git), or run `docker compose --env-file .env.local ...`,
+which then reads that file instead of `.env`.
+
+**Stop Compose clients before `wtenv down`.** `down` removes the project's containers, network,
+and labelled volumes, and then forgets the project. It does not track the Compose processes you
+started. A `docker compose watch` that is still running re-creates the containers and the
+network the next time a watched file changes, and by then nothing records the project, so
+neither `down` nor `gc` will remove it. Stop `docker compose watch` and any foreground
+`docker compose up` in the worktree first. If a project was re-created, find it with
+`docker compose ls -a` and remove it with `docker compose -p NAME down`.
 
 ### Changing the configuration later
 

@@ -381,12 +381,15 @@ and takes no worktree lock (FR-050).
 **Text output** (example):
 
 ```text
-STATUS         PORTS        VARIABLES              DATABASE                           COMPOSE                   PATH
-provisioned    20000-20009  PORT=20000             postgres wtenv_app_91c2d0aa        wtenv-app-91c2d0aa        /code/app
-provisioned    20010-20019  PORT=20010             postgres wtenv_feature_x_3f9a1c2b  wtenv-feature-x-3f9a1c2b  /code/feature-x
-unverifiable   20020-20029  PORT=20020             postgres wtenv_usb_5d0e77b1        -                         /Volumes/usb/wt  (git_still_lists)
-unprovisioned  -            -                      -                                  -                         /code/feature-y
+STATUS         PORTS        VARIABLES   PUBLISHED        DATABASE                           COMPOSE                   PATH
+provisioned    20000-20009  PORT=20000  web:8000->20001  postgres wtenv_app_91c2d0aa        wtenv-app-91c2d0aa        /code/app
+provisioned    20010-20019  PORT=20010  web:8000->20011  postgres wtenv_feature_x_3f9a1c2b  wtenv-feature-x-3f9a1c2b  /code/feature-x
+unverifiable   20020-20029  PORT=20020  -                postgres wtenv_usb_5d0e77b1        -                         /Volumes/usb/wt  (git_still_lists)
+unprovisioned  -            -           -                -                                  -                         /code/feature-y
 ```
+
+The `PUBLISHED` column (`service:container-port->host-port`, FR-031) appears only when at least
+one row has a compose port; without one, the table has the other six columns.
 
 **JSON**: `LsResult`. **Exit statuses**: 0, 14, 16.
 

@@ -509,7 +509,7 @@ def diagnose(
     env = os.environ if environ is None else environ
     free = port_is_free if is_free is None else is_free
     git = git_status(run, env)
-    with registry_lock():
+    with registry_lock(create=False):
         entries = sorted(
             registry.load().worktrees.values(), key=lambda entry: (entry.block.start, entry.path)
         )
