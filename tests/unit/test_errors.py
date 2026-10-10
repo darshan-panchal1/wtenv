@@ -1,4 +1,4 @@
-"""The error-code table of cli.md, "Error codes and exit statuses" (FR-059)."""
+"""The error-code table of cli.md, "Error codes and exit statuses" (FR-059, FR-031)."""
 
 import subprocess
 import sys
@@ -37,10 +37,15 @@ EXPECTED_STATUSES = {
     "problems_found": 17,
     "worktree_exists": 18,
     "unsupported": 19,
+    # Spec 002 (FR-031): four codes added, none changed.
+    "isolation_unavailable": 20,
+    "override_ambiguous": 21,
+    "port_variable_conflict": 22,
+    "database_storage_shared": 23,
 }
 
 
-def test_there_are_nineteen_codes_with_the_documented_statuses() -> None:
+def test_there_are_twenty_three_codes_with_the_documented_statuses() -> None:
     table = {code.value: status for code, status in EXIT_STATUS.items()}
 
     assert table == EXPECTED_STATUSES
@@ -48,7 +53,28 @@ def test_there_are_nineteen_codes_with_the_documented_statuses() -> None:
 
 def test_every_code_has_exactly_one_status() -> None:
     assert set(EXIT_STATUS) == set(ErrorCode)
-    assert len(ErrorCode) == 19
+    assert len(ErrorCode) == 23
+
+
+def test_the_four_codes_of_spec_002_have_the_statuses_20_to_23() -> None:
+    new = {
+        "isolation_unavailable": 20,
+        "override_ambiguous": 21,
+        "port_variable_conflict": 22,
+        "database_storage_shared": 23,
+    }
+
+    actual = {code.value: EXIT_STATUS[code] for code in ErrorCode if code.value in new}
+
+    assert actual == new
+
+
+def test_the_nineteen_codes_of_spec_001_keep_their_statuses() -> None:
+    old = {name: status for name, status in EXPECTED_STATUSES.items() if status <= 19}
+    table = {code.value: status for code, status in EXIT_STATUS.items() if status <= 19}
+
+    assert len(old) == 19
+    assert table == old
 
 
 def test_no_status_is_used_twice() -> None:

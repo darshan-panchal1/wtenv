@@ -36,6 +36,11 @@ class ErrorCode(StrEnum):
     PROBLEMS_FOUND = "problems_found"
     WORKTREE_EXISTS = "worktree_exists"
     UNSUPPORTED = "unsupported"
+    # Spec 002 (FR-031). Each has one exit status, in the table below.
+    ISOLATION_UNAVAILABLE = "isolation_unavailable"
+    OVERRIDE_AMBIGUOUS = "override_ambiguous"
+    PORT_VARIABLE_CONFLICT = "port_variable_conflict"
+    DATABASE_STORAGE_SHARED = "database_storage_shared"
 
 
 EXIT_SUCCESS = 0
@@ -60,6 +65,10 @@ EXIT_STATUS: dict[ErrorCode, int] = {
     ErrorCode.PROBLEMS_FOUND: 17,
     ErrorCode.WORKTREE_EXISTS: 18,
     ErrorCode.UNSUPPORTED: 19,
+    ErrorCode.ISOLATION_UNAVAILABLE: 20,
+    ErrorCode.OVERRIDE_AMBIGUOUS: 21,
+    ErrorCode.PORT_VARIABLE_CONFLICT: 22,
+    ErrorCode.DATABASE_STORAGE_SHARED: 23,
 }
 
 # `wtenv exec` only. Any failure of wtenv itself exits 125, whatever its code; the code is

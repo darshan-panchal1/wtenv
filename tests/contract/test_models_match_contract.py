@@ -1,4 +1,4 @@
-"""`wtenv.output` defines the models of `contracts/json_models.py`, unchanged (FR-058)."""
+"""`wtenv.output` defines the models of spec 002's `contracts/json_models.py` (FR-058)."""
 
 import enum
 import inspect
@@ -125,3 +125,112 @@ def test_the_models_that_carry_the_new_members_match_the_contracts_schemas(
     ):
         actual = getattr(output, name).model_json_schema()
         assert actual == getattr(contract, name).model_json_schema(), name
+
+
+# --- spec 002 additions (T003; FR-031, FR-032) -------------------------------------------------
+#
+# The contract tests above compare every model and enum with 002's `json_models.py`. These name
+# the members that spec 002 adds, so a missing one is reported by name, not as a schema diff.
+
+
+def test_the_four_error_codes_of_spec_002_exist_with_their_values() -> None:
+    expected = {
+        "ISOLATION_UNAVAILABLE": "isolation_unavailable",
+        "OVERRIDE_AMBIGUOUS": "override_ambiguous",
+        "PORT_VARIABLE_CONFLICT": "port_variable_conflict",
+        "DATABASE_STORAGE_SHARED": "database_storage_shared",
+    }
+
+    actual = {member.name: member.value for member in errors.ErrorCode if member.name in expected}
+
+    assert actual == expected
+
+
+def test_the_warning_codes_of_spec_002_exist_with_their_values() -> None:
+    expected = {
+        "COMPOSE_ISOLATION_EXEC_ONLY": "compose_isolation_exec_only",
+        "COMPOSE_DATABASE_DATA_KEPT": "compose_database_data_kept",
+        "COMPOSE_OVERRIDE_ADOPTED": "compose_override_adopted",
+        "COMPOSE_OVERRIDE_EXCLUDED": "compose_override_excluded",
+    }
+
+    actual = {member.name: member.value for member in output.WarningCode if member.name in expected}
+
+    assert actual == expected
+
+
+def _property(model: type[BaseModel], name: str) -> object:
+    """Return the JSON-schema property `name` of `model`, or "missing"."""
+    return model.model_json_schema()["properties"].get(name, "missing")
+
+
+def test_a_port_view_has_a_port_variable_that_defaults_to_none(contract: ModuleType) -> None:
+    assert _property(output.PortView, "port_variable") == _property(
+        contract.PortView, "port_variable"
+    )
+    assert output.PortView(port=20001, port_variable="WTENV_PORT_DB_5432_TCP").port_variable == (
+        "WTENV_PORT_DB_5432_TCP"
+    )
+    assert output.PortView(port=20001).port_variable is None
+
+
+def test_a_worktree_view_has_the_compose_isolation_fields(contract: ModuleType) -> None:
+    for name in ("compose_isolation", "compose_repository_override"):
+        assert _property(output.WorktreeView, name) == _property(contract.WorktreeView, name), name
+    isolation = _property(output.WorktreeView, "compose_isolation")
+    assert isinstance(isolation, dict)
+    assert {"automatic", "exec_only"} <= {
+        value for branch in isolation["anyOf"] for value in branch.get("enum", [])
+    }
+
+
+def test_a_kept_item_is_an_item_with_the_reason_repository_owned(contract: ModuleType) -> None:
+    kept_item = getattr(output, "KeptItem", None)
+    assert kept_item is not None, "KeptItem is missing from wtenv.output"
+    assert issubclass(kept_item, output.Item)
+    assert kept_item.model_json_schema() == contract.KeptItem.model_json_schema()
+    kept = kept_item(
+        kind=output.ItemKind.COMPOSE_OVERRIDE,
+        name="/code/x/compose.override.yaml",
+        reason="repository_owned",
+    )
+    assert kept.reason == "repository_owned"
+    with pytest.raises(ValidationError):
+        kept_item(kind=output.ItemKind.COMPOSE_OVERRIDE, name="x", reason="other")
+
+
+def test_a_compose_database_view_shows_names_and_ports_only(contract: ModuleType) -> None:
+    view_class = getattr(output, "ComposeDatabaseView", None)
+    assert view_class is not None, "ComposeDatabaseView is missing from wtenv.output"
+    assert view_class.model_json_schema() == contract.ComposeDatabaseView.model_json_schema()
+    view = view_class(
+        service="db",
+        target=5432,
+        protocol="tcp",
+        port=20003,
+        port_variable="WTENV_PORT_DB_5432_TCP",
+    )
+    assert view.model_dump() == {
+        "service": "db",
+        "target": 5432,
+        "protocol": "tcp",
+        "port": 20003,
+        "port_variable": "WTENV_PORT_DB_5432_TCP",
+        "url_variable": "DATABASE_URL",
+    }
+
+
+def test_the_up_result_has_a_compose_database_that_defaults_to_none(contract: ModuleType) -> None:
+    assert _property(output.UpResult, "compose_database") == _property(
+        contract.UpResult, "compose_database"
+    )
+    assert getattr(output.UpResult(ok=True), "compose_database", "missing") is None
+
+
+def test_down_and_gc_results_have_kept_items_that_default_to_an_empty_list(
+    contract: ModuleType,
+) -> None:
+    for name in ("DownResult", "GcResult"):
+        model = getattr(output, name)
+        assert _property(model, "kept_items") == _property(getattr(contract, name), "kept_items")
+        assert getattr(model(ok=True), "kept_items", "missing") == [], name

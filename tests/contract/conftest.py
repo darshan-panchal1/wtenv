@@ -7,9 +7,8 @@ from types import ModuleType
 
 import pytest
 
-CONTRACTS = (
-    Path(__file__).resolve().parents[2] / "specs" / "001-worktree-runtime-isolation" / "contracts"
-)
+# Spec 002's `json_models.py` is the full schema-1 contract: 001's models plus the 002 additions.
+CONTRACTS = Path(__file__).resolve().parents[2] / "specs" / "002-compose-dev-setup" / "contracts"
 
 
 @pytest.fixture(scope="session")

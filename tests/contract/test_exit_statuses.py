@@ -38,6 +38,9 @@ CLI_CONTRACT = (
     / "contracts"
     / "cli.md"
 )
+CLI_CONTRACT_002 = (
+    Path(__file__).resolve().parents[2] / "specs" / "002-compose-dev-setup" / "contracts" / "cli.md"
+)
 
 
 @pytest.fixture
@@ -90,19 +93,36 @@ def write_config(root: Path, text: str) -> None:
 # --- the table of cli.md is the table of wtenv --------------------------------------------------
 
 
-def test_the_nineteen_codes_and_statuses_of_cli_md_are_the_ones_wtenv_uses(
-    contract: ModuleType,
-) -> None:
-    text = CLI_CONTRACT.read_text(encoding="utf-8")
-    section = text.split("## Error codes and exit statuses")[1].split("### Error details")[0]
-    documented = {
+def documented_codes(section: str) -> dict[str, int]:
+    """Return `{code: status}` from the rows `| <status> | `code` |` of a cli.md section."""
+    return {
         match.group(2): int(match.group(1))
         for match in re.finditer(r"^\| (\d+) \| `([a-z_]+)` \|", section, flags=re.MULTILINE)
     }
 
+
+def test_the_codes_and_statuses_of_both_cli_md_files_are_the_ones_wtenv_uses(
+    contract: ModuleType,
+) -> None:
+    # 001's table (19 codes) and 002's "new rows" table (codes 20 to 23), taken together.
+    text = CLI_CONTRACT.read_text(encoding="utf-8")
+    section = text.split("## Error codes and exit statuses")[1].split("### Error details")[0]
+    documented = documented_codes(section)
+    text_002 = CLI_CONTRACT_002.read_text(encoding="utf-8")
+    new_rows = text_002.split("## Error codes and exit statuses: new rows")[1].split("\n## ")[0]
+    documented_002 = documented_codes(new_rows)
+
     assert len(documented) == 19
-    assert documented == {code.value: status for code, status in EXIT_STATUS.items()}
-    assert {code.value for code in contract.ErrorCode} == set(documented)
+    assert documented_002 == {
+        "isolation_unavailable": 20,
+        "override_ambiguous": 21,
+        "port_variable_conflict": 22,
+        "database_storage_shared": 23,
+    }
+    assert {**documented, **documented_002} == {
+        code.value: status for code, status in EXIT_STATUS.items()
+    }
+    assert {code.value for code in contract.ErrorCode} == set(documented) | set(documented_002)
 
 
 # --- T132: no git worktree needed ----------------------------------------------------------------

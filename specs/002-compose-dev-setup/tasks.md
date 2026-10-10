@@ -153,7 +153,7 @@ the optional registry field, and the `[database] type = "compose"` configuration
 
 ### 2A. Contracts, error codes and exit statuses (`errors.py`, `output.py`, contract tests)
 
-- [ ] T003 [P] Point the contract tests at spec 002's contract and add failing member checks, in `tests/contract/conftest.py`, `tests/contract/test_models_match_contract.py`, and `tests/contract/test_exit_statuses.py`
+- [X] T003 [P] Point the contract tests at spec 002's contract and add failing member checks, in `tests/contract/conftest.py`, `tests/contract/test_models_match_contract.py`, and `tests/contract/test_exit_statuses.py`
   - FR-031, FR-032. `CONTRACTS` in `conftest.py` becomes
     `specs/002-compose-dev-setup/contracts` (002's `json_models.py` is the full schema-1 contract
     with 002 additions marked `002:`). `SCHEMA_VERSION` is still 1.
@@ -169,19 +169,19 @@ the optional registry field, and the `[database] type = "compose"` configuration
     `UpResult.compose_database`; `DownResult.kept_items`, `GcResult.kept_items`.
   - **Done when** `uv run pytest tests/contract -q` exits 1 and every failure names a 002 member
     (the failing-test rule of Working rules holds).
-- [ ] T004 [P] Add failing tests for codes 20–23 to `tests/unit/test_errors.py`
+- [X] T004 [P] Add failing tests for codes 20–23 to `tests/unit/test_errors.py`
   - FR-031: 23 codes, each with exactly one status, no status used twice, the four new ones as in
     T003; `wtenv.errors` still imports only the standard library.
   - **Done when** `uv run pytest tests/unit/test_errors.py -q` exits 1 with assertion failures only.
-- [ ] T005 Add the four codes and their exit statuses to `src/wtenv/errors.py`
+- [X] T005 Add the four codes and their exit statuses to `src/wtenv/errors.py`
   - FR-031; plan.md, "Error codes, exit statuses, warnings and reasons". No existing code or status
     changes.
   - **Done when** `uv run pytest tests/unit/test_errors.py -q` exits 0.
-- [ ] T006 Port the 002 members of `json_models.py` into `src/wtenv/output.py`
+- [X] T006 Port the 002 members of `json_models.py` into `src/wtenv/output.py`
   - FR-031, FR-032. Models and enums only; no command emits them yet. New fields default to `None`
     or an empty list, so every v0.1.1 document still validates.
   - **Done when** `uv run pytest tests/contract -q` exits 0.
-- [ ] T007 Group check 2A: runs G5 from the repository root; edits no file
+- [X] T007 Group check 2A: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(contracts): add spec 002 error codes, warnings and models`.
 
 ### 2B. Registry: one optional field (`registry.py`)
