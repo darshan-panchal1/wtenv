@@ -369,8 +369,10 @@ container and data volume are gone and the other two are untouched.
   is called from names another worktree's isolation settings, `up` MUST fail with the same
   error code, before the first post-up command runs, and run none of them. `up` leaves the
   provisioned resources in place and the entry `incomplete`, as when a post-up command fails
-  (001:FR-037). The check runs at both places `up` runs post-up commands, including a repeat
-  `up` with nothing changed. In a worktree with `[compose]`, `up` already fails with
+  (001:FR-037). The refusal runs no command, so its error is `isolation_unavailable` (exit 20),
+  not `post_up_failed`; the entry becomes `incomplete` and the provisioned resources stay in
+  place, as 001:FR-037 requires for a stopped post-up. The check runs at both places `up` runs
+  post-up commands, including a repeat `up` with nothing changed. In a worktree with `[compose]`, `up` already fails with
   `unsupported` for any `COMPOSE_FILE` before it reaches post-up commands, so the check can
   only fire in a worktree without `[compose]`.
 

@@ -59,9 +59,17 @@ plan.md, Structure Decision).
   `uv run pytest <files> -q 2>&1 | grep -E 'ImportError|ModuleNotFoundError|AttributeError: module'`
   prints nothing and pytest exits 1.
 - **Existing tests.** No existing test changes its expected outcome, except the six named in
-  T025, T032 and T106. Six, not the three of plan.md's table: the maintainer decided on 2026-10-10
+  T025, T032 and T106, and the code-count tests in `tests/contract/test_exit_statuses.py` and
+  `tests/unit/test_errors.py` (below). Six, not the three of plan.md's table: the maintainer decided on 2026-10-10
   to rewrite the five of T025 and T032, and in the analysis fixes to rewrite the sixth (T106, O2). An existing test may be *extended* (more cases, more assertions) where a task
   says so. If any other existing test starts failing, stop and ask. Do not edit it.
+  - **Code-count tests (T003, T004; done).** `tests/contract/test_exit_statuses.py` and
+    `tests/unit/test_errors.py` assert the number of error codes, so adding codes 20–23 (FR-031)
+    changes their outcome; they are rewritable. The maintainer accepted (2026-10-10) that the
+    edits went beyond a count change: `test_exit_statuses.py` gained a helper and a renamed test
+    because T003 must read both `cli.md` tables, and `test_errors.py` gained
+    `test_the_nineteen_codes_of_spec_001_keep_their_statuses`, which protects FR-031 ("existing
+    codes keep their meaning").
 - **Mutation check** (plan.md, Test strategy). For the guard the task names: remove or break it in
   the working tree, run the named test(s) and see them fail, then restore the file with
   `git checkout -- <file>` (or `git stash pop` of the clean state). The mutation is never
@@ -782,6 +790,9 @@ byte-identical throughout.
     not created; the entry `incomplete`; C's port block and env file left in place. The same for
     a repeat `up` of C with nothing changed (the second call site of `_run_post_up`), and with
     `COMPOSE_PATH_SEPARATOR=';'` and the list joined with `;`.
+  - A check A refusal runs no command, so the error is `isolation_unavailable` (exit 20), not
+    `post_up_failed`; the entry becomes `incomplete` and the provisioned resources stay in place,
+    as 001:FR-037 requires for a stopped post-up. These cases pin that state.
   - As in v0.1.1 (`up` succeeds, the sentinel is created): `COMPOSE_FILE` naming C's own compose
     file; naming a `compose.isolation.yaml` that is not in a `.wtenv/` directory; naming
     `<C root>/.wtenv/compose.isolation.yaml`.
@@ -1185,7 +1196,12 @@ in CI) and a named project volume.
   - Step 5: `database_port` and `database_storage`. Step 7: stand-in URL check. Step 10:
     nothing. Step 12: `DATABASE_URL` last in the section (FR-013). `_has_nothing_to_change`
     covers the URL. Text line `database   compose service db on localhost:<port>  (DATABASE_URL)`.
-  - **Done when** `uv run pytest tests/integration/test_us3_compose_database.py tests/integration/test_us3_compose.py -q` exits 0.
+  - Removes the interim guard in `provision._database_plan` (an `unsupported` error, reason
+    `compose_database_not_provisioned`, added after T013 so that a `type = "compose"` configuration
+    is refused cleanly until this task) and deletes its test,
+    `tests/unit/test_compose_database_guard.py`.
+  - **Done when** `uv run pytest tests/integration/test_us3_compose_database.py tests/integration/test_us3_compose.py -q` exits 0,
+    and `grep -rn "compose_database_not_provisioned" src/ tests/` prints nothing.
 - [ ] T087 [US3] Group check 5C: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(up): provision a compose-hosted database`.
 
@@ -1358,7 +1374,8 @@ fail.
     nothing, `uv build` succeeds, and `uv run pytest tests/integration/test_build_contents.py -q`
     exits 0.
 - [ ] T101 Group check 7B: runs G5 from the repository root; edits no file
-  - **Done when** G5 prints `G5 PASSED`. Commit `chore(release): prepare 0.2.0`.
+  - **Done when** G5 prints `G5 PASSED` and `grep -rn NotImplementedError src/` prints nothing.
+    Commit `chore(release): prepare 0.2.0`.
 
 - [ ] T111 Push the branch and see CI green on the final commit
   - Plan.md, Test strategy and Coverage; analysis O3. Runs after T101, so CI checks every commit
