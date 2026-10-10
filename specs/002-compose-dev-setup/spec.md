@@ -284,7 +284,8 @@ container and data volume are gone and the other two are untouched.
   override. In a worktree whose repository owns its override, `exec` also fails when either is
   set in the environment it is called from or in `.env` beside the compose file, or when
   `COMPOSE_ENV_FILES` is set in that environment (FR-033). In any worktree, `exec` fails when an
-  inherited `COMPOSE_FILE` names another worktree's isolation settings (FR-033).
+  inherited `COMPOSE_FILE` names another worktree's isolation settings (FR-033), and so does
+  `up`, before its first post-up command runs.
 - **The worktree's block is too small** for the published ports of the compose file and the
   repository's override together: `config_invalid` with the smallest block size that fits
   (001:FR-032 unchanged).
@@ -363,7 +364,15 @@ container and data volume are gone and the other two are untouched.
   is automatic, `exec` MUST fail when the override files beside the compose file no longer
   match the record, because a repository override has appeared since `up`: another override
   file with a name Compose loads automatically exists there, or the recorded override file is a
-  symbolic link or no longer starts with wtenv's header.
+  symbolic link or no longer starts with wtenv's header. The first of those two checks also
+  applies to post-up commands, in every worktree: when `COMPOSE_FILE` in the environment `up`
+  is called from names another worktree's isolation settings, `up` MUST fail with the same
+  error code, before the first post-up command runs, and run none of them. `up` leaves the
+  provisioned resources in place and the entry `incomplete`, as when a post-up command fails
+  (001:FR-037). The check runs at both places `up` runs post-up commands, including a repeat
+  `up` with nothing changed. In a worktree with `[compose]`, `up` already fails with
+  `unsupported` for any `COMPOSE_FILE` before it reaches post-up commands, so the check can
+  only fire in a worktree without `[compose]`.
 
 **Port variables for published ports (User Story 2)**
 
@@ -470,7 +479,9 @@ By story:
   `exec` refuses every command when it cannot apply them (FR-033). It also relaxes 001:FR-056
   and FR-057 in every other worktree for two refusals only: an inherited `COMPOSE_FILE` that
   names another worktree's isolation settings, and, in the automatic arrangement, an override
-  file that has appeared since `up` (FR-033).
+  file that has appeared since `up` (FR-033). It extends 001:FR-036 in every worktree for one
+  refusal: `up` does not run post-up commands when an inherited `COMPOSE_FILE` names another
+  worktree's isolation settings (FR-033).
 - **Story 2** touches 001:FR-015 to FR-017, FR-031, FR-048, FR-056 (new variables in the env
   file, `exec`, and output). It narrows 001:FR-031 for the three setups FR-028 refuses
   (FR-012), and relaxes nothing else.
@@ -487,7 +498,7 @@ By story:
 | 001:FR-015, FR-016, FR-017, FR-079, FR-080 (env file) | **Touched** by Stories 2 and 3: new variables inside wtenv's section (FR-010, FR-019). Section format, merge rules, duplicate warning, and byte-identical repeat unchanged. |
 | 001:FR-020 to FR-027 (database isolation) | **Extended** by Story 3 with a third mode (FR-017 to FR-027). Host Postgres and SQLite modes unchanged. 001:FR-025 and FR-026 apply to the new mode. 001:FR-022 (database name differs between worktrees) is met through the project, port, and volume, not the database name. |
 | 001:FR-034 (`up` does not start containers) | Unchanged. |
-| 001:FR-036 (post-up commands run with the worktree's variables) | **Extended**: in a worktree whose repository owns its override, post-up commands also get the isolation settings, as `exec` does (FR-033). |
+| 001:FR-036 (post-up commands run with the worktree's variables) | **Extended**: in a worktree whose repository owns its override, post-up commands also get the isolation settings, as `exec` does (FR-033). In every worktree, `up` runs none of them when an inherited `COMPOSE_FILE` names another worktree's isolation settings: it fails with `isolation_unavailable` first, as `exec` does (FR-033). |
 | 001:FR-038, FR-039 (what `down` removes) | **Touched**: `down` removes wtenv's isolation settings wherever they live (FR-009) and never the repository's override (FR-002). The removal rules themselves are unchanged. |
 | 001:FR-048 (`ls` columns) | **Extended**: variable names next to published ports (FR-014). |
 | 001:FR-056 (`exec`) | **Extended**: the new variables are wtenv-managed, so `exec` sets them. In a worktree whose repository owns its override, `exec` is also how Compose commands pick up isolation (FR-004). |

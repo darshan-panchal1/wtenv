@@ -205,7 +205,7 @@ existing test in `tests/`.
 | FR-007 | `compose.py` (inventory), `provision.py` (`_remove_override`) | One repository-owned + wtenv's recorded → remove wtenv's under the header check and continue; two or more repository-owned → `override_ambiguous` | 001:FR-087 header recheck immediately before unlink; `removing` recorded first; 001:FR-086 (`test_up_does_not_delete_an_override_that_lost_the_header_after_the_plan`, kept) |
 | FR-008 | `provision.py`, `compose.override_text` (unchanged) | The automatic arrangement keeps v0.1.1 behaviour | Golden file byte-identity (`test_the_example_input_generates_the_golden_file_byte_for_byte`, kept) |
 | FR-009 | `provision.py` (`_registry_step`, `_compose_step`), `compose.override_problem` | The isolation file goes through every path the generated override goes through | 001:FR-067 record first, FR-018 exclude, FR-086 links, FR-087 header, recorded form: `override_problem` accepts **exactly** `.wtenv/compose.isolation.yaml` beyond the four names (`test_a_recorded_path_of_a_form_wtenv_never_records_is_left_alone`, extended with the paths listed in Safety S4) |
-| FR-033 | `isolation.py`, `execcmd.py`, `provision.py` | Checks before exec; same environment for post-up at both call sites (safety M6); `COMPOSE_ENV_FILES` (M2); the widened `.env` pattern (M2); check 2 requires an override name beside the compose file (L4); checks A and B in every other worktree (M1, M5); `isolation_unavailable` | Command never run on failure (`test_exec_does_not_run_the_command_when_isolation_cannot_apply` **(new)**, one case per reason) |
+| FR-033 | `isolation.py`, `execcmd.py`, `provision.py` | Checks before exec; same environment for post-up at both call sites (safety M6); `COMPOSE_ENV_FILES` (M2); the widened `.env` pattern (M2); check 2 requires an override name beside the compose file (L4); checks A and B in every other worktree (M1, M5), check A also before post-up commands (M1, decided); `isolation_unavailable` | Command never run on failure (`test_exec_does_not_run_the_command_when_isolation_cannot_apply` **(new)**, one case per reason) |
 | FR-010 | `ports.py`, `provision.py` (`_variables`) | One `WTENV_PORT_…` variable per published port in the section and in exec | Section markers and format (001:FR-016; the `envfile` tests, unchanged) |
 | FR-011 | `ports.py` (`port_variable_name`) | The rule of R5 | Pure function: same name for every block and order (`test_the_variable_name_depends_only_on_service_port_and_protocol` **(new)**) |
 | FR-012 | `ports.py` (`check_port_variables`), `provision.py` | `port_variable_conflict` before step 8 | Nothing changed on failure (`test_a_name_collision_changes_nothing` **(new)**) |
@@ -239,7 +239,7 @@ No existing code, status or reason changes meaning. The table of 001 keeps codes
 
 | Exit | Code (new) | Raised by | When | `details` |
 |------|------------|-----------|------|-----------|
-| 20 | `isolation_unavailable` | `exec` (reported with exit **125**, as every wtenv failure in `exec`) | FR-033: the isolation settings cannot be applied in an exec-only worktree; in any other worktree, checks A and B of data-model.md | `reason`: `compose_env_override` (+`variable`), `isolation_file_missing`, `isolation_file_not_wtenvs`, `symlink`, `recorded_value_invalid`, `repository_override_missing`, `override_appeared`; `path` |
+| 20 | `isolation_unavailable` | `exec` (reported with exit **125**, as every wtenv failure in `exec`); `up`, check A only, before its first post-up command (exit **20**) | FR-033: the isolation settings cannot be applied in an exec-only worktree; in any other worktree, checks A and B of data-model.md | `reason`: `compose_env_override` (+`variable`), `isolation_file_missing`, `isolation_file_not_wtenvs`, `symlink`, `recorded_value_invalid`, `repository_override_missing`, `override_appeared`; `path` |
 | 21 | `override_ambiguous` | `up` | FR-007: two or more repository-owned override files beside the compose file | `files` (list of paths) |
 | 22 | `port_variable_conflict` | `up` | FR-012: two published ports with one name, or a name equal to a configured variable | `variable`; `sources` (list of two descriptions) |
 | 23 | `database_storage_shared` | `up` | FR-027: the database service's data is in a fixed-name volume, an external volume, a volume whose `nfs`/`cifs`/local-bind device is not an absolute path, or a host directory outside the worktree | `service`; `storage`: `fixed_name_volume`, `external_volume`, `device_not_absolute`, `host_directory`; `name` (volume name, device as written, or real path) |
@@ -327,7 +327,8 @@ is accepted.
   the v0.1.1 environment, byte for byte (`test_exec_in_an_automatic_worktree_sets_exactly_the_section`),
   and runs only checks A (an inherited `COMPOSE_FILE` naming another worktree's isolation file;
   safety M1) and B (automatic arrangement: an override name appeared, or the recorded override is
-  a link or lost its header; safety M5) of data-model.md.
+  a link or lost its header; safety M5) of data-model.md. Post-up commands get check A too
+  (below).
 - Fail closed: every FR-033 condition is checked before `os.execvpe`. On any failure the command
   is not run, and the exit is 125 with `isolation_unavailable`. One test per `reason`, each
   asserting that a sentinel command did **not** run (it would create a file).
@@ -343,6 +344,12 @@ is accepted.
 - Post-up commands get the same environment from the same builder, built inside `_run_post_up`
   from the entry, so the repeat-`up` call site (nothing changed) gets it too (safety M6). Test:
   `test_post_up_commands_get_the_same_compose_environment_as_exec`, with a repeat-`up` case.
+- Check A also runs in `_run_post_up`, in every worktree, before the first command and at both
+  call sites (decided by the maintainer, Decisions to review 4). On a match `up` raises
+  `isolation_unavailable` (exit 20, `compose_env_override`), runs no post-up command, and marks
+  the entry `incomplete` as a failing post-up command does (001:FR-037). With `[compose]`,
+  `check_environment` already refuses any `COMPOSE_FILE` earlier (`unsupported`), so the check
+  can fire only in a worktree without `[compose]`. Tests T148; mutation check T150.
 - Containment of the 001:FR-030 relaxation: it happens only when a repository-owned override
   exists (detected, never configured); `up` reports it in text, JSON and a warning; the user
   documentation states that a plain `docker compose` runs **without** isolation, and that such
@@ -378,7 +385,7 @@ that unknown fields still make a registry unreadable (001:FR-070).
 |-----------------|----------|-------|-------------|
 | FR-030 (plain Compose isolated) | **Yes**, exec-only worktrees only (FR-004) | S5 | Detected, reported (text, JSON, warning), documented; automatic arrangement unchanged and tested |
 | FR-087 (header check) | **Outcome only**, git-tracked header-less file at the recorded path (FR-006) | S3 | Never written or deleted; untracked case unchanged |
-| FR-056, FR-057 (`exec` runs the command; only "not provisioned" refuses) | **Yes**, exec-only worktrees (FR-033); in every other worktree only checks A and B (safety M1, M5) | S5 | Every command is refused only when the isolation settings cannot be applied, or by checks A and B; the automatic arrangement's environment unchanged and tested |
+| FR-056, FR-057 (`exec` runs the command; only "not provisioned" refuses) | **Yes**, exec-only worktrees (FR-033); in every other worktree only checks A and B (safety M1, M5); check A also stops `up` before its post-up commands (001:FR-036 extended) | S5 | Every command is refused only when the isolation settings cannot be applied, or by checks A and B; the automatic arrangement's environment unchanged and tested |
 | FR-031 (ports tied to variables) | **Narrowed**: the three setups of the FR-028 exception are refused (FR-012) | R5 | `port_variable_conflict` before step 8, nothing changed; named in the CHANGELOG |
 | FR-018, FR-039, FR-067, FR-070, FR-086, FR-088 | No | S1–S7 | Applied to the isolation file unchanged |
 
@@ -409,8 +416,8 @@ delete; record-before-create; unrecorded-file refusal at the isolation path; sym
 exec check; `COMPOSE_PROJECT_NAME` not injected; R8 prefix rule; FR-027 classifier rows
 (external, fixed name, device, outside bind); collision check; `exclude_if` on the new field.
 Added by the safety review fixes (tasks.md, "Safety review fixes"): `-p` in the storage
-classifier's resolution; the non-absolute device row; checks A and B; the widened `.env`
-pattern; `COMPOSE_ENV_FILES`; post-up isolation at both call sites; the excluded-override
+classifier's resolution; the non-absolute device row; checks A and B; check A before post-up
+commands; the widened `.env` pattern; `COMPOSE_ENV_FILES`; post-up isolation at both call sites; the excluded-override
 warning; the header recheck after the `removing` save; `is_tracked` for a header-carrying file;
 the override-name rule of check 2; FR-002 in `up`; percent-encoding of `{compose_env:}`; the `:`
 path check; the inventory's refusal of an unrecorded file with wtenv's header.
@@ -501,10 +508,16 @@ what changes for someone who uses v0.1.1 today.
    Effect inside `exec`: a Compose command run from a subdirectory now interpolates from the
    project's `.env` (Compose 2.24.4 used the subdirectory's only; 5.1.4 merged both). **For
    v0.1.1 users**: none; the automatic arrangement is untouched (spec, Known limits).
-4. **M1, post-up commands not covered.** The decision covers `exec`. The report also proposed
-   the same check in `_run_post_up` of a worktree without `[compose]` (with `[compose]`, `up`
-   already refuses any `COMPOSE_FILE`). Not applied: please decide whether post-up commands
-   should refuse an inherited `COMPOSE_FILE` that names another worktree's isolation file.
+4. **M1, post-up commands. Decided (2026-10-10): applied.** Check A also applies to post-up
+   commands, in every worktree: `up` fails with `isolation_unavailable` (exit 20) before the
+   first post-up command runs, at both call sites, and runs none. The entry is left
+   `incomplete` and the resources in place, as after a failing post-up command (001:FR-037);
+   that last part is the one detail the decision did not name, so please check it. With
+   `[compose]`, `up` already refuses any `COMPOSE_FILE` (`unsupported`), so only a worktree
+   without `[compose]` can reach the new refusal. **For v0.1.1 users**: a worktree without
+   `[compose]` whose `up` is run from a shell that `wtenv exec` started in another exec-only
+   worktree now fails before its post-up commands, where v0.1.1 ran them with that
+   `COMPOSE_FILE` inherited. Tasks T148, T149, T150.
 5. **M5, what "no longer matches the record" means in the automatic arrangement.** Check B
    refuses when another override name exists beside the compose file, or when the recorded
    override is a symbolic link or lacks wtenv's header (a repository file now at wtenv's path).

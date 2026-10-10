@@ -12,13 +12,13 @@ exit status, step and output not mentioned here is unchanged. No existing code, 
 
 | Rule | Detail |
 |------|--------|
-| Environment variables | wtenv defines none of its own (unchanged). In addition to 001's list, `exec` reads `COMPOSE_PROJECT_NAME`, `COMPOSE_FILE` and `COMPOSE_ENV_FILES` in a worktree whose repository owns its override (FR-033), and sets `COMPOSE_FILE`, `COMPOSE_PATH_SEPARATOR` and `COMPOSE_ENV_FILES` for the command there. In every other worktree it reads `COMPOSE_FILE` and `COMPOSE_PATH_SEPARATOR` (FR-033, check A). `up` reads the database service's resolved environment through Compose for `{compose_env:NAME}` ([config.md](config.md)). |
+| Environment variables | wtenv defines none of its own (unchanged). In addition to 001's list, `exec` reads `COMPOSE_PROJECT_NAME`, `COMPOSE_FILE` and `COMPOSE_ENV_FILES` in a worktree whose repository owns its override (FR-033), and sets `COMPOSE_FILE`, `COMPOSE_PATH_SEPARATOR` and `COMPOSE_ENV_FILES` for the command there. In every other worktree it reads `COMPOSE_FILE` and `COMPOSE_PATH_SEPARATOR` (FR-033, check A); `up` reads the same two before its post-up commands (FR-033, check A). `up` reads the database service's resolved environment through Compose for `{compose_env:NAME}` ([config.md](config.md)). |
 
 ## Error codes and exit statuses: new rows
 
 | Exit | Code | Meaning | What the caller can do |
 |------|------|---------|------------------------|
-| 20 | `isolation_unavailable` | `exec`, in a worktree whose repository owns its override, cannot apply the worktree's isolation settings; the command was not run. **`exec` reports it with exit status 125**, like every failure of wtenv itself (001, `wtenv exec`); 20 is the code's status in the one-code-one-status table and is not seen as a process exit status | See `details.reason`; usually unset the variable, or run `wtenv up` again |
+| 20 | `isolation_unavailable` | `exec`, in a worktree whose repository owns its override, cannot apply the worktree's isolation settings; the command was not run. **`exec` reports it with exit status 125**, like every failure of wtenv itself (001, `wtenv exec`); 20 is the code's status in the one-code-one-status table and is not seen as a process exit status. **`up` also raises it, for check A alone, before its first post-up command (FR-033), and there 20 is the process exit status** | See `details.reason`; usually unset the variable, or run `wtenv up` again |
 | 21 | `override_ambiguous` | Two or more override files that the repository owns sit beside the compose file; Compose would load only one of them | Keep one of them, then run `wtenv up` again |
 | 22 | `port_variable_conflict` | Two published ports would get the same port variable name, or a name equals a variable the configuration defines | Rename a service or a `ports` entry, or publish the container port once |
 | 23 | `database_storage_shared` | The compose-hosted database keeps its data where other worktrees or the main checkout would share it | Store the data in a project volume (no `name:`, not `external`) or a directory inside the worktree |
@@ -99,7 +99,11 @@ change nothing.
 13. Post-up commands: unchanged, **plus, in the exec-only arrangement, the same `COMPOSE_FILE`,
     `COMPOSE_PATH_SEPARATOR` and `COMPOSE_ENV_FILES` as `exec` (FR-033)**. **The same holds for
     the post-up commands of a repeat `up` with nothing changed: `_run_post_up` builds the
-    environment from the entry, at both call sites.**
+    environment from the entry, at both call sites.** **In every worktree, before the first
+    post-up command, `up` applies check A of data-model.md (an inherited `COMPOSE_FILE` that
+    names another worktree's isolation file): on a match it fails with `isolation_unavailable`
+    (exit 20, `compose_env_override`, `variable` `COMPOSE_FILE`, `path` the other file), runs no
+    post-up command, leaves the resources in place and the entry `incomplete` (001:FR-037).**
 
 **Text output** (example, exec-only arrangement with a compose-hosted database):
 
@@ -192,7 +196,8 @@ variables in the section. `exec` runs only checks A (every such worktree: an inh
 `COMPOSE_FILE` that names another worktree's isolation file) and B (the automatic arrangement:
 no override name appeared beside the compose file, and the recorded override is not a link and
 keeps wtenv's header) of data-model.md, with `isolation_unavailable` and exit status 125, the
-command not run (FR-033).
+command not run (FR-033). `up` applies check A alone before its post-up commands, with exit
+status 20 (`wtenv up`, step 13).
 
 **Exit status**: unchanged table (125 for any failure of wtenv itself, including
 `isolation_unavailable`).

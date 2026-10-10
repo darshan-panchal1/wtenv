@@ -753,6 +753,39 @@ byte-identical throughout.
   - Guard: FR-033, safety finding M1. Remove it; the refusal cases of
     `test_exec_refuses_another_worktrees_isolation_file_in_compose_file` must fail.
   - **Done when** as in Working rules, "Mutation check".
+- [ ] T148 [US1] Add failing tests for check A before post-up commands to `tests/integration/test_us1_exec_isolation.py`
+  - FR-033 (extended by the maintainer's decision on safety finding M1, plan.md, Decisions to
+    review 4); 001:FR-036, FR-037; data-model.md, row A; cli.md, `wtenv up` step 13.
+  - New `test_up_runs_no_post_up_command_when_compose_file_names_another_worktrees_isolation_file`:
+    worktree A exec-only, worktree C without `[compose]` with `post_up = ["touch <sentinel>"]`.
+    With `COMPOSE_FILE` set to the value `exec` sets in A, `wtenv up` in C → exit 20,
+    `error.code` `isolation_unavailable`, `details.reason` `compose_env_override`,
+    `details.variable` `COMPOSE_FILE`, `details.path` A's isolation file (absolute); the sentinel
+    not created; the entry `incomplete`; C's port block and env file left in place. The same for
+    a repeat `up` of C with nothing changed (the second call site of `_run_post_up`), and with
+    `COMPOSE_PATH_SEPARATOR=';'` and the list joined with `;`.
+  - As in v0.1.1 (`up` succeeds, the sentinel is created): `COMPOSE_FILE` naming C's own compose
+    file; naming a `compose.isolation.yaml` that is not in a `.wtenv/` directory; naming
+    `<C root>/.wtenv/compose.isolation.yaml`.
+  - In a worktree with `[compose]` (the automatic arrangement), the same `COMPOSE_FILE` makes `up`
+    fail with `unsupported` (v0.1.1, unchanged), not `isolation_unavailable`; the sentinel is not
+    created.
+  - Needs T115 and T132 (the check function and the single place that runs post-up commands).
+  - **Done when** the new cases fail under the failing-test rule.
+- [ ] T149 [US1] Apply check A in `_run_post_up`, in every worktree, in `src/wtenv/provision.py`
+  - FR-033. Needs T115 (the check A function in `src/wtenv/isolation.py`, reused as it is) and
+    T132 (`_run_post_up` is the one place both call sites go through). Before the first command,
+    when the worktree has at least one post-up command, `_run_post_up` runs check A with the
+    worktree root. On failure it sets the entry `incomplete`, as for a failing command, and raises
+    `isolation_unavailable` with the details of check A; no command runs. No other check of
+    `exec` moves into `up`, and the environment of post-up commands does not change.
+  - **Done when** `uv run pytest tests/integration/test_us1_exec_isolation.py tests/unit/test_isolation.py tests/unit/test_lazy_imports.py -q` exits 0.
+- [ ] T150 [US1] Mutation check: check A before post-up commands, in `src/wtenv/provision.py` (restored afterwards)
+  - Guard: FR-033, the decision on safety finding M1. Remove the check A call from
+    `_run_post_up`; the refusal cases of
+    `test_up_runs_no_post_up_command_when_compose_file_names_another_worktrees_isolation_file`
+    (first `up` and repeat `up`) must fail.
+  - **Done when** as in Working rules, "Mutation check".
 - [ ] T117 [US1] Add failing tests for the `.env` line forms and `COMPOSE_ENV_FILES` to `tests/unit/test_isolation.py`, `tests/unit/test_compose_checks.py`, and `tests/integration/test_us1_exec_isolation.py`
   - FR-033 (amended by safety finding M2); research R7 (E6.1, E6.3); data-model.md, check 1 and
     "Isolation environment"; spec, Known limits.
@@ -1367,11 +1400,11 @@ fail.
   4C; 4H needs 4E (adopted files) and 4C. Inside 4C: T104 → T105 → T032 → T033 → T106, then the
   mutation checks; T033 needs T105 (`override_problem` accepts the isolation path), and T106
   needs T033.
-- **Safety review fixes** (T112–T147): each sits in the group whose code it changes and runs
+- **Safety review fixes** (T112–T150): each sits in the group whose code it changes and runs
   failing test → change → mutation check in file order. 4A: T147 after T027. 4B: T146 after
   T030. 4C: T122 → T123 → T124 after T107 (T123 needs T033). 4F: T131 → T132 between T051 and
-  T052 (T132 needs T033); after T060: T114 → T115 → T116, T117 → T118 → T119–T121, T128 → T129 →
-  T130, T133, T140 → T141 → T142, T143 (T115, T118, T129 and T141 need T052). 4H: T134 → T135 →
+  T052 (T132 needs T033); after T060: T114 → T115 → T116 → T148 → T149 → T150, T117 → T118 → T119–T121, T128 → T129 →
+  T130, T133, T140 → T141 → T142, T143 (T115, T118, T129 and T141 need T052; T148 needs T115 and T132, T149 needs T115 and T132). 4H: T134 → T135 →
   T136 → T137 → T138 → T139 after T110 (T135 needs T066, T138 needs T135). 4I: T144 after T073.
   5A: T145 after T076. 5B: T112 → T113 → T125 → T126 → T127 after T079 (T113 needs T079, T126
   needs T113), before T080; T081 uses T112's case.
@@ -1444,6 +1477,7 @@ Phase 7:  T095 (README) | T096 (roadmap); T099 (CHANGELOG) | T100 (version)
 | `<project>_` prefix rule (reading R8) | S6 | T089 |
 | FR-027 row: non-absolute `nfs`/`cifs`/local-bind device (safety M4) | R4 | T127 |
 | FR-033 check A: inherited `COMPOSE_FILE` naming another worktree's isolation file (safety M1) | S5 | T116 |
+| FR-033 check A before post-up commands, both call sites (safety M1, decided) | S5 | T150 |
 | `.env` pattern accepts `:` and a byte-order mark (safety M2) | S5, R7 | T119 |
 | `exec` sets `COMPOSE_ENV_FILES`; an inherited one is refused (safety M2) | S5, R7 | T120, T121 |
 | FR-033 check B: an override appeared in the automatic arrangement (safety M5) | S5 | T130 |
@@ -1494,10 +1528,10 @@ SC-001…SC-009: none is uncovered.
 | FR-027 | T078–T083, T085, T112, T113, T125, T126, T127 |
 | FR-028 | T002, T012, T019, T091, T092 |
 | FR-029 | T002, T008, T009, T010, T108 |
-| FR-030 | T010, T017, T034–T039, T043, T044, T048, T049, T053–T060, T067–T070, T080–T083, T089, T091, T107, T109, T110, T116, T119–T121, T124, T127, T130, T133, T136, T139, T142–T147 |
+| FR-030 | T010, T017, T034–T039, T043, T044, T048, T049, T053–T060, T067–T070, T080–T083, T089, T091, T107, T109, T110, T116, T119–T121, T124, T127, T130, T133, T136, T139, T142–T147, T150 |
 | FR-031 | T003, T004, T005, T006 |
 | FR-032 | T003, T006, T062, T091 |
-| FR-033 | T051–T061, T109, T114–T121, T128–T133, T140–T143 |
+| FR-033 | T051–T061, T109, T114–T121, T128–T133, T140–T143, T148–T150 |
 | SC-001 | T102 |
 | SC-002 | T019, T102 |
 | SC-003 | T085, T102, T112 |
@@ -1510,8 +1544,9 @@ SC-001…SC-009: none is uncovered.
 
 ## Notes
 
-- Total: 147 tasks (T001–T147). T104–T111 were added by the analysis fixes and T112–T147 by the
-  safety review fixes; their place in the file, not their number, gives the order.
+- Total: 150 tasks (T001–T150). T104–T111 were added by the analysis fixes, T112–T147 by the
+  safety review fixes, and T148–T150 by the maintainer's decision on safety finding M1 (post-up
+  commands); their place in the file, not their number, gives the order.
 - plan.md's "Existing tests whose expected outcome this feature changes" names three tests; the
   code has five that assert the v0.1 refusal. The maintainer chose (2026-10-10) to rewrite all
   five (T025, T032), and a sixth for the symbolic-link rule (T106). plan.md is not edited by this
@@ -1593,7 +1628,7 @@ mutation check. Line numbers are those of this commit.
 | Finding | What changed | File and lines |
 |---------|--------------|----------------|
 | H1 (HIGH) | The storage classifier judges volume names on the model resolved with `-p <project>` (recorded or generated wtenv project); `-p` is passed only with `[database] type = "compose"`, so v0.1.1 resolution is unchanged. New T112 (failing test: compose `name: app`, volume `name: app_pgdata`, a wtenv project other than `app`; unit with a stub runner and integration with the real Compose), T113 (change). T081 is the mutation: it restores the old comparison and must fail on T112's case | spec.md:595-597; data-model.md:185-190, 196-200; research.md:329-332, 628-634; contracts/cli.md:69-71; plan.md:226, 518-522; tasks.md:1041-1064 (T112, T113), 1089-1095 (T081) |
-| M1 (MED, decided) | In any worktree that is not exec-only, `exec` fails with `isolation_unavailable` (exit 125, `compose_env_override`, `path` the other file) when an inherited `COMPOSE_FILE` names another worktree's `.wtenv/compose.isolation.yaml`; any other `COMPOSE_FILE` is v0.1.1's (check A). FR-033's "behaves as in v0.1.1" sentence and the Relationship-to-001 bullet and table row are amended. Post-up commands are not covered (plan.md, Decisions to review 4). New T114, T115, T116 | spec.md:284-288, 359-367, 470-473, 494; data-model.md:131-141; contracts/cli.md:15, 32, 189-194; plan.md:208, 242, 327-331, 381, 504-507; tasks.md:733-755 |
+| M1 (MED, decided) | In any worktree that is not exec-only, `exec` fails with `isolation_unavailable` (exit 125, `compose_env_override`, `path` the other file) when an inherited `COMPOSE_FILE` names another worktree's `.wtenv/compose.isolation.yaml`; any other `COMPOSE_FILE` is v0.1.1's (check A). FR-033's "behaves as in v0.1.1" sentence and the Relationship-to-001 bullet and table row are amended. Post-up commands: not covered at first, then covered by the maintainer's decision (plan.md, Decisions to review 4), so `up` also fails with `isolation_unavailable` (exit 20) before its first post-up command, at both call sites; FR-033, the Relationship-to-001 section, data-model.md row A, cli.md and plan.md S5 amended. New T114, T115, T116, and T148, T149, T150 | spec.md:284-288, 359-367, 470-473, 494; data-model.md:131-141; contracts/cli.md:15, 32, 189-194; plan.md:208, 242, 327-331, 381, 504-507; tasks.md:733-755 |
 | M2 (MED) | Check 1 and `up`'s `check_environment` share a pattern that accepts `=` or `:` and a leading byte-order mark (E6.1); check 1 also refuses an inherited `COMPOSE_ENV_FILES` (E6.3d); `exec`, post-up commands and `up`'s verification set `COMPOSE_ENV_FILES` to the checked `.env` or `/dev/null` (E6.3b, E6.3c). The spec's new Known limits state what stays undetected (automatic arrangement and plain commands). R2's E2.11 claim and known-limit text are corrected. New T117–T121 | spec.md:278, 285-288, 354-360, 589-590, 606-620; data-model.md:115, 123; research.md:14-15, 165-167, 170-182, 526-634; contracts/cli.md:15, 66-68, 100-102, 178-186, 215-223; contracts/files.md:103; plan.md:335-338, 492-503; tasks.md:756-795, 1231-1238 (T095), 1248, 1292-1297 (T099) |
 | M3 (MED) | The smallest fix: in the exec-only `up`, an untracked repository override is checked with `git check-ignore -v --no-index`; a match from a line inside wtenv's block gives the new warning `compose_override_excluded` (`file`, `pattern`), and the README says why. The change for v0.1.1 users is stated in plan.md, Decisions to review 1. New T122, T123, T124 | spec.md:303-306; data-model.md:217; contracts/cli.md:60-64, 124, 223-225; contracts/files.md:61-65; contracts/json_models.py:129-133; plan.md:200, 261, 479-491; tasks.md:563-587, 1231-1238 (T095) |
 | M4 (MED) | A volume of the `nfs`, `cifs` or local bind driver whose `driver_opts.device` is not an absolute path is refused with `database_storage_shared`, new `storage` value `device_not_absolute`, the device never resolved against any directory. New T125, T126, T127 | spec.md:425-427; data-model.md:199; research.md:330; contracts/cli.md:35; plan.md:226, 245, 515-517; tasks.md:1065-1085 |
@@ -1605,7 +1640,7 @@ mutation check. Line numbers are those of this commit.
 | L3, L5, L6 (LOW) | Deferred: proposed `docs/roadmap.md` text in "Deferred" (with the `compose_fixed_volume_name` gap found while fixing H1); T096 copies it to the roadmap. Not built | tasks.md:1258-1262 (T096), 1550-1582 |
 | Item 8 (uncovered guards) | Mutation checks: T143 post-up isolation at both call sites; T144 `up` never writes, deletes or excludes the repository override (FR-002, three mutations); T145 `{compose_env:}` percent-encoding; T146 the `:` path refusal; T147 the inventory's refusal of an unrecorded file with wtenv's header | tasks.md:391-395 (T147), 418-421 (T146), 840-844 (T143), 971-980 (T144), 1011-1016 (T145) |
 
-Also updated for T112–T147: the dependency lines (tasks.md:1370-1377), the relaxations and
+Also updated for T112–T150: the dependency lines (tasks.md:1370-1377), the relaxations and
 mutation indexes (tasks.md:1415-1416, 1443-1459), the coverage table (tasks.md:1468-1507), the
 notes (tasks.md:1513-1514), T098's list of CI test files (tasks.md:1273), plan.md's mutation
 list (plan.md:411-417) and its new "Decisions to review" (plan.md:474-528). Research harness:
