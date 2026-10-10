@@ -59,8 +59,8 @@ plan.md, Structure Decision).
   `uv run pytest <files> -q 2>&1 | grep -E 'ImportError|ModuleNotFoundError|AttributeError: module'`
   prints nothing and pytest exits 1.
 - **Existing tests.** No existing test changes its expected outcome, except the six named in
-  T025, T032 and T106, and the code-count tests in `tests/contract/test_exit_statuses.py` and
-  `tests/unit/test_errors.py` (below). Six, not the three of plan.md's table: the maintainer decided on 2026-10-10
+  T025, T032 and T106, the code-count tests in `tests/contract/test_exit_statuses.py` and
+  `tests/unit/test_errors.py`, and two block-size tests (both below). Six, not the three of plan.md's table: the maintainer decided on 2026-10-10
   to rewrite the five of T025 and T032, and in the analysis fixes to rewrite the sixth (T106, O2). An existing test may be *extended* (more cases, more assertions) where a task
   says so. If any other existing test starts failing, stop and ask. Do not edit it.
   - **Code-count tests (T003, T004; done).** `tests/contract/test_exit_statuses.py` and
@@ -70,6 +70,14 @@ plan.md, Structure Decision).
     because T003 must read both `cli.md` tables, and `test_errors.py` gained
     `test_the_nineteen_codes_of_spec_001_keep_their_statuses`, which protects FR-031 ("existing
     codes keep their meaning").
+  - **Block-size tests (T020; done).** `test_more_ports_than_the_block_holds_is_config_invalid_on_a_first_up`
+    and `…_on_a_provisioned_worktree` in `tests/integration/test_us3_compose.py` keep their
+    assertions (`config_invalid`, exit 3, `min_block_size == 4`). Only their helper `many_ports()`
+    changed, from `"{9000+n}:80"` to `"{9000+n}:{80+n}"`: the old fixture published container port
+    80 three times from one service, which spec 002 now refuses with `port_variable_conflict`
+    (the FR-028 exception; the collision check of step 5 runs before the block-size check of
+    step 6). The maintainer chose this on 2026-10-10; the refusal itself is tested by
+    `test_a_name_collision_changes_nothing[one container port published twice-…]`.
 - **Mutation check** (plan.md, Test strategy). For the guard the task names: remove or break it in
   the working tree, run the named test(s) and see them fail, then restore the file with
   `git checkout -- <file>` (or `git stash pop` of the clean state). The mutation is never
@@ -328,7 +336,7 @@ stopped, worktree 2's port refuses and worktree 1's still answers (SC-002).
 
 ### 3B. The variables in the env file and in `exec` (`provision.py`)
 
-- [ ] T019 [US2] Add failing integration tests to `tests/integration/test_us2_port_variables.py` (new; `pytestmark = pytest.mark.integration`; Docker)
+- [X] T019 [US2] Add failing integration tests to `tests/integration/test_us2_port_variables.py` (new; `pytestmark = pytest.mark.integration`; Docker)
   - FR-010, FR-012, FR-013, FR-015, FR-016, FR-028, SC-002. One test per scenario of User Story 2:
     - 1: the section has one `WTENV_PORT_…` line per published port with the assigned host port,
       and `wtenv exec -- env` sets the same value.
@@ -353,11 +361,11 @@ stopped, worktree 2's port refuses and worktree 1's still answers (SC-002).
   - Edge case: a developer's line outside the section that sets a `WTENV_PORT_…` name is left
     alone with the 001:FR-080 duplicate warning.
   - **Done when** the new file fails under the failing-test rule.
-- [ ] T020 [US2] Write the port variables in `_variables` and check them in `_compose_plan`, in `src/wtenv/provision.py`
+- [X] T020 [US2] Write the port variables in `_variables` and check them in `_compose_plan`, in `src/wtenv/provision.py`
   - FR-010, FR-012, FR-013. The collision check runs in step 5, before step 8 (cli.md, `wtenv up`).
     `exec` needs no change: it reads the section (001:FR-056).
   - **Done when** `uv run pytest tests/integration/test_us2_port_variables.py tests/integration/test_us3_compose.py -q` exits 0.
-- [ ] T021 [US2] Group check 3B: runs G5 from the repository root; edits no file
+- [X] T021 [US2] Group check 3B: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(up): write a variable for every published port`.
 
 ### 3C. Showing the variables in `up` and `ls` (`listing.py`, `output.py`)

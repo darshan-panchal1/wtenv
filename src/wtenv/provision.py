@@ -146,7 +146,9 @@ def _provision(identity: WorktreeIdentity) -> UpResult:
         if compose_plan is not None:
             changes.append(_compose_change(root, compose_plan, "unchanged"))
         changes.append(_env_change(env_path, "unchanged"))
-        runs = _run_post_up(root, config.post_up, _variables(known.ports, plan), known.git_dir)
+        runs = _run_post_up(
+            root, config.post_up, _variables(known.ports, known.published, plan), known.git_dir
+        )
         return _result(identity, known, config.env_file, changes, warnings, runs)
 
     # Step 8: the registry first.
@@ -166,7 +168,7 @@ def _provision(identity: WorktreeIdentity) -> UpResult:
     changes += _compose_step(root, compose_plan, after)
 
     # Step 12: the env file.
-    variables = _variables(after.ports, plan)
+    variables = _variables(after.ports, after.published, plan)
     changes += _env_file_step(root, config, before, after, variables)
 
     # Step 13: the post-up commands.
@@ -179,9 +181,19 @@ def _provision(identity: WorktreeIdentity) -> UpResult:
     return _result(identity, final, config.env_file, changes, warnings, runs)
 
 
-def _variables(assigned: list[VariablePort], plan: _DatabasePlan | None) -> list[tuple[str, str]]:
-    """Return the variables of wtenv's section: the ports in order, then `DATABASE_URL` (files.md)."""
+def _variables(
+    assigned: list[VariablePort], published: list[PublishedPort], plan: _DatabasePlan | None
+) -> list[tuple[str, str]]:
+    """Return the variables of wtenv's section, in the order of FR-013 (files.md).
+
+    The `ports` variables in `ports` order, then one variable per published port sorted by
+    (service, container port, protocol), then `DATABASE_URL`.
+    """
     variables = [(port.variable, str(port.port)) for port in assigned]
+    variables += [
+        (ports.port_variable_name(port.service, port.target, port.protocol), str(port.port))
+        for port in sorted(published, key=lambda port: (port.service, port.target, port.protocol))
+    ]
     if plan is not None:
         variables.append((DATABASE_URL, plan.url))
     return variables
@@ -366,6 +378,10 @@ def _compose_plan(
         compose.check_recorded_override(root, recorded.override)  # FR-087: step 11 rewrites it
     compose.check_environment(root, settings.file, os.environ)
     model = compose.resolve_model(root / settings.file, config.ports)
+    ports.check_port_variables(
+        model.mappings,
+        ports.configured_variable_names(config.ports, has_database=config.database is not None),
+    )  # FR-012: before step 8, so a collision changes nothing
     return _ComposePlan(
         file=settings.file,
         override=compose.override_path(settings.file),
@@ -493,7 +509,9 @@ def _warnings(
                 details={"from": known.path, "to": identity.path},
             )
         )
-    for name in envfile.find_duplicates(env_path, config.ports):
+    for name in envfile.find_duplicates(
+        env_path, [*config.ports, *_port_variable_names(compose_plan)]
+    ):
         warnings.append(
             WarningInfo(
                 code=WarningCode.ENV_DUPLICATE_VARIABLE,
@@ -507,6 +525,16 @@ def _warnings(
     if compose_plan is not None:
         warnings += compose_plan.model.warnings
     return warnings
+
+
+def _port_variable_names(compose_plan: _ComposePlan | None) -> list[str]:
+    """Return the variable name of every published port; none without compose (FR-016)."""
+    if compose_plan is None:
+        return []
+    return [
+        ports.port_variable_name(mapping.service, mapping.target, mapping.protocol)
+        for mapping in sorted(compose_plan.model.mappings, key=ports.published_order)
+    ]
 
 
 def _has_nothing_to_change(
@@ -538,7 +566,7 @@ def _has_nothing_to_change(
             and record.path == config.env_file
             and record.state is ResourceState.CREATED
             and f"/{config.env_file}" in known.exclude_patterns
-            and section == _variables(assigned, plan)
+            and section == _variables(assigned, known.published, plan)
         )
     )
 

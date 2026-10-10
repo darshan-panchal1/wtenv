@@ -272,11 +272,14 @@ def test_a_repeat_up_leaves_the_project_name_and_the_override_byte_identical(
     up(run_wtenv, worktree)
     project = compose_projects.track(project_of(worktree))
     override = worktree / "compose.override.yaml"
+    env_file = worktree / ".env.local"
     first_bytes, first_entry = override.read_bytes(), entry_of(worktree)
+    first_env = env_file.read_bytes()
 
     result = up(run_wtenv, worktree)
 
     assert override.read_bytes() == first_bytes
+    assert env_file.read_bytes() == first_env  # the port variables too (spec 002, FR-010)
     assert project_of(worktree) == project
     assert entry_of(worktree) == first_entry
     overrides = [c for c in result.changes if c.item.kind is ItemKind.COMPOSE_OVERRIDE]
@@ -597,7 +600,7 @@ def test_a_docker_engine_that_does_not_answer_is_not_running_for_up(
 
 
 def many_ports(count: int) -> str:
-    ports = "".join(f'      - "{9000 + n}:80"\n' for n in range(count))
+    ports = "".join(f'      - "{9000 + n}:{80 + n}"\n' for n in range(count))
     return f"services:\n  web:\n    image: x\n    ports:\n{ports}"
 
 
