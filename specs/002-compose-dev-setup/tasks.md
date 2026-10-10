@@ -59,10 +59,16 @@ plan.md, Structure Decision).
   `uv run pytest <files> -q 2>&1 | grep -E 'ImportError|ModuleNotFoundError|AttributeError: module'`
   prints nothing and pytest exits 1.
 - **Existing tests.** No existing test changes its expected outcome, except the six named in
-  T025, T032 and T106, the code-count tests in `tests/contract/test_exit_statuses.py` and
+  T025, T032 and T106, the two named in T033 (below), the code-count tests in `tests/contract/test_exit_statuses.py` and
   `tests/unit/test_errors.py`, two block-size tests, and one text-output test (all below). Six, not the three of plan.md's table: the maintainer decided on 2026-10-10
   to rewrite the five of T025 and T032, and in the analysis fixes to rewrite the sixth (T106, O2). An existing test may be *extended* (more cases, more assertions) where a task
   says so. If any other existing test starts failing, stop and ask. Do not edit it.
+  - **Tests of `check_override_files` (T033).** `test_the_recorded_override_passes` and
+    `test_no_override_file_passes` in `tests/unit/test_compose_checks.py` keep their expected
+    outcomes (no refusal) but call `compose.override_inventory` instead. T033 removes
+    `check_override_files`, which only these two tests still called. The maintainer decided this
+    on 2026-10-10, after T025 left them on the old function. The old bodies are shown failing
+    against the new code before they are rewritten.
   - **Code-count tests (T003, T004; done).** `tests/contract/test_exit_statuses.py` and
     `tests/unit/test_errors.py` assert the number of error codes, so adding codes 20–23 (FR-031)
     changes their outcome; they are rewritable. The maintainer accepted (2026-10-10) that the
