@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,8 +31,8 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain by design (FR-003, FR-004, FR-027). They decide
-  scope and safety and are left for `/speckit-clarify`.
+- The three [NEEDS CLARIFICATION] markers (FR-003, FR-004, FR-027) were resolved by
+  `/speckit-clarify` on 2026-10-10 (spec.md, Clarifications), which also added FR-033.
 - The spec names user-facing interfaces that wtenv already exposes (`docker compose` commands,
   `wtenv exec`, `--json`, `.git/info/exclude`, the override file names). These are the
   product's existing contract, as in spec 001, not implementation choices. No file format,

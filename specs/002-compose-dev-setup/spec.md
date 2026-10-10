@@ -53,22 +53,46 @@ delete.
 - **Host-side tool**: a process that runs on the host rather than in a container, such as a test
   run, a migration, a script, or an agent.
 
+## Clarifications
+
+### Session 2026-10-10
+
+- Q: 001:FR-030 promises that plain Compose commands with no extra flags are isolated, but
+  Compose loads only one override file automatically and a repository like the fastapi template
+  tracks its `.env`. In a worktree whose repository owns its override, how do Compose commands
+  get isolation? → A: Isolation applies to Compose commands run through `wtenv exec`, and `up`
+  says so in text and JSON. A plain `docker compose` command in such a worktree runs without
+  isolation, and the documentation says so plainly. 001:FR-030 is relaxed only for these
+  worktrees (FR-004, FR-033).
+- Q: When the repository's override publishes a fixed host port for a service, whose value
+  wins? → A: wtenv's remapped port wins for every published port, and every other setting in the
+  repository's override is kept (FR-003).
+- Q: What does `up` do when the compose-hosted database keeps its data somewhere that is not
+  specific to the worktree (a fixed-name volume, an external volume, or a host directory outside
+  the worktree)? → A: `up` refuses with a stable error code before changing anything (FR-027).
+- Q: In a worktree whose repository owns its override, do post-up commands (001:FR-036) get the
+  same isolation as `wtenv exec`? → A: Yes. Otherwise a post-up command such as
+  `docker compose up -d` would start an unisolated stack on the repository's fixed ports
+  (FR-033).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A repository that owns its override file can use wtenv (Priority: P1)
 
 A developer whose repository ships its own override file enables compose isolation. `wtenv up`
 succeeds. The repository's override keeps taking effect, with its dev command, `watch`
-configuration, environment, volumes, and extra services, and wtenv still gives the worktree its
-own project name, moves every published port into the worktree's block, and keeps its volumes
-apart. wtenv never overwrites, deletes, or silently ignores the repository's file.
+configuration, environment, volumes, and extra services. For Compose commands run through
+`wtenv exec`, wtenv still gives the worktree its own project name, moves every published port
+into the worktree's block, and keeps its volumes apart. A plain `docker compose` command run
+without `wtenv exec` gets no isolation in such a worktree, and `up` says so. wtenv never
+overwrites, deletes, or silently ignores the repository's file.
 
 **Why this priority**: it is a blocker. Without it, a repository like the fastapi template
 cannot use wtenv's compose isolation at all, and the other two stories have nothing to run on.
 
 **Independent Test**: in a repository whose compose file publishes no ports and whose
 repository-owned override publishes them and sets a dev command, configure compose isolation,
-run `wtenv up` in two worktrees, and start each stack the documented way. Both stacks run at
+run `wtenv up` in two worktrees, and start each stack through `wtenv exec`. Both stacks run at
 the same time on ports inside their own blocks, each runs the override's dev command, and the
 override file is byte-identical to the committed version throughout.
 
@@ -78,7 +102,7 @@ override file is byte-identical to the committed version throughout.
    override, **When** `wtenv up` is run, **Then** it succeeds, the override file is
    byte-identical to what it was before, and `git status` shows no change.
 2. **Given** a worktree provisioned as in scenario 1, **When** the developer starts the stack
-   the way FR-004 documents, **Then** the stack uses the worktree's project name, every
+   through `wtenv exec` (FR-004), **Then** the stack uses the worktree's project name, every
    published port, including those that only the repository's override declares, is on a port
    of the worktree's block, and every other setting of the override takes effect.
 3. **Given** three worktrees provisioned as in scenario 1, **When** their stacks run at the
@@ -96,6 +120,17 @@ override file is byte-identical to the committed version throughout.
 7. **Given** the repository has two override files with names Compose loads automatically,
    **When** `wtenv up` is run, **Then** it fails with a stable error naming both files and
    changes nothing, because Compose would silently ignore one of them.
+8. **Given** the repository's override publishes service `backend` on fixed host port 8000 and
+   sets its dev command, **When** the stack is started through `wtenv exec`, **Then** `backend`
+   is published on a port of the worktree's block, not on 8000, and runs the override's dev
+   command (FR-003).
+9. **Given** a worktree provisioned as in scenario 1, **When** `wtenv up` is run, with or
+   without `--json`, **Then** the output says that Compose commands are isolated only when run
+   through `wtenv exec`, and that a plain `docker compose` command runs without isolation.
+10. **Given** a worktree provisioned as in scenario 1 whose isolation settings `exec` cannot
+    apply (for example they were deleted, or `COMPOSE_PROJECT_NAME` is set in the calling
+    environment), **When** any command is run through `wtenv exec`, **Then** `exec` fails with
+    a stable error naming the cause and does not run the command (FR-033).
 
 ---
 
@@ -183,8 +218,9 @@ container and data volume are gone and the other two are untouched.
 6. **Given** the configuration names a service that does not exist, publishes no port for the
    database, or publishes more than one, **When** `wtenv up` is run, **Then** it fails with a
    configuration error naming the service and changes nothing.
-7. **Given** the database service stores its data somewhere that is not specific to the
-   worktree, **When** `wtenv up` is run, **Then** wtenv behaves as FR-027 decides.
+7. **Given** the database service stores its data in a volume with a fixed name, an external
+   volume, or a host directory outside the worktree, **When** `wtenv up` is run, **Then** it
+   fails with a stable error naming the service and that storage, and changes nothing (FR-027).
 8. **Given** a `wtenv.toml` that uses the v0.1.x database settings (host Postgres or SQLite),
    **When** `wtenv up` is run, **Then** behaviour is exactly as in v0.1.1.
 
@@ -208,7 +244,8 @@ container and data volume are gone and the other two are untouched.
   `down` reports it as kept, not as failed. When git does not track it, `up` fails with
   `ownership_conflict` exactly as 001:FR-087 says.
 - **A repository-owned override disappears** (deleted, or a branch without it is checked out):
-  the next `up` returns to the v0.1.x arrangement for that worktree (FR-008).
+  the next `up` returns to the v0.1.x arrangement for that worktree (FR-008). Until then, `exec`
+  fails as FR-033 says.
 - **The repository's override is a symbolic link**: wtenv only reads it, so 001:FR-086 does not
   apply to it; it does apply to everything wtenv writes for the worktree.
 - **The repository's override publishes a host port range onto one container port**:
@@ -227,11 +264,21 @@ container and data volume are gone and the other two are untouched.
 - **The database service's data lives in an anonymous volume** (the service declares no volume
   and the image declares one): the data is per-worktree, but `down` and `gc` keep anonymous
   volumes (001 reading R6). `up` warns that the database's data will be kept on `down`.
+- **The database service's data lives in a host directory inside the worktree** (for example
+  `./data`): the data is per-worktree, but wtenv did not create the directory, so `down` and
+  `gc` keep it. `up` accepts it and warns (FR-027).
+- **The database service's data lives in a fixed-name volume, an external volume, or a host
+  directory outside the worktree**: every worktree, and possibly the main checkout, would share
+  one data store. `up` refuses before changing anything (FR-027).
+- **A Compose command run through `wtenv exec` passes its own project name or compose files**
+  (`-p`, `-f`, or similar): the command's own choice wins, so it is not isolated. Several
+  compose files and `-f` arguments are out of scope.
 - **The database service is not running when a host-side tool uses the URL**: the tool fails to
   connect. `up` does not start containers (001:FR-034); `doctor` is unchanged by this feature.
 - **`COMPOSE_PROJECT_NAME` or `COMPOSE_FILE` is set by the developer** in the environment or in
   `.env`: `up` fails with `unsupported` as in v0.1.x, whether or not the repository owns its
-  override.
+  override. In a worktree whose repository owns its override, `exec` also fails when either is
+  set in the environment it is called from (FR-033).
 - **The worktree's block is too small** for the published ports of the compose file and the
   repository's override together: `config_invalid` with the smallest block size that fits
   (001:FR-032 unchanged).
@@ -248,23 +295,22 @@ container and data volume are gone and the other two are untouched.
 - **FR-002**: wtenv MUST NOT write, rename, move, delete, or change the permissions of a
   repository-owned override, in `up`, `down`, `gc`, or any dry run, and MUST NOT add it to
   `.git/info/exclude`. It MUST NOT appear as an item to remove in any output.
-- **FR-003**: The stack started as FR-004 documents MUST include every setting of the
-  repository-owned override, except the host side of its published ports and the project name,
+- **FR-003**: The stack started through `wtenv exec` (FR-004) MUST include every setting of the
+  repository-owned override, except the host port of each published port and the project name,
   which come from wtenv's isolation settings. Port remapping MUST cover every published port of
   the combined compose file and repository-owned override, and 001:FR-033 ("never silently
   un-remapped") MUST hold for that combined result. When the repository's override publishes a
-  fixed host port for a service, [NEEDS CLARIFICATION: whose value wins — wtenv's remapped port
-  (the override's other settings kept), the override's fixed port (that service not isolated,
-  with a warning), or neither (`up` refuses until the override ties the port to a variable)?]
-- **FR-004**: The documented way to run Compose commands in a worktree whose repository owns
-  its override MUST apply both the repository's override and wtenv's isolation settings.
-  [NEEDS CLARIFICATION: 001:FR-030 promises that plain Compose commands with no extra flags are
-  isolated. Compose loads only one override file automatically, and a repository like the
-  fastapi template tracks its `.env`, so wtenv cannot add its settings to anything Compose reads
-  automatically. Is it acceptable that, in this case only, isolation applies to Compose commands
-  run through `wtenv exec` (plain `docker compose` then runs the repository's setup without
-  isolation, and `up` says so), or must plain commands also be isolated where that is possible,
-  for example when `.env` is absent or untracked?]
+  fixed host port, or a host port taken from a variable, wtenv's remapped port MUST win, and
+  every other setting in the override MUST be kept, including the rest of that published-port
+  entry (its host address and protocol).
+- **FR-004**: In a worktree whose repository owns its override, Compose commands MUST be isolated
+  when they are run through `wtenv exec` (FR-033), which applies both the repository's override
+  and wtenv's isolation settings. A plain `docker compose` command run without `wtenv exec` in
+  such a worktree runs the repository's setup without isolation: it gets neither the worktree's
+  project name nor its remapped ports. `up` MUST say this in text and JSON (FR-005), and the user
+  documentation MUST state it plainly, including that a plain command runs without isolation.
+  001:FR-030 is relaxed only for these worktrees; it holds unchanged for every other worktree
+  (FR-008).
 - **FR-005**: `up` MUST report, in text and JSON, when a worktree uses a repository-owned
   override, and MUST state how Compose commands pick up isolation in that worktree.
 - **FR-006**: When a recorded override path now holds a file that lacks wtenv's header and that
@@ -285,6 +331,17 @@ container and data volume are gone and the other two are untouched.
   through a symbolic link (001:FR-086), rewritten or deleted only while it still carries wtenv's
   header (001:FR-087), removed by `down` and `gc` only when its recorded path has a form wtenv
   records (001 cli.md, `wtenv down`, "Recorded values").
+- **FR-033**: In a worktree whose repository owns its override, `exec` MUST apply the worktree's
+  isolation settings, together with the repository's override, to every Compose command that
+  the command it runs starts, directly or through a child process such as a script or a `make`
+  target. Post-up commands (001:FR-036) MUST get the same. `exec` MUST fail with a stable error
+  code and exit status (FR-031), naming the cause, and MUST NOT run the command, when it
+  cannot apply them: the worktree's recorded isolation settings are missing, no longer start
+  with wtenv's header, or are reached through a symbolic link; the repository-owned override
+  recorded for the worktree is gone, or another override file with a name Compose loads
+  automatically has appeared beside the compose file; or `COMPOSE_PROJECT_NAME` or
+  `COMPOSE_FILE` is set in the environment `exec` is called from. In every other worktree,
+  `exec` behaves as in v0.1.1.
 
 **Port variables for published ports (User Story 2)**
 
@@ -342,11 +399,11 @@ container and data volume are gone and the other two are untouched.
 - **FR-026**: When the database service keeps its data in an anonymous volume, `up` MUST warn
   that `down` and `gc` will keep that data (001 reading R6).
 - **FR-027**: When the database service keeps its data somewhere that is not specific to the
-  worktree's project — a volume with a fixed name, an external volume, or a host directory
-  outside the worktree — [NEEDS CLARIFICATION: must `up` refuse with a stable error before
-  changing anything (isolation cannot be guaranteed), warn and continue (each worktree gets its
-  own port and URL, but all of them share one data store), or refuse only for external volumes
-  and host directories and warn for fixed-name volumes?]
+  worktree's project — a volume with a fixed name (the 001 reading R8 rule), an external volume,
+  or a host directory outside the worktree — `up` MUST fail with a stable error code (FR-031)
+  that names the service and that storage, before changing anything. A host directory inside
+  the worktree is specific to it: `up` MUST accept it and MUST warn, as for FR-026, that `down`
+  and `gc` keep that data.
 
 **Compatibility and safety (all stories)**
 
@@ -376,8 +433,11 @@ container and data volume are gone and the other two are untouched.
 By story:
 
 - **Story 1** touches 001:FR-029, FR-038, FR-039 (where wtenv's settings live and what `down`
-  removes); relaxes 001:FR-030 (to the extent FR-004 decides) and the outcome, not the guard, of
-  001:FR-087 (FR-006); extends 001:FR-031 to FR-033 to the repository's override.
+  removes); relaxes 001:FR-030, only for worktrees whose repository owns its override, where
+  Compose commands are isolated only when run through `wtenv exec` (FR-004), and the outcome,
+  not the guard, of 001:FR-087 (FR-006); extends 001:FR-031 to 001:FR-033 to the repository's
+  override; extends 001:FR-036 and FR-056 so that post-up commands and `exec` apply the
+  isolation settings in those worktrees (FR-033).
 - **Story 2** touches 001:FR-015 to FR-017, FR-031, FR-048, FR-056 (new variables in the env
   file, `exec`, and output). It relaxes nothing.
 - **Story 3** extends 001:FR-020 to FR-027 and FR-063 with a third database mode. It relaxes
@@ -388,14 +448,15 @@ By story:
 | Spec 001 requirement | Effect of this feature |
 |----------------------|------------------------|
 | 001:FR-029 (generate an override; never modify the compose file) | **Touched** by Story 1: wtenv's isolation settings live somewhere other than the auto-loaded override name when the repository owns that name (FR-003, FR-009). The compose file and the repository's override are never modified. |
-| 001:FR-030 (plain Compose commands are isolated) | **Relaxed**, only for worktrees whose repository owns its override, to the extent FR-004 decides. Unchanged for every other worktree (FR-008). |
-| 001:FR-031, FR-032, FR-033 (ports tied to variables; block size; never un-remapped) | **Extended**: they apply to the combined compose file and repository override (FR-003). FR-031's output also shows variable names (FR-014). Block sizing unchanged (FR-015). |
+| 001:FR-030 (plain Compose commands are isolated) | **Relaxed**, only for worktrees whose repository owns its override: there, Compose commands are isolated only when run through `wtenv exec`, a plain `docker compose` command runs without isolation, and `up` and the documentation say so (FR-004, FR-033). Unchanged for every other worktree (FR-008). |
+| 001:FR-031, 001:FR-032, 001:FR-033 (ports tied to variables; block size; never un-remapped) | **Extended**: they apply to the combined compose file and repository override (FR-003). 001:FR-031's output also shows variable names (FR-014). Block sizing unchanged (FR-015). |
 | 001:FR-015, FR-016, FR-017, FR-079, FR-080 (env file) | **Touched** by Stories 2 and 3: new variables inside wtenv's section (FR-010, FR-019). Section format, merge rules, duplicate warning, and byte-identical repeat unchanged. |
 | 001:FR-020 to FR-027 (database isolation) | **Extended** by Story 3 with a third mode (FR-017 to FR-027). Host Postgres and SQLite modes unchanged. 001:FR-025 and FR-026 apply to the new mode. 001:FR-022 (database name differs between worktrees) is met through the project, port, and volume, not the database name. |
 | 001:FR-034 (`up` does not start containers) | Unchanged. |
+| 001:FR-036 (post-up commands run with the worktree's variables) | **Extended**: in a worktree whose repository owns its override, post-up commands also get the isolation settings, as `exec` does (FR-033). |
 | 001:FR-038, FR-039 (what `down` removes) | **Touched**: `down` removes wtenv's isolation settings wherever they live (FR-009) and never the repository's override (FR-002). The removal rules themselves are unchanged. |
 | 001:FR-048 (`ls` columns) | **Extended**: variable names next to published ports (FR-014). |
-| 001:FR-056 (`exec`) | **Extended** in effect: the new variables are wtenv-managed, so `exec` sets them. In the FR-004 arrangement, `exec` is also how Compose commands pick up isolation. |
+| 001:FR-056 (`exec`) | **Extended**: the new variables are wtenv-managed, so `exec` sets them. In a worktree whose repository owns its override, `exec` is also how Compose commands pick up isolation, and it fails with a stable error, without running the command, when it cannot apply the isolation settings (FR-004, FR-033). |
 | 001:FR-063 (closed list of settings) | **Extended** by Story 3 (FR-017, FR-018). Story 1 and Story 2 add no setting. |
 | 001:FR-087 (override header check) | **Guard unchanged**. One outcome added: a git-tracked, header-less file at the recorded path is adopted as the repository's and kept, instead of failing (FR-006). It is still never written or deleted. |
 | 001:FR-086, FR-088, FR-018, FR-039 volume rules, FR-070 | Unchanged, and applied to every new item (FR-009, FR-030). |
@@ -406,7 +467,9 @@ By story:
 - **Repository-owned override**: an override file the repository provides. wtenv reads it,
   never changes it, and records at most the fact that the worktree uses one.
 - **Isolation settings**: the per-worktree project name and published-port mapping that wtenv
-  generates and records. One per provisioned worktree with compose isolation.
+  generates and records. One per provisioned worktree with compose isolation. In a worktree
+  whose repository owns its override, Compose picks them up only through `wtenv exec` and
+  post-up commands.
 - **Published port**: a service, a container port, and a protocol, mapped to one host port of
   the worktree's block. Has exactly one port variable.
 - **Port variable**: a name, derived by the documented rule, and the host port it carries.
@@ -483,6 +546,22 @@ By story:
 - **Downgrade**: once a newer wtenv has recorded a worktree in a new mode, running v0.1.x
   against the same registry is not supported; v0.1.x stops with `registry_unreadable` and
   changes nothing (001:FR-070).
+- **`exec` checks every command it runs** in a worktree whose repository owns its override, not
+  only Compose commands, because it cannot tell which commands start Compose (FR-033). A
+  developer who needs to run a command without those checks runs it without `wtenv exec`.
+- **`COMPOSE_PROJECT_NAME` or `COMPOSE_FILE` in the environment `exec` is called from** makes
+  `exec` fail rather than be replaced silently, matching what `up` does for the same variables
+  (FR-033).
+- **A Compose command's own `-p` or `-f` arguments win** over the isolation settings that `exec`
+  applies; such a command is not isolated. This follows from "several compose files and `-f`
+  arguments" being out of scope.
+- **Where the database keeps its data** (FR-027) is judged on the compose setup as Compose
+  resolves it, with variables interpolated. A volume has a fixed name by the rule of 001 reading
+  R8. A host directory is inside or outside the worktree by its real path, after following
+  symbolic links. FR-027 applies only to the database service; other services' fixed-name
+  volumes keep the v0.1.x warning (reading R8).
+- **Error and warning code names** for FR-027, FR-033, and the other new conditions are chosen
+  in planning, under FR-031.
 - **Compose version**: the minimum supported Compose version stays 2.24.4 unless planning finds
   that the Story 1 arrangement needs a later one, in which case the spec is updated first.
 - **Platforms**: macOS and Linux, Windows through WSL2 only, as in spec 001.
@@ -500,7 +579,7 @@ Already on `docs/roadmap.md`, and not delivered by this feature:
 
 Also not in this feature:
 
-- The items listed under "Chosen for feature 002 (2026-10-05)" in `docs/roadmap.md`: the agent
+- The items listed under "Chosen for feature 003 (2026-10-05)" in `docs/roadmap.md`: the agent
   brief (`wtenv context`), database checkpoints, and `up --db-from`. They stay on the roadmap.
 - Compose files with other names, several compose files, or `-f` arguments.
 - Seeding a compose-hosted database from a template, a snapshot, or another worktree.
