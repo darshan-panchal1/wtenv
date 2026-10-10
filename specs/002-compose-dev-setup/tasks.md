@@ -484,7 +484,7 @@ byte-identical throughout.
 
 ### 4C. Safety group — writing the isolation file (`compose.py`, `provision.py`, `isolation.py`; plan.md S1, S4)
 
-- [ ] T104 [US1] Add failing tests for the exact isolation path in `override_problem` to `tests/unit/test_compose_checks.py`
+- [X] T104 [US1] Add failing tests for the exact isolation path in `override_problem` to `tests/unit/test_compose_checks.py`
   - FR-009; plan.md S4; analysis O1. Comes before T033, which needs it.
   - `override_problem(root, ".wtenv/compose.isolation.yaml")` returns `None` when the file is
     missing or starts with wtenv's header, and a problem when it lacks the header; so
@@ -494,7 +494,7 @@ byte-identical throughout.
     `compose.isolation.yaml` at the root. The four override names keep their v0.1.1 cases.
   - **Done when** the new cases fail under the failing-test rule (the isolation-path cases fail on
     the assertion that the result is `None`).
-- [ ] T105 [US1] Accept exactly `.wtenv/compose.isolation.yaml` in `override_problem`, in `src/wtenv/compose.py` and `src/wtenv/isolation.py` (new)
+- [X] T105 [US1] Accept exactly `.wtenv/compose.isolation.yaml` in `override_problem`, in `src/wtenv/compose.py` and `src/wtenv/isolation.py` (new)
   - FR-009; analysis O1, U2. `isolation.py` starts here with two constants: `OVERRIDE_HEADER`
     (wtenv's header line, moved from `compose._OVERRIDE_HEADER`) and
     `ISOLATION_FILE = ".wtenv/compose.isolation.yaml"`. `compose.py` imports both from it.

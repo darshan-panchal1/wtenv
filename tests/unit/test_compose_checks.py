@@ -368,6 +368,84 @@ def test_a_recorded_override_that_is_missing_passes(tmp_path: Path) -> None:
     compose.check_recorded_override(tmp_path, "compose.override.yaml")
 
 
+# --- the isolation file's path is accepted exactly (FR-009; plan.md S4; analysis O1) -----------
+
+ISOLATION_FILE = ".wtenv/compose.isolation.yaml"
+
+
+def test_a_missing_isolation_file_has_no_problem(tmp_path: Path) -> None:
+    assert compose.override_problem(tmp_path, ISOLATION_FILE) is None
+    compose.check_recorded_override(tmp_path, ISOLATION_FILE)
+
+
+def test_an_isolation_file_with_the_header_has_no_problem(tmp_path: Path) -> None:
+    (tmp_path / ".wtenv").mkdir()
+    (tmp_path / ISOLATION_FILE).write_text(OWN_HEADER + 'name: "old"\n')
+
+    assert compose.override_problem(tmp_path, ISOLATION_FILE) is None
+    compose.check_recorded_override(tmp_path, ISOLATION_FILE)
+
+
+@pytest.mark.parametrize("text", ["services: {}\n", "", OWN_HEADER.replace("Generated", "Written")])
+def test_an_isolation_file_without_the_header_is_a_problem_and_an_ownership_conflict(
+    tmp_path: Path, text: str
+) -> None:
+    path = tmp_path / ISOLATION_FILE
+    path.parent.mkdir()
+    path.write_bytes(text.encode())
+
+    assert compose.override_problem(tmp_path, ISOLATION_FILE) is not None
+    with pytest.raises(WtenvError) as caught:
+        compose.check_recorded_override(tmp_path, ISOLATION_FILE)
+
+    error = caught.value
+    assert error.code is ErrorCode.OWNERSHIP_CONFLICT
+    assert error.details == {"kind": "compose_override", "name": str(path)}
+    assert path.read_bytes() == text.encode()
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        ".wtenv/notes.yaml",
+        ".wtenv/sub/compose.isolation.yaml",
+        "../.wtenv/compose.isolation.yaml",
+        "compose.isolation.yaml",
+    ],
+)
+@pytest.mark.parametrize(
+    "contents", [None, "services: {}\n", OWN_HEADER], ids=["missing", "plain", "header"]
+)
+def test_any_other_path_under_or_near_wtenv_is_a_problem_whatever_it_holds(
+    tmp_path: Path, relative: str, contents: str | None
+) -> None:
+    root = tmp_path / "root"
+    (root / ".wtenv" / "sub").mkdir(parents=True)
+    path = root / relative
+    if contents is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(contents)
+
+    assert compose.override_problem(root, relative) is not None
+    with pytest.raises(WtenvError) as caught:
+        compose.check_recorded_override(root, relative)
+
+    assert caught.value.code is ErrorCode.OWNERSHIP_CONFLICT
+    assert (path.read_text() if contents is not None else None) == contents  # left alone
+
+
+@pytest.mark.parametrize("name", list(compose.OVERRIDE_FILE_NAMES))
+def test_the_four_override_names_keep_their_v0_1_1_cases(tmp_path: Path, name: str) -> None:
+    assert compose.override_problem(tmp_path, name) is None  # missing: already gone
+    (tmp_path / name).write_text("services: {}\n")
+    assert compose.override_problem(tmp_path, name) is not None  # not wtenv's
+    (tmp_path / name).write_text(OWN_HEADER)
+    assert compose.override_problem(tmp_path, name) is None
+    (tmp_path / "deploy").mkdir()
+    (tmp_path / "deploy" / name).write_text(OWN_HEADER)
+    assert compose.override_problem(tmp_path, f"deploy/{name}") is None
+
+
 # --- COMPOSE_PROJECT_NAME and COMPOSE_FILE (research.md §4, "v1 limits") -----------------------
 
 
