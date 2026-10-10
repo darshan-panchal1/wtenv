@@ -60,7 +60,7 @@ plan.md, Structure Decision).
   prints nothing and pytest exits 1.
 - **Existing tests.** No existing test changes its expected outcome, except the six named in
   T025, T032 and T106, the code-count tests in `tests/contract/test_exit_statuses.py` and
-  `tests/unit/test_errors.py`, and two block-size tests (both below). Six, not the three of plan.md's table: the maintainer decided on 2026-10-10
+  `tests/unit/test_errors.py`, two block-size tests, and one text-output test (all below). Six, not the three of plan.md's table: the maintainer decided on 2026-10-10
   to rewrite the five of T025 and T032, and in the analysis fixes to rewrite the sixth (T106, O2). An existing test may be *extended* (more cases, more assertions) where a task
   says so. If any other existing test starts failing, stop and ask. Do not edit it.
   - **Code-count tests (T003, T004; done).** `tests/contract/test_exit_statuses.py` and
@@ -78,6 +78,11 @@ plan.md, Structure Decision).
     (the FR-028 exception; the collision check of step 5 runs before the block-size check of
     step 6). The maintainer chose this on 2026-10-10; the refusal itself is tested by
     `test_a_name_collision_changes_nothing[one container port published twice-…]`.
+  - **Text-output test (T022; done).** `test_the_text_output_shows_the_published_ports_and_the_compose_project`
+    in `tests/integration/test_us3_compose.py` changes one substring, `(CACHE_PORT)` to
+    `(CACHE_PORT, WTENV_PORT_CACHE_6379_TCP)`: spec 002 FR-014 appends the port variable to the
+    `published` text of `up`. Its other assertions are unchanged. The maintainer approved this on
+    2026-10-10.
 - **Mutation check** (plan.md, Test strategy). For the guard the task names: remove or break it in
   the working tree, run the named test(s) and see them fail, then restore the file with
   `git checkout -- <file>` (or `git stash pop` of the clean state). The mutation is never
@@ -370,17 +375,20 @@ stopped, worktree 2's port refuses and worktree 1's still answers (SC-002).
 
 ### 3C. Showing the variables in `up` and `ls` (`listing.py`, `output.py`)
 
-- [ ] T022 [P] [US2] Add failing tests for the views to `tests/unit/test_render_up.py`, `tests/unit/test_render_ls.py`, and `tests/integration/test_us2_port_variables.py`
+- [X] T022 [P] [US2] Add failing tests for the views to `tests/unit/test_render_up.py`, `tests/unit/test_render_ls.py`, and `tests/integration/test_us2_port_variables.py`
   - FR-014; User Story 2 scenario 7; cli.md, `wtenv up` text and `wtenv ls`.
   - `PortView.port_variable` is set for every published port and `None` for a `ports` variable.
     `up` text: `backend:8000 -> 20002 (WTENV_PORT_BACKEND_8000_TCP)`; a tied port:
     `db:5432 -> 20011 (DB_PORT, WTENV_PORT_DB_5432_TCP)`. `ls` text cell:
     `service:container-port->host-port (NAME)`. JSON of `up` and `ls` carries `port_variable`.
   - Existing render tests build views without `port_variable` and must pass unchanged.
+  - This existing test changes with the output format:
+    `test_the_text_output_shows_the_published_ports_and_the_compose_project` in
+    `tests/integration/test_us3_compose.py` (one substring; see Working rules).
   - **Done when** the new cases fail under the failing-test rule.
-- [ ] T023 [US2] Set `port_variable` in `listing.port_views` and render it in `src/wtenv/listing.py` and `src/wtenv/output.py`
+- [X] T023 [US2] Set `port_variable` in `listing.port_views` and render it in `src/wtenv/listing.py` and `src/wtenv/output.py`
   - **Done when** `uv run pytest tests/unit/test_render_up.py tests/unit/test_render_ls.py tests/integration/test_us2_port_variables.py -q` exits 0.
-- [ ] T024 [US2] Group check 3C: runs G5 from the repository root; edits no file
+- [X] T024 [US2] Group check 3C: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(output): show port variables in up and ls`.
 
 **Checkpoint**: User Story 2 works on its own for every repository v0.1.1 supports.

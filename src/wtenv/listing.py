@@ -17,13 +17,15 @@ from wtenv.identity import current_worktree, points_to
 from wtenv.locks import registry_lock
 from wtenv.orphans import Classification, classify
 from wtenv.output import BlockView, DatabaseView, LsResult, PortView, Status, WorktreeView
+from wtenv.ports import port_variable_name
 from wtenv.registry import DatabaseRecord, PublishedPort, WorktreeEntry
 
 
 def port_views(entry: WorktreeEntry) -> list[PortView]:
     """Describe the block's ports: each variable's port, then the published ports without one.
 
-    A published port tied to a variable shows on that variable's view, with its service.
+    A published port tied to a variable shows on that variable's view, with its service. Every
+    published port has its port variable name (FR-014); a `ports` variable alone has none.
     """
     tied: dict[str, PublishedPort] = {}
     others: list[PublishedPort] = []
@@ -43,6 +45,7 @@ def port_views(entry: WorktreeEntry) -> list[PortView]:
                 target=None if match is None else match.target,
                 protocol=None if match is None else match.protocol,
                 host_ip=None if match is None else match.host_ip,
+                port_variable=None if match is None else _port_variable(match),
             )
         )
     for published in others:
@@ -54,9 +57,15 @@ def port_views(entry: WorktreeEntry) -> list[PortView]:
                 target=published.target,
                 protocol=published.protocol,
                 host_ip=published.host_ip,
+                port_variable=_port_variable(published),
             )
         )
     return views
+
+
+def _port_variable(published: PublishedPort) -> str:
+    """Return the name of the variable the rule gives a published port (FR-011, FR-014)."""
+    return port_variable_name(published.service, published.target, published.protocol)
 
 
 def database_view(worktree_path: str, record: DatabaseRecord) -> DatabaseView:

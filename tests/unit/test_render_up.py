@@ -162,3 +162,67 @@ def test_a_project_that_stays_recorded_without_an_override_shows_no_override() -
 
     assert f"  compose    {PROJECT}  (no override)" in lines
     assert f"  released   compose_override {OVERRIDE}" in lines
+
+
+# --- the port variable of each published port (cli.md, `wtenv up`; T022; FR-014) --------------
+
+
+TIED_AND_UNTIED_WITH_NAMES = [
+    PortView(port=20010, variable="PORT"),
+    PortView(
+        port=20011,
+        variable="DB_PORT",
+        service="db",
+        target=5432,
+        protocol="tcp",
+        port_variable="WTENV_PORT_DB_5432_TCP",
+    ),
+    PortView(
+        port=20012,
+        service="cache",
+        target=6379,
+        protocol="tcp",
+        port_variable="WTENV_PORT_CACHE_6379_TCP",
+    ),
+]
+
+
+def test_a_published_port_shows_its_port_variable() -> None:
+    text = render_up_text(compose_result(TIED_AND_UNTIED_WITH_NAMES))
+
+    assert "cache:6379 -> 20012 (WTENV_PORT_CACHE_6379_TCP)" in text
+
+
+def test_a_tied_port_shows_both_names() -> None:
+    text = render_up_text(compose_result(TIED_AND_UNTIED_WITH_NAMES))
+
+    assert "db:5432 -> 20011 (DB_PORT, WTENV_PORT_DB_5432_TCP)" in text
+    assert (
+        "  published  db:5432 -> 20011 (DB_PORT, WTENV_PORT_DB_5432_TCP)"
+        "  cache:6379 -> 20012 (WTENV_PORT_CACHE_6379_TCP)"
+    ) in text.splitlines()
+
+
+def test_a_port_variable_is_shown_for_a_port_that_is_not_tcp() -> None:
+    ports = [
+        PortView(
+            port=20011,
+            service="dns",
+            target=53,
+            protocol="udp",
+            port_variable="WTENV_PORT_DNS_53_UDP",
+        )
+    ]
+
+    text = render_up_text(compose_result(ports))
+
+    assert "  published  dns:53/udp -> 20011 (WTENV_PORT_DNS_53_UDP)" in text.splitlines()
+
+
+def test_up_json_carries_the_port_variable_of_each_published_port() -> None:
+    result = compose_result(TIED_AND_UNTIED_WITH_NAMES)
+
+    document = UpResult.model_validate_json(result.model_dump_json()).model_dump(mode="json")
+
+    shown = [port["port_variable"] for port in document["worktree"]["ports"]]
+    assert shown == [None, "WTENV_PORT_DB_5432_TCP", "WTENV_PORT_CACHE_6379_TCP"]

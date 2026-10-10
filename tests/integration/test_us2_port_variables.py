@@ -20,6 +20,7 @@ from helpers import (
     clean_environment,
     commit_all,
     exclude_file,
+    parse_ls,
     parse_up,
     snapshot_tree,
 )
@@ -440,3 +441,64 @@ def test_a_port_variable_set_outside_the_section_is_left_alone_with_a_warning(
     assert "WTENV_PORT_BACKEND_8000_TCP" in result.warnings[0].message
     assert (worktree / ENV_FILE).read_bytes().startswith(b"WTENV_PORT_BACKEND_8000_TCP=3000\n")
     assert dict(section(worktree))["WTENV_PORT_BACKEND_8000_TCP"] != "3000"
+
+
+# --- scenario 7: `up` and `ls` show each published port with its variable (FR-014) -------------
+
+PUBLISHED = {
+    ("backend", 8000): "WTENV_PORT_BACKEND_8000_TCP",
+    ("mailpit", 1025): "WTENV_PORT_MAILPIT_1025_TCP",
+    ("mailpit", 8025): "WTENV_PORT_MAILPIT_8025_TCP",
+}
+
+
+def test_up_shows_each_published_port_with_its_variable_in_text_and_json(
+    repo: Path, add_worktree: AddWorktree, run_wtenv: Run, compose_projects: ComposeProjects
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "shown")
+    process = run_wtenv(["up"], worktree)
+    assert process.returncode == 0, process.stdout + process.stderr
+    compose_projects.track(project_of(worktree))
+    start = entry_of(worktree).block.start
+
+    published = [line for line in process.stdout.splitlines() if line.startswith("  published")]
+
+    assert published == [
+        (
+            f"  published  backend:8000 -> {start + 1} (BACKEND_PORT, WTENV_PORT_BACKEND_8000_TCP)"
+            f"  mailpit:1025 -> {start + 2} (WTENV_PORT_MAILPIT_1025_TCP)"
+            f"  mailpit:8025 -> {start + 3} (WTENV_PORT_MAILPIT_8025_TCP)"
+        )
+    ]
+    result = parse_up(run_wtenv(["up", "--json"], worktree))
+    assert result.worktree is not None
+    shown = {
+        (port.service, port.target): port.port_variable
+        for port in result.worktree.ports
+        if port.service is not None
+    }
+    assert shown == PUBLISHED
+    assert [p.port_variable for p in result.worktree.ports if p.service is None] == [None]
+
+
+def test_ls_shows_each_published_port_with_its_variable_in_text_and_json(
+    repo: Path, add_worktree: AddWorktree, run_wtenv: Run, compose_projects: ComposeProjects
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "listed")
+    up(run_wtenv, worktree, compose_projects)
+    start = entry_of(worktree).block.start
+
+    text = run_wtenv(["ls"], worktree)
+    document = parse_ls(run_wtenv(["ls", "--json"], worktree))
+
+    assert text.returncode == 0, text.stderr
+    assert f"backend:8000->{start + 1} (WTENV_PORT_BACKEND_8000_TCP)" in text.stdout
+    assert f"mailpit:8025->{start + 3} (WTENV_PORT_MAILPIT_8025_TCP)" in text.stdout
+    (view,) = [w for w in document.worktrees if w.path == str(worktree)]
+    shown = {
+        (port.service, port.target): port.port_variable
+        for port in view.ports
+        if port.service is not None
+    }
+    assert shown == PUBLISHED
+    assert [p.port_variable for p in view.ports if p.service is None] == [None]

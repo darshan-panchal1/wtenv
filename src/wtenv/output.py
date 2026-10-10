@@ -603,9 +603,10 @@ def _published_cells(result: LsResult) -> list[str]:
 
 
 def _published_cell(port: PortView) -> str:
-    """Return `service:target->port`; a port that is not tcp shows `/protocol`."""
+    """Return `service:target->port (NAME)`; a port that is not tcp shows `/protocol` (FR-014)."""
     protocol = "" if port.protocol in (None, "tcp") else f"/{port.protocol}"
-    return f"{port.service}:{port.target}{protocol}->{port.port}"
+    named = "" if port.port_variable is None else f" ({port.port_variable})"
+    return f"{port.service}:{port.target}{protocol}->{port.port}{named}"
 
 
 def _ls_row(view: WorktreeView) -> tuple[str, str, str, str, str, str]:
@@ -631,10 +632,15 @@ def _ls_row(view: WorktreeView) -> tuple[str, str, str, str, str, str]:
 
 
 def _published_text(port: PortView) -> str:
-    """Return `service:target -> port (VARIABLE)`; a port that is not tcp shows `/protocol`."""
+    """Return `service:target -> port (NAMES)`; a port that is not tcp shows `/protocol`.
+
+    The names are the `ports` variable the port is tied to, if any, then its port variable
+    (FR-014): `db:5432 -> 20011 (DB_PORT, WTENV_PORT_DB_5432_TCP)`.
+    """
     protocol = "" if port.protocol in (None, "tcp") else f"/{port.protocol}"
-    tied = "" if port.variable is None else f" ({port.variable})"
-    return f"{port.service}:{port.target}{protocol} -> {port.port}{tied}"
+    names = [name for name in (port.variable, port.port_variable) if name is not None]
+    shown = f" ({', '.join(names)})" if names else ""
+    return f"{port.service}:{port.target}{protocol} -> {port.port}{shown}"
 
 
 def _compose_line(project: str, root: str, changes: Sequence[UpChange]) -> str:

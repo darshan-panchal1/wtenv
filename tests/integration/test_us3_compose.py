@@ -394,7 +394,7 @@ def test_the_text_output_shows_the_published_ports_and_the_compose_project(
     lines = process.stdout.splitlines()
     assert any(
         line.startswith("  published")
-        and f"cache:6379 -> {start + 1} (CACHE_PORT)" in line
+        and f"cache:6379 -> {start + 1} (CACHE_PORT, WTENV_PORT_CACHE_6379_TCP)" in line
         and f"web:6379 -> {start + 2}" in line
         for line in lines
     ), process.stdout
