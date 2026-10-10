@@ -238,7 +238,7 @@ the optional registry field, and the `[database] type = "compose"` configuration
 
 ### 2C. Configuration: `[database] type = "compose"` (`config.py`)
 
-- [ ] T012 [P] Add failing configuration tests to `tests/unit/test_config_database.py`
+- [X] T012 [P] Add failing configuration tests to `tests/unit/test_config_database.py`
   - FR-017, FR-018, FR-020, FR-028; config.md, "Settings: changed rows" and "The URL pattern for
     `type = "compose"`". Each case quotes its rule:
     - `type = "compose"` with `service` and `url` and a `[compose]` table is accepted.
@@ -256,11 +256,11 @@ the optional registry field, and the `[database] type = "compose"` configuration
     - Every `tests/fixtures/v0_1_1/configs/*.toml` loads, and its `model_dump(mode="json")` equals
       the `config` value in its golden JSON (FR-028, part 1).
   - **Done when** the file fails under the failing-test rule.
-- [ ] T013 Accept `type = "compose"`, `service`, and the compose URL rules in `src/wtenv/config.py`
+- [X] T013 Accept `type = "compose"`, `service`, and the compose URL rules in `src/wtenv/config.py`
   - FR-017, FR-018. One database mode per worktree. No other setting is added (FR-063 extended
     only by these keys).
   - **Done when** `uv run pytest tests/unit/test_config_database.py tests/unit/test_config.py tests/unit/test_config_compose.py -q` exits 0.
-- [ ] T014 Group check 2C: runs G5 from the repository root; edits no file
+- [X] T014 Group check 2C: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(config): add the compose database type`.
 
 **Checkpoint**: contracts, codes 20–23, registry field and configuration model in place; no command

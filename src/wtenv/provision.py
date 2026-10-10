@@ -405,6 +405,9 @@ def _database_plan(
     if settings is None:
         return None
     config_file = str(root / CONFIG_FILE_NAME)
+    if settings.type == "compose" or settings.template is None:
+        # `type = "compose"` is accepted by config.py (T013); `up` handles it in T086.
+        raise NotImplementedError("a compose-hosted database is not provisioned yet (T086)")
     record = _record_of(known, settings.type)
     if settings.type == "sqlite":
         relative = (
@@ -769,7 +772,7 @@ def _database_step(
     database of another kind than the configured one stays recorded and untouched (FR-065).
     """
     settings = config.database
-    if plan is None or settings is None:
+    if plan is None or settings is None or settings.template is None:
         return []
     if plan.kind == "sqlite":
         template = database.sqlite_template_path(root, settings.template)
