@@ -514,14 +514,19 @@ byte-identical throughout.
     its docstring.
   - New, in `test_us1_repository_override.py`, one per scenario of User Story 1: 1 (exit 0,
     override byte-identical, new `test_git_status_is_clean_after_up_in_the_exec_only_arrangement`);
-    2 and 8 (the override publishes `backend` on fixed host port 8000 and sets `command`; through
-    `wtenv exec -- docker compose config` the port is a block port and the command is the
-    override's, FR-003); 4 (a repeat `up` gives identical ports, project and isolation-file
+    2 and 8 (the override publishes `backend` on fixed host port 8000 and sets `command`;
+    `docker compose config`, run in the worktree with exactly the environment
+    `isolation.compose_environment(root, record)` returns, passed as the subprocess environment,
+    shows a block port and the override's command, FR-003; the test never sets `COMPOSE_FILE` or
+    `COMPOSE_PATH_SEPARATOR` itself); 4 (a repeat `up` gives identical ports, project and isolation-file
     bytes); 6 (no repository override: v0.1.1's override name and bytes, compared with
     `tests/unit/golden/compose.override.yaml`, FR-008).
   - R1 pin, new `test_the_isolation_file_replaces_the_repository_overrides_ports_on_this_compose`:
     two-service `valkey` stack, repository override with fixed ports; started with
-    `wtenv exec -- docker compose up -d`; `docker ps` for the project shows only block ports.
+    `docker compose up -d`, run in the worktree with exactly the environment
+    `isolation.compose_environment(root, record)` returns (the test sets neither variable
+    itself); `docker ps` for the project shows only block ports. T051/T052 add the `wtenv exec`
+    versions; T072 covers scenarios 2 and 3 through `wtenv exec`.
   - S1 guards, one test each: record before create (extend
     `test_up_interrupted_at_any_point_leaves_only_recorded_resources_and_recovers` in
     `test_recovery.py` with an exec-only fixture, stopping after every step); new
@@ -538,8 +543,10 @@ byte-identical throughout.
     in the exec-only arrangement (spec, Edge cases).
   - `tests/unit/test_isolation.py`: `isolation.compose_environment(root, record)` returns exactly
     `COMPOSE_FILE=<root>/<file>:<root>/<repository_override>:<root>/.wtenv/compose.isolation.yaml`
-    and `COMPOSE_PATH_SEPARATOR=:`, and never `COMPOSE_PROJECT_NAME` (data-model.md, Isolation
-    environment).
+    and `COMPOSE_PATH_SEPARATOR=:` with those exact values, every key it returns is within
+    `{COMPOSE_FILE, COMPOSE_PATH_SEPARATOR, COMPOSE_ENV_FILES}` (T052/T120 add the last one in
+    4F, so the key set is not asserted to equal the first two), and never `COMPOSE_PROJECT_NAME`
+    (data-model.md, Isolation environment).
   - **Done when** these files fail under the failing-test rule.
 - [ ] T033 [US1] ⚠RELAX(001:FR-030) Write and verify the isolation file in the exec-only arrangement, in `src/wtenv/isolation.py`, `src/wtenv/provision.py`, and `src/wtenv/compose.py`
   - FR-001, FR-002, FR-003, FR-009; cli.md, `wtenv up` steps 5, 8, 11; data-model.md,
