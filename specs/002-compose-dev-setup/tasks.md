@@ -25,8 +25,8 @@ the spec's numbers.
   an unfinished task).
 - **[Story]**: `[US1]` repository-owned override and `exec`, `[US2]` port variables, `[US3]`
   compose-hosted database. Setup, Foundational, Compatibility and Polish tasks have no label.
-- **⚠RELAX(001:FR-030)** and **⚠RELAX(001:FR-087 outcome)** mark the tasks that relax a spec 001
-  requirement (spec, "Relationship to spec 001"; plan.md, "Relaxations of spec 001,
+- **⚠RELAX(001:FR-030)**, **⚠RELAX(001:FR-087 outcome)** and **⚠RELAX(001:FR-056, FR-057)** mark
+  the tasks that relax a spec 001 requirement (spec, "Relationship to spec 001"; plan.md, "Relaxations of spec 001,
   summarised"). The safety review starts from the index at the end of this file.
 - **Safety group** marks a group that changes a write, delete or environment-injection path. Each
   of its guards has a mutation-check task.
@@ -42,7 +42,8 @@ the spec's numbers.
 Single project with a `src/` layout, as in spec 001: `src/wtenv/`, `tests/unit/` (no git
 worktrees, no Docker), `tests/contract/`, `tests/integration/` (marker `integration`),
 `tests/fixtures/`, `docs/`, `.github/workflows/`. One new source module: `src/wtenv/isolation.py`
-(standard library only; plan.md, Structure Decision).
+(imports only `errors`, `identity` and `registry`, never `compose`, `provision` or `database`;
+plan.md, Structure Decision).
 
 ## Working rules
 
@@ -57,9 +58,9 @@ worktrees, no Docker), `tests/contract/`, `tests/integration/` (marker `integrat
   docstring, and `raise NotImplementedError`. A failing-test task is done when
   `uv run pytest <files> -q 2>&1 | grep -E 'ImportError|ModuleNotFoundError|AttributeError: module'`
   prints nothing and pytest exits 1.
-- **Existing tests.** No existing test changes its expected outcome, except the five named in
-  T025 and T032. Five, not the three of plan.md's table: the maintainer decided on 2026-10-10 to
-  rewrite all five. An existing test may be *extended* (more cases, more assertions) where a task
+- **Existing tests.** No existing test changes its expected outcome, except the six named in
+  T025, T032 and T106. Six, not the three of plan.md's table: the maintainer decided on 2026-10-10
+  to rewrite the five of T025 and T032, and in the analysis fixes to rewrite the sixth (T106, O2). An existing test may be *extended* (more cases, more assertions) where a task
   says so. If any other existing test starts failing, stop and ask. Do not edit it.
 - **Mutation check** (plan.md, Test strategy). For the guard the task names: remove or break it in
   the working tree, run the named test(s) and see them fail, then restore the file with
@@ -115,6 +116,13 @@ compatibility tests (FR-008, FR-028, FR-029).
     with `{env:PGPASSWORD}`. For every compose configuration, `configs/<name>.compose.json` holds
     the `docker compose config --format json` output of the compose file it uses, so the script
     needs no Docker.
+  - Also three compose configurations written for this task, one per setup of the FR-028
+    exception, each with its compose file and `.compose.json` made the same way. v0.1.1 accepts
+    all three, so their goldens come from v0.1.1 like the others: `dup_port` (service `web`
+    publishes container port 80/tcp on two host addresses, as `tests/unit/test_ports_published.py`
+    does); `colliding_names` (services `my-api` and `my_api`, each publishing 8000/tcp); and
+    `ports_named_like_a_variable` (a `ports` entry `WTENV_PORT_WEB_80_TCP` beside service `web`
+    publishing 80/tcp).
   - `make_golden.py` takes `--out DIR`. For each configuration it calls only the public functions
     both versions share: `config.load_config`, `ports.assign_variable_ports`,
     `ports.assign_published_ports`, `compose.parse_model`, `compose.project_name`,
@@ -195,6 +203,18 @@ the optional registry field, and the `[database] type = "compose"` configuration
 - [ ] T010 Mutation check: `exclude_if` on the new field, in `src/wtenv/registry.py` (restored afterwards)
   - Guard: serialise only when set (S7). Remove `exclude_if`; `test_a_v0_1_1_registry_is_saved_byte_for_byte` must fail.
   - **Done when** as in Working rules, "Mutation check".
+- [ ] T108 Check the downgrade path with v0.1.1's own `registry.load`, in `tests/fixtures/v0_1_1/check_downgrade.py` (new)
+  - FR-029; spec, Assumptions, "Downgrade"; data-model.md, Registry; analysis D1.
+  - With the new code (after T009), save two registries through `registry.save`, each under its
+    own `XDG_STATE_HOME`: `$SCRATCH/down-auto` (the entries of the T002 golden registry, all in the
+    automatic arrangement) and `$SCRATCH/down-exec` (the same plus one compose entry with
+    `repository_override` set). Then, in a detached `v0.1.1` worktree made as in T002, run
+    `XDG_STATE_HOME=<dir> uv run --project "$SCRATCH/v0.1.1" python -I tests/fixtures/v0_1_1/check_downgrade.py`
+    for each directory. The script calls v0.1.1's `registry.load` and prints `loaded`, or the
+    error code and `details.reason`, then the SHA-256 of `registry.json` before and after.
+  - **Done when** the script prints `loaded` for `down-auto` and `registry_unreadable` for
+    `down-exec`, the two SHA-256 values are equal for both, `uv run ruff check tests/fixtures/v0_1_1`
+    exits 0, and the output is recorded under this task.
 - [ ] T011 Group check 2B: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(registry): record a repository-owned override when one is used`.
 
@@ -355,11 +375,14 @@ byte-identical throughout.
     Every row of the classification table: `wtenv_own`; `adopt` (recorded path, no header, git
     tracks it, using a real `git init` in `tmp_path`); `ownership_conflict` (recorded path, no
     header, untracked; details `kind` `compose_override`, `name` the path); `repository_owned`
-    (any other of the four names).
+    (any other of the four names, header-less); `ownership_conflict` for an unrecorded regular
+    file at another of the four names that starts with wtenv's header (as v0.1.1; data-model.md,
+    row "header present").
   - Counts: 0 → `automatic`; 1 → `exec_only`, every `wtenv_own` file marked for removal; ≥ 2 →
     `override_ambiguous` (exit 21), `details.files` absolute and sorted, every file unchanged.
-  - A symbolic link at the recorded path is refused first (001:FR-086, unchanged). A
-    repository-owned override that is a link is accepted and only read.
+  - A symbolic link at the recorded path is refused first (001:FR-086, unchanged). A link at an
+    unrecorded override name is `repository_owned`, and its target is not read for the header
+    (spec, Edge cases; O2).
   - **Done when** the file fails under the failing-test rule.
 - [ ] T027 [US1] Implement `override_inventory()` and the arrangement result in `src/wtenv/compose.py`
   - Read only: it writes, renames and deletes nothing. `check_override_files` stays until T033
@@ -390,8 +413,27 @@ byte-identical throughout.
 - [ ] T031 [US1] Group check 4B: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(compose): resolve the compose file together with the repository override`.
 
-### 4C. Safety group — writing the isolation file (`provision.py`, `isolation.py`; plan.md S1)
+### 4C. Safety group — writing the isolation file (`compose.py`, `provision.py`, `isolation.py`; plan.md S1, S4)
 
+- [ ] T104 [US1] Add failing tests for the exact isolation path in `override_problem` to `tests/unit/test_compose_checks.py`
+  - FR-009; plan.md S4; analysis O1. Comes before T033, which needs it.
+  - `override_problem(root, ".wtenv/compose.isolation.yaml")` returns `None` when the file is
+    missing or starts with wtenv's header, and a problem when it lacks the header; so
+    `check_recorded_override` passes the first two and raises `ownership_conflict` for the third.
+  - Always a problem (left alone), whatever the contents: `.wtenv/notes.yaml`,
+    `.wtenv/sub/compose.isolation.yaml`, `../.wtenv/compose.isolation.yaml`, and
+    `compose.isolation.yaml` at the root. The four override names keep their v0.1.1 cases.
+  - **Done when** the new cases fail under the failing-test rule (the isolation-path cases fail on
+    the assertion that the result is `None`).
+- [ ] T105 [US1] Accept exactly `.wtenv/compose.isolation.yaml` in `override_problem`, in `src/wtenv/compose.py` and `src/wtenv/isolation.py` (new)
+  - FR-009; analysis O1, U2. `isolation.py` starts here with two constants: `OVERRIDE_HEADER`
+    (wtenv's header line, moved from `compose._OVERRIDE_HEADER`) and
+    `ISOLATION_FILE = ".wtenv/compose.isolation.yaml"`. `compose.py` imports both from it.
+    `isolation.py` imports only `errors`, `identity` and `registry`.
+  - `override_problem` accepts the four names **or exactly** `ISOLATION_FILE`; nothing else under
+    `.wtenv/`. No caller changes.
+  - **Done when** `uv run pytest -m "not integration" -q` exits 0 and
+    `grep -n '_OVERRIDE_HEADER = ' src/wtenv/compose.py` prints nothing.
 - [ ] T032 [US1] ⚠RELAX(001:FR-030) Add failing tests for the exec-only arrangement in `up`, in `tests/integration/test_us1_repository_override.py` (new), `tests/integration/test_us3_compose.py`, `tests/integration/test_recovery.py`, `tests/unit/test_compose_write.py`, and `tests/unit/test_isolation.py` (new)
   - Rewrite the fifth test, `tests/integration/test_us3_compose.py::test_a_developers_override_is_an_ownership_conflict_and_is_not_modified`,
     in place → exit 0, `compose_isolation` `exec_only`, the committed override byte-identical,
@@ -427,7 +469,7 @@ byte-identical throughout.
     and `COMPOSE_PATH_SEPARATOR=:`, and never `COMPOSE_PROJECT_NAME` (data-model.md, Isolation
     environment).
   - **Done when** these files fail under the failing-test rule.
-- [ ] T033 [US1] ⚠RELAX(001:FR-030) Write and verify the isolation file in the exec-only arrangement, in `src/wtenv/isolation.py` (new), `src/wtenv/provision.py`, and `src/wtenv/compose.py`
+- [ ] T033 [US1] ⚠RELAX(001:FR-030) Write and verify the isolation file in the exec-only arrangement, in `src/wtenv/isolation.py`, `src/wtenv/provision.py`, and `src/wtenv/compose.py`
   - FR-001, FR-002, FR-003, FR-009; cli.md, `wtenv up` steps 5, 8, 11; data-model.md,
     Transitions rows "none → `automatic`" and "none → `exec_only`".
   - `_compose_plan` uses `override_inventory` (remove `check_override_files` and its last caller).
@@ -436,11 +478,52 @@ byte-identical throughout.
     before step 11, and adds `/.wtenv/compose.isolation.yaml` to `exclude_patterns`;
     `_compose_step` rechecks the header immediately before the write and calls
     `write_and_verify_override` with the environment from `isolation.compose_environment`.
-  - `isolation.py`: standard library only; `compose_environment` only in this task (the `exec`
-    checks come in T052).
+  - Needs T105: without it `override_problem` refuses `.wtenv/compose.isolation.yaml`, so
+    `check_recorded_override` stops the rewrite.
+  - `isolation.py` (created in T105, with the header line and the isolation path): add
+    `compose_environment` only in this task (the `exec` checks come in T052). It imports only
+    `errors`, `identity` and `registry`. The link rule of `_check_override_links` changes in T106.
   - The repository override's path is never passed to a write, unlink, chmod or exclude call
     (FR-002).
   - **Done when** `uv run pytest tests/integration/test_us1_repository_override.py tests/integration/test_us3_compose.py tests/integration/test_recovery.py tests/unit/test_compose_write.py tests/unit/test_isolation.py -q` exits 0.
+- [ ] T106 [US1] Accept a symbolic link at a repository override name in `_check_override_links`, test first, in `tests/integration/test_us1_ports_env.py`, `tests/integration/test_us1_repository_override.py`, and `src/wtenv/provision.py`
+  - FR-001, FR-002, FR-009; spec, Edge cases, "The repository's override is a symbolic link";
+    data-model.md, Override inventory; plan.md S1; analysis O2. Needs T033 (`up` uses the
+    inventory). Two steps, in order.
+  - Step 1, failing tests (failing-test rule; result recorded under this task):
+    - New `test_a_link_at_an_unrecorded_override_name_is_the_repository_override`: an untracked
+      `compose.override.yaml` that links to a valid override in `decoy` → exit 0,
+      `compose_isolation` `exec_only`, `repository_override` the link's path; the link and
+      `snapshot_tree(decoy)` unchanged; the link's path is not in the exclude block.
+    - New `test_a_link_at_a_recorded_override_path_is_refused_in_both_arrangements`: after an
+      automatic `up`, `compose.override.yaml` replaced by a link; after an exec-only `up`,
+      `.wtenv/compose.isolation.yaml` replaced by a link. Each link targets a file in `decoy` that
+      starts with wtenv's header, so a header read through it would pass. `up` → exit 7,
+      `env_file_unusable`, `symlink`; decoy, registry bytes and env file unchanged.
+    - New `test_a_link_at_the_isolation_path_is_refused_on_a_first_up`: a repository override
+      and an unrecorded link at `.wtenv/compose.isolation.yaml` → exit 7, `env_file_unusable`,
+      `symlink`; decoy unchanged; no registry.
+    - Rewrite the sixth existing test, `tests/integration/test_us1_ports_env.py::test_a_compose_override_that_is_a_link_is_refused_on_a_first_up_too`
+      (an untracked, dangling link at `compose.override.yaml` on a first `up`), in place → the
+      link is the repository's override, so `up` fails at resolution with `config_invalid`
+      (exit 3; Compose cannot read the file), not `env_file_unusable`. The dangling target is
+      not created, `snapshot_tree(decoy)` and the link are unchanged, and no registry exists.
+      Rename it `test_a_dangling_link_at_an_unrecorded_override_name_is_never_followed_for_writing`,
+      with the old name in its docstring.
+    - Kept unchanged: `test_a_compose_override_that_is_a_link_is_refused_before_anything_changes`,
+      `test_removing_compose_does_not_remove_an_override_that_is_a_link`,
+      `test_a_new_compose_file_does_not_remove_the_old_override_through_a_link`, and
+      `tests/integration/test_us4_lifecycle.py::test_down_reports_a_compose_override_that_is_a_link_as_failed_and_leaves_its_target_alone`
+      (all are links at a recorded path).
+  - Step 2, the change in `_check_override_links`: drop the unconditional
+    `_refuse_symlink(root, new_override)`. Refuse a link at `new_override` only when it is the
+    recorded path. Keep `_refuse_symlink` on every recorded path, the same as `new_override` or
+    not. In the exec-only arrangement, refuse a link at `.wtenv/` and at `ISOLATION_FILE` (T033's
+    step-5 check). The link check runs before `override_problem`, so no header is read through a
+    link. A recorded isolation path that differs from `new_override` is rewritten or removed, so
+    its form, link and header checks stay (T105 accepts the path). Update the docstring.
+  - **Done when** the Step 1 failure is recorded under this task, and
+    `uv run pytest tests/integration/test_us1_ports_env.py tests/integration/test_us1_repository_override.py -q` exits 0.
 - [ ] T034 [US1] Mutation check: record before create (001:FR-067), in `src/wtenv/provision.py` (restored afterwards)
   - Move the `_registry_step` save of the isolation record after the write; the exec-only case of
     `test_up_interrupted_at_any_point_leaves_only_recorded_resources_and_recovers` must fail.
@@ -462,6 +545,11 @@ byte-identical throughout.
 - [ ] T039 [US1] Mutation check: verification removes only the file just written (001:FR-033), in `src/wtenv/compose.py` (restored afterwards)
   - Skip the removal on verification failure; the isolation-file case of
     `test_a_replaced_override_that_fails_verification_is_removed_too` must fail.
+  - **Done when** as in Working rules, "Mutation check".
+- [ ] T107 [US1] Mutation check: a link at a recorded override path is still refused (001:FR-086, FR-009), in `src/wtenv/provision.py` (restored afterwards)
+  - Guard: after T106, `_check_override_links` still refuses a link at every recorded path. Remove
+    `_refuse_symlink` on the recorded path; both cases of
+    `test_a_link_at_a_recorded_override_path_is_refused_in_both_arrangements` must fail.
   - **Done when** as in Working rules, "Mutation check".
 - [ ] T040 [US1] Group check 4C: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(up): write a recorded isolation file beside a repository-owned override`.
@@ -488,6 +576,9 @@ byte-identical throughout.
 - [ ] T042 [US1] Carry out the transitions through the existing path-change branch and `_remove_override`, in `src/wtenv/provision.py`
   - The old record is `removing` before the unlink; the header is rechecked immediately before
     it; the new file is `creating` before it is written. No new unlink call site.
+  - Two saves, as data-model.md Transitions says: step 8 saves the old record, fields unchanged,
+    as `removing`; step 11 unlinks under the header recheck, then saves the new record (`override`,
+    `creating`, and `repository_override` set or cleared in that same save) before the write.
   - **Done when** `uv run pytest tests/integration/test_us1_repository_override.py tests/integration/test_us3_compose.py -q` exits 0.
 - [ ] T043 [US1] Mutation check: header recheck immediately before the unlink in `_remove_override` (001:FR-087), in `src/wtenv/provision.py` (restored afterwards)
   - Remove it; the transition cases of `test_up_does_not_delete_an_override_that_lost_the_header_after_the_plan` must fail.
@@ -513,23 +604,29 @@ byte-identical throughout.
 - [ ] T047 [US1] ⚠RELAX(001:FR-087 outcome) Adopt a tracked header-less file in `src/wtenv/compose.py` and `src/wtenv/provision.py`
   - Both conditions are required: header missing **and** `gitutil.is_tracked` true. Adoption
     changes only the registry.
+  - Adoption bypasses the path-change branch: `_compose_record` replaces the record in one step-8
+    save (`override` the isolation path, `creating`; `repository_override` the adopted path), and
+    never marks the adopted path `removing`, so `_compose_step` finds `override` equal to the
+    plan's and never calls `_remove_override` on the adopted file (data-model.md Transitions).
   - **Done when** `uv run pytest tests/unit/test_override_inventory.py tests/integration/test_us1_repository_override.py -q` exits 0.
 - [ ] T048 [US1] Mutation check: `is_tracked` in adoption by `up`, in `src/wtenv/compose.py` (restored afterwards)
   - Drop the tracked condition; `test_an_untracked_headerless_file_at_the_recorded_path_is_still_an_ownership_conflict` must fail.
   - **Done when** as in Working rules, "Mutation check".
 - [ ] T049 [US1] Mutation check: adoption never writes or deletes the file, in `src/wtenv/provision.py` (restored afterwards)
-  - Route the adopted path through `_remove_override`; the byte-identical assertion of T046 must fail.
+  - Make the adoption branch unlink the adopted file directly (`os.unlink`, bypassing
+    `_remove_override` and its header check); the byte-identical assertion of T046 must fail.
   - **Done when** as in Working rules, "Mutation check".
 - [ ] T050 [US1] Group check 4E: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(up): adopt a tracked override at the recorded path as the repository's`.
 
 ### 4F. Safety group — environment injection by `exec` and post-up commands (`isolation.py`, `execcmd.py`, `provision.py`; plan.md S5)
 
-- [ ] T051 [US1] ⚠RELAX(001:FR-030) Add failing tests for FR-033 to `tests/unit/test_isolation.py`, `tests/integration/test_us1_exec_isolation.py` (new), and `tests/unit/test_lazy_imports.py`
+- [ ] T051 [US1] ⚠RELAX(001:FR-030) ⚠RELAX(001:FR-056, FR-057) Add failing tests for FR-033 to `tests/unit/test_isolation.py`, `tests/integration/test_us1_exec_isolation.py` (new), and `tests/unit/test_lazy_imports.py`
   - FR-004, FR-033; data-model.md, "`exec` checks (FR-033), in order"; cli.md, `wtenv exec`.
   - New `test_exec_does_not_run_the_command_when_isolation_cannot_apply`, parametrised by the seven
     reasons in table order: `compose_env_override` (`COMPOSE_PROJECT_NAME`, then `COMPOSE_FILE`,
-    non-empty; `details.variable`); `recorded_value_invalid` (`override` not the isolation path,
+    non-empty; `details.variable`; each also set only in `.env` beside the compose file, after
+    `up`, with `details.path` that file); `recorded_value_invalid` (`override` not the isolation path,
     or `repository_override`/`file` failing `recorded_path_problem`); `symlink` (`path` the link);
     `isolation_file_missing`; `isolation_file_not_wtenvs`; `repository_override_missing`;
     `override_appeared` (`path`). Each: exit 125, `error.code` `isolation_unavailable`,
@@ -545,14 +642,21 @@ byte-identical throughout.
   - User Story 1 scenario 10.
   - `tests/unit/test_lazy_imports.py`: new `test_exec_does_not_load_the_compose_module` (NFR-001).
   - **Done when** these files fail under the failing-test rule.
-- [ ] T052 [US1] ⚠RELAX(001:FR-030) Apply the FR-033 checks and the isolation environment in `src/wtenv/isolation.py`, `src/wtenv/execcmd.py`, and `src/wtenv/provision.py`
+- [ ] T052 [US1] ⚠RELAX(001:FR-030) ⚠RELAX(001:FR-056, FR-057) Apply the FR-033 checks and the isolation environment in `src/wtenv/isolation.py`, `src/wtenv/execcmd.py`, and `src/wtenv/provision.py`
   - The checks run only when the entry records `repository_override`, after the `provisioned`
     check, and before `os.execvpe`. On failure: `isolation_unavailable`, exit 125, nothing run.
   - `_run_post_up` takes its environment from the same `isolation.compose_environment`.
     `COMPOSE_PROJECT_NAME` is never set.
+  - Check 1 reads `.env` beside the compose file with the rule of `compose.check_environment`.
+    That assignment pattern and the two variable names move to `isolation.py`, and `compose.py`
+    imports them, so the two checks cannot drift. Check 5 uses the header line T105 moved there.
   - **Done when** `uv run pytest tests/unit/test_isolation.py tests/integration/test_us1_exec_isolation.py tests/unit/test_lazy_imports.py -q` exits 0.
 - [ ] T053 [US1] Mutation check: FR-033 check 1, `COMPOSE_PROJECT_NAME`/`COMPOSE_FILE` in the calling environment, in `src/wtenv/isolation.py` (restored afterwards)
   - Remove it; the `compose_env_override` case must fail.
+  - **Done when** as in Working rules, "Mutation check".
+- [ ] T109 [US1] Mutation check: FR-033 check 1 also reads `.env` beside the compose file, in `src/wtenv/isolation.py` (restored afterwards)
+  - Guard: analysis U1. Remove the `.env` read from check 1; the `.env` cases of
+    `compose_env_override` (T051) must fail.
   - **Done when** as in Working rules, "Mutation check".
 - [ ] T054 [US1] Mutation check: FR-033 check 2, recorded values, in `src/wtenv/isolation.py` (restored afterwards)
   - Remove it; the `recorded_value_invalid` case must fail.
@@ -609,19 +713,22 @@ byte-identical throughout.
     under `failed`; record dropped only when the project step did not fail; the same with
     `--dry-run`, `gc`, `gc --release`. Kept: `test_a_recorded_override_that_is_not_wtenvs_is_never_deleted_by_down_or_gc`
     (untracked case: still `failed`).
+  - Symbolic links (001:FR-086): `.wtenv/` a link to a directory in `decoy`, and, separately,
+    `.wtenv/compose.isolation.yaml` a link to a file with wtenv's header in `decoy`.
+    `down --dry-run`, `down`, `gc` and `gc --release` report the isolation file under `failed`
+    and keep its record; `snapshot_tree(decoy)` is unchanged.
   - New decoy test `test_a_hand_edited_repository_override_record_is_never_deleted`:
     `repository_override` hand-edited to a developer file in the worktree, to `../outside.yml`,
     and to an absolute path; `down --dry-run`, `down`, `gc`, `gc --release` never list or touch the
     decoy.
   - **Done when** these cases fail under the failing-test rule.
-- [ ] T066 [US1] ⚠RELAX(001:FR-087 outcome) Accept the exact isolation path in `override_problem` and report adopted files in `kept_items`, in `src/wtenv/compose.py` and `src/wtenv/teardown.py`
-  - `override_problem` accepts the four names **or exactly** `.wtenv/compose.isolation.yaml`;
-    nothing else under `.wtenv/`. `_override_step`: a header-less file that `gitutil.is_tracked`
+- [ ] T066 [US1] ⚠RELAX(001:FR-087 outcome) Report adopted files in `kept_items`, in `src/wtenv/teardown.py`
+  - `override_problem` already accepts exactly `.wtenv/compose.isolation.yaml` (T105). `_override_step`: a header-less file that `gitutil.is_tracked`
     reports is a `KeptItem`, not a `FailedItem`, and is never unlinked. `down` and `gc` look only
     at `ComposeRecord.override`, never at `repository_override`.
   - **Done when** `uv run pytest tests/integration/test_us1_repository_override.py tests/integration/test_hand_edited_registry.py tests/unit/test_teardown_paths.py -q` exits 0.
 - [ ] T067 [US1] Mutation check: exact-path acceptance in `override_problem`, in `src/wtenv/compose.py` (restored afterwards)
-  - Widen it to any `.wtenv/*.yaml`; the `.wtenv/notes.yaml` case must fail.
+  - Widen it to any `.wtenv/*.yaml`; the `.wtenv/notes.yaml` cases of T104 and T065 must fail.
   - **Done when** as in Working rules, "Mutation check".
 - [ ] T068 [US1] Mutation check: `is_tracked` in the teardown outcome, in `src/wtenv/teardown.py` (restored afterwards)
   - Drop it; the untracked case of `test_a_recorded_override_that_is_not_wtenvs_is_never_deleted_by_down_or_gc` must fail (it would be kept, not failed).
@@ -631,6 +738,10 @@ byte-identical throughout.
   - **Done when** as in Working rules, "Mutation check".
 - [ ] T070 [US1] Mutation check: only `ComposeRecord.override` is ever deleted, in `src/wtenv/teardown.py` (restored afterwards)
   - Make teardown also unlink `repository_override`; `test_a_hand_edited_repository_override_record_is_never_deleted` must fail.
+  - **Done when** as in Working rules, "Mutation check".
+- [ ] T110 [US1] Mutation check: no symbolic link when teardown deletes the isolation file (001:FR-086), in `src/wtenv/teardown.py` (restored afterwards)
+  - Guard: analysis G1. Remove the `symlinked_part` check in `_override_step`; the symbolic-link
+    cases of T065 (`.wtenv/` and the isolation file) must fail.
   - **Done when** as in Working rules, "Mutation check".
 - [ ] T071 [US1] Group check 4H: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(down): remove the isolation file and keep repository-owned overrides`.
@@ -785,10 +896,14 @@ in CI) and a named project volume.
 
 - [ ] T091 Add failing compatibility and agent-contract tests to `tests/unit/test_v0_1_1_compatibility.py` (new) and `tests/contract/test_json_documents.py`
   - FR-008, FR-028, FR-030, FR-032, SC-006, SC-009.
-  - New `test_every_v0_1_1_config_fixture_is_accepted_and_provisions_identically`: for each
-    T002 configuration, the new code's results from the same public functions and fixed inputs
-    equal the golden ports, project name, database name or path, and override bytes; the env
-    section equals the golden apart from the added `WTENV_PORT_…` lines.
+  - New `test_every_v0_1_1_config_fixture_is_accepted_and_provisions_identically`, both halves
+    of FR-028: (1) for each of the three exception fixtures of T002 (`dup_port`,
+    `colliding_names`, `ports_named_like_a_variable`), `ports.check_port_variables` raises
+    `port_variable_conflict`, and that is the only difference from the golden; (2) for every
+    other T002 configuration, the new code's results from the same public functions and fixed
+    inputs equal the golden ports, project name, database name or path, and override bytes, and
+    the env section equals the golden apart from the added `WTENV_PORT_…` lines. The test fails
+    if a configuration outside the three is refused, or if one of the three is accepted.
   - SC-009: every new error code (20–23 and the new `reason` values) and every new warning, when
     produced by its command with `--json` and standard input closed, is exactly one JSON
     document on stdout that validates against `json_models.py`.
@@ -797,6 +912,8 @@ in CI) and a named project volume.
     has been run and its result (all passed, or the failing test IDs) is recorded under this task.
 - [ ] T092 Fix what T091 finds, in the module the failure points at
   - A difference from v0.1.1 that FR-028 does not allow is a bug. Do not change the golden.
+    FR-028 allows exactly one difference: the `port_variable_conflict` refusal of its three
+    exception setups. Keep that refusal (T015, T029); never remove it to match a golden.
   - **Done when** `uv run pytest tests/unit/test_v0_1_1_compatibility.py tests/contract -q` exits 0.
 - [ ] T093 Run spec 001's acceptance script (SC-006)
   - `uv tool install --force --reinstall .`, then the script of
@@ -835,14 +952,20 @@ fail.
     volumes and directories inside the worktree.
   - **Known limits** (replace the `ownership_conflict` line of "Compose"): the exec-only caveat;
     Compose 2.24.4 reads `.env` from the current directory, so run Compose from the compose
-    file's directory there; one container port published twice is refused; every writable mount
+    file's directory there; the three setups FR-028 refuses (one container port published twice,
+    service names that map to one variable name such as `my-api` and `my_api`, a `ports` entry
+    named like a `WTENV_PORT_…` variable); every writable mount
     of the database service counts as data (use `:ro`); fixed `image:` tags are shared between
     worktrees; `isolation_unavailable` reasons and fixes; exit statuses 20–23 in the status table.
+  - **Downgrade** (D1): before going back to v0.1.x, run `wtenv down` in every exec-only
+    worktree. Otherwise the registry, one file for every repository on the machine, becomes
+    unreadable to v0.1.x (`registry_unreadable`), and the post-checkout hook then fails silently.
   - **Done when** each of these prints at least one line:
     `grep -n 'WTENV_PORT_<SERVICE>_<CONTAINER PORT>_<PROTOCOL>' README.md`,
     `grep -n 'without isolation' README.md`, `grep -n 'type = "compose"' README.md`,
     `grep -n 'host-side' README.md`, `grep -n 'isolation_unavailable' README.md`,
-    `grep -n 'port_variable_conflict' README.md`, `grep -n '2.24.4' README.md`; and
+    `grep -n 'port_variable_conflict' README.md`, `grep -n '2.24.4' README.md`,
+    `grep -n 'my_api' README.md`, `grep -in 'downgrad' README.md`; and
     `grep -c 'already exists and wtenv did not' README.md` prints `0` (the v0.1 refusal line is
     gone).
 - [ ] T096 [P] Update `docs/roadmap.md`
@@ -870,23 +993,27 @@ fail.
     `postgres:17` and `valkey/valkey:latest`, already pulled; add any other in all three jobs).
   - `coverage` job: add `uv run coverage report --fail-under=80 --include='*/wtenv/isolation.py'`.
   - Actions stay pinned to full SHAs.
-  - **Done when** the branch is pushed (normal push, never force) and
-    `gh run list --branch 002-compose-dev-setup --workflow CI --limit 1 --json conclusion -q '.[0].conclusion'`
-    prints `success`, and
-    `gh run view <id> --log --job <minimums job id> | grep -c 'PASSED .*test_the_isolation_file_replaces_the_repository_overrides_ports_on_this_compose'`
-    prints at least 1.
+  - The push and the CI run move to T111, after T101, so CI checks the final commit (O3).
+  - **Done when** `grep -n 'test_the_isolation_file_replaces_the_repository_overrides_ports_on_this_compose' .github/workflows/ci.yml`
+    and `grep -n "wtenv/isolation.py" .github/workflows/ci.yml` each print a line, and
+    `grep -n 'uses: ' .github/workflows/ci.yml | grep -vE '@[0-9a-f]{40}'` prints nothing.
 - [ ] T099 [P] Add the 0.2.0 entry to `CHANGELOG.md`
   - Keep a Changelog format, `## [0.2.0] - <date of this task>` under `[Unreleased]`. **Added**:
     repository-owned override support (exec-only arrangement, `.wtenv/compose.isolation.yaml`,
     `wtenv exec`/post-up isolation), port variables, `[database] type = "compose"`, error codes
-    20–23, the three warnings, `kept_items`. **Changed**, stated as a behaviour change: a compose
-    setup that publishes one container port twice (for example a repository override that adds a
-    second host port for the same container port) now fails with `port_variable_conflict`
-    (exit 22), where v0.1.1 accepted it; and existing compose users see new `WTENV_PORT_…` lines in
-    wtenv's env-file section, reported `updated` on the first `up`. **Known limits**: a plain
-    `docker compose` in an exec-only worktree is not isolated.
+    20–23, the three warnings, `kept_items`. **Changed**, stated as a behaviour change: the three
+    setups of the FR-028 exception now fail with `port_variable_conflict` (exit 22), where v0.1.1
+    accepted them: a compose setup that publishes one container port twice (for example a
+    repository override that adds a second host port for the same container port); two service
+    names that map to one variable name (`my-api` and `my_api`, `API` and `api`); and a `ports`
+    entry named like a `WTENV_PORT_…` variable. Existing compose users see new `WTENV_PORT_…`
+    lines in wtenv's env-file section, reported `updated` on the first `up`. **Known limits**: a
+    plain `docker compose` in an exec-only worktree is not isolated; before downgrading to
+    v0.1.x, run `wtenv down` in exec-only worktrees, or the registry becomes unreadable to v0.1.x
+    for every worktree (D1).
   - **Done when** `grep -n '## \[0.2.0\]' CHANGELOG.md` and
-    `awk '/## \[0.2.0\]/,/## \[0.1.1\]/' CHANGELOG.md | grep -n 'port_variable_conflict'` both print a line.
+    `awk '/## \[0.2.0\]/,/## \[0.1.1\]/' CHANGELOG.md | grep -n 'port_variable_conflict'` both print a line, and
+    the same `awk` piped to `grep -n 'my_api'` and to `grep -in 'downgrad'` each print a line.
 - [ ] T100 [P] Bump the version to 0.2.0 in `src/wtenv/__init__.py`, without tagging
   - The single source of the version (hatch reads it). No tag, no push of a tag, no release.
   - **Done when** `uv run wtenv --version` prints `0.2.0`, `git tag --list 'v0.2*'` prints
@@ -894,6 +1021,15 @@ fail.
     exits 0.
 - [ ] T101 Group check 7B: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `chore(release): prepare 0.2.0`.
+
+- [ ] T111 Push the branch and see CI green on the final commit
+  - Plan.md, Test strategy and Coverage; analysis O3. Runs after T101, so CI checks every commit
+    of T095–T101. Needs the maintainer's go-ahead to push (normal push, never force).
+  - **Done when** the branch is pushed and
+    `gh run list --branch 002-compose-dev-setup --workflow CI --limit 1 --json conclusion,headSha -q '.[0]'`
+    shows `conclusion` `success` with `headSha` equal to `git rev-parse HEAD`, and
+    `gh run view <id> --log --job <minimums job id> | grep -c 'PASSED .*test_the_isolation_file_replaces_the_repository_overrides_ports_on_this_compose'`
+    prints at least 1.
 
 ### 7C. Acceptance
 
@@ -935,17 +1071,19 @@ fail.
 
 ### Phase dependencies
 
-- **Phase 1** (T001–T002): none. T002 must finish before T008, T012, T091.
+- **Phase 1** (T001–T002): none. T002 must finish before T008, T012, T091, T108.
 - **Phase 2** (T003–T014): after Phase 1. 2A, 2B and 2C are independent of each other; all three
   block every story.
 - **Phase 3, US2** (T015–T024): after Phase 2. 3A → 3B → 3C.
 - **Phase 4, US1** (T025–T074): after Phase 3 (the port-variable collision check runs over the
   combined model in 4B). 4A → 4B → 4C → {4D, 4E, 4F, 4G} → 4H → 4I. 4D, 4E, 4F and 4G each need
-  4C; 4H needs 4E (adopted files) and 4C.
+  4C; 4H needs 4E (adopted files) and 4C. Inside 4C: T104 → T105 → T032 → T033 → T106, then the
+  mutation checks; T033 needs T105 (`override_problem` accepts the isolation path), and T106
+  needs T033.
 - **Phase 5, US3** (T075–T090): after Phase 4 (the database service is found in the combined
   model; teardown runs in both arrangements). 5A and 5B are independent; 5C needs both; 5D needs 5C.
 - **Phase 6** (T091–T094): after Phase 5.
-- **Phase 7** (T095–T103): 7A after Phase 6; 7B after 7A; 7C last.
+- **Phase 7** (T095–T103, T111): 7A after Phase 6; 7B after 7A; T111 after T101; 7C last.
 
 ### Inside each group
 
@@ -980,6 +1118,7 @@ Phase 7:  T095 (README) | T096 (roadmap); T099 (CHANGELOG) | T100 (version)
 |------------|-------|-----------------------|
 | ⚠RELAX(001:FR-030): plain `docker compose` is not isolated in exec-only worktrees | T025, T032, T033, T051, T052, T062, T095 | S5: only when a repository-owned override is detected; reported in text, JSON and the `compose_isolation_exec_only` warning; documented; automatic arrangement unchanged (T032 scenario 6, T051 `test_exec_in_an_automatic_worktree_sets_exactly_the_section`) |
 | ⚠RELAX(001:FR-087 outcome): a git-tracked header-less file at the recorded path is adopted/kept instead of `ownership_conflict`/`failed` | T046, T047, T065, T066 | S3: header check unchanged; both conditions required; never written or deleted; untracked case unchanged (T046, T068) |
+| ⚠RELAX(001:FR-056, FR-057): in exec-only worktrees `exec` refuses every command when it cannot apply the isolation settings | T051, T052 | S5: only when a repository-owned override is detected; one stable code, `isolation_unavailable`; automatic arrangement unchanged (T051 `test_exec_in_an_automatic_worktree_sets_exactly_the_section`) |
 
 ### Mutation checks, one per guard
 
@@ -991,6 +1130,7 @@ Phase 7:  T095 (README) | T096 (roadmap); T099 (CHANGELOG) | T100 (version)
 | Unrecorded file at the isolation path refused | S1 | T035 |
 | Header check before rewrite | S1 | T036 |
 | Symbolic-link refusal of `.wtenv/` | S1 | T037 |
+| Link refused at every recorded override path (after the O2 change) | S1 | T107 |
 | Isolation file excluded from `git status` | S1 | T038 |
 | Verification removes only the file just written | S1 | T039 |
 | Header check immediately before unlink (`up`) | S2 | T043 |
@@ -998,11 +1138,13 @@ Phase 7:  T095 (README) | T096 (roadmap); T099 (CHANGELOG) | T100 (version)
 | `is_tracked` in adoption (`up`) | S3 | T048 |
 | Adoption never writes or deletes | S3 | T049 |
 | FR-033 exec checks 1–7 | S5 | T053–T059 |
+| FR-033 check 1 reads `.env` beside the compose file | S5 | T109 |
 | `COMPOSE_PROJECT_NAME` not injected | S5 | T060 |
 | Exact-path acceptance in `override_problem` | S4 | T067 |
 | `is_tracked` in the teardown outcome | S3 | T068 |
 | Header check before delete (teardown) | S4 | T069 |
 | Only `ComposeRecord.override` is deleted | FR-002 | T070 |
+| Symbolic-link refusal when teardown deletes the isolation file | S4 | T110 |
 | FR-027 rows: external, fixed name, device, outside bind | S6, R4 | T080–T083 |
 | `<project>_` prefix rule (reading R8) | S6 | T089 |
 
@@ -1013,15 +1155,15 @@ SC-001…SC-009: none is uncovered.
 
 | Requirement | Tasks |
 |-------------|-------|
-| FR-001 | T025, T026, T027, T032, T033, T072 |
-| FR-002 | T032, T033, T041, T065, T066, T070, T072 |
+| FR-001 | T025, T026, T027, T032, T033, T072, T106 |
+| FR-002 | T032, T033, T041, T065, T066, T070, T072, T106 |
 | FR-003 | T029, T030, T032, T033 |
 | FR-004 | T051, T052, T062, T095 |
 | FR-005 | T062, T063 |
 | FR-006 | T026, T046, T047, T048, T049, T065, T066, T068 |
 | FR-007 | T025, T026, T027, T041, T042 |
 | FR-008 | T002, T032, T041, T091 |
-| FR-009 | T032–T039, T041, T065–T069 |
+| FR-009 | T032–T039, T041, T065–T069, T104–T107, T110 |
 | FR-010 | T019, T020 |
 | FR-011 | T015, T016, T095 |
 | FR-012 | T015, T016, T017, T019, T029, T085 |
@@ -1041,11 +1183,11 @@ SC-001…SC-009: none is uncovered.
 | FR-026 | T078, T079, T085 |
 | FR-027 | T078–T083, T085 |
 | FR-028 | T002, T012, T019, T091, T092 |
-| FR-029 | T002, T008, T009, T010 |
-| FR-030 | T010, T017, T034–T039, T043, T044, T048, T049, T053–T060, T067–T070, T080–T083, T089, T091 |
+| FR-029 | T002, T008, T009, T010, T108 |
+| FR-030 | T010, T017, T034–T039, T043, T044, T048, T049, T053–T060, T067–T070, T080–T083, T089, T091, T107, T109, T110 |
 | FR-031 | T003, T004, T005, T006 |
 | FR-032 | T003, T006, T062, T091 |
-| FR-033 | T051–T061 |
+| FR-033 | T051–T061, T109 |
 | SC-001 | T102 |
 | SC-002 | T019, T102 |
 | SC-003 | T085, T102 |
@@ -1058,9 +1200,39 @@ SC-001…SC-009: none is uncovered.
 
 ## Notes
 
-- Total: 103 tasks (T001–T103).
+- Total: 111 tasks (T001–T111). T104–T111 were added by the analysis fixes; their place in the
+  file, not their number, gives the order.
 - plan.md's "Existing tests whose expected outcome this feature changes" names three tests; the
   code has five that assert the v0.1 refusal. The maintainer chose (2026-10-10) to rewrite all
-  five (T025, T032). plan.md is not edited by this task list.
+  five (T025, T032), and a sixth for the symbolic-link rule (T106). plan.md is not edited by this
+  task list.
 - The contract tests move from 001's contract to 002's (T003); 002's `json_models.py` is the full
   schema-1 contract, so every 001 model is still checked.
+
+## Analysis fixes
+
+Fixes for the HIGH and MEDIUM findings of the spec 002 analysis (2026-10-10), applied to the
+spec artifacts only. Line numbers are those of this commit. The maintainer decided C1 (all three
+FR-012 cases are the FR-028 exception), O1 (a separate task before T033), O2 (a link at an
+unrecorded override name is the repository's), U1 (extend check 1 to `.env`), O3 (push after
+T101) and G2 (the mutation unlinks directly). The 14 LOW findings (G3–G6, U3, O4, T1–T4, A2, A3,
+R2, D2) are not applied.
+
+| Finding | What changed | File and lines |
+|---------|--------------|----------------|
+| C1 (HIGH) | FR-028 gets one exception: the three setups the FR-011 rule cannot name (one container port published twice, two service names that map to one name, a `ports` entry equal to a derived name) are refused with `port_variable_conflict`; every other v0.1.1 `wtenv.toml` works unchanged. The exception is repeated in SC-006, FR-008, US1 sc6 and US3 sc8. Story 2 now "narrows 001:FR-031" instead of "relaxes nothing", and the 001:FR-031 row is marked **Narrowed**. The plan's FR-028 row, point 3 and relaxations table cite the exception. The T099 CHANGELOG names all three setups | spec.md:117-118, 224-226, 330-331, 415-424, 453-455, 465, 520-522; plan.md:226, 370, 441-445; tasks.md:1000-1016 (T099) |
+| C2 (HIGH) | T002 adds three v0.1.1 fixtures (`dup_port`, `colliding_names`, `ports_named_like_a_variable`). T091 asserts both halves: the refusal for those three, and identical results for every other configuration. T092 says the refusal is the only difference FR-028 allows and must not be removed | tasks.md:119-125 (T002), 897-917 (T091, T092) |
+| O1 (HIGH) | New T104 (failing `override_problem` tests) and T105 (accept exactly `.wtenv/compose.isolation.yaml`) at the start of 4C, before T033. T033 says it needs T105; T066 no longer changes `override_problem`; T067 names T104's case. Dependency lines updated | tasks.md:418-436 (T104, T105), 481-482 (T033), 725-732 (T066, T067), 1080-1082 |
+| O2 (HIGH) | Spec edge case and data-model: a link at an unrecorded override name is the repository's override (kept, never written, deleted, excluded or followed for writing); a link at a recorded path or at the isolation path fails closed and no header is read through it (FR-009 says so too). New T106 adds the failing tests first (accepted at a repository override name; refused at a recorded path in both arrangements; refused at the isolation path) and then changes `_check_override_links`. It rewrites the sixth existing test, `tests/integration/test_us1_ports_env.py::test_a_compose_override_that_is_a_link_is_refused_on_a_first_up_too`. New T107 is the mutation check for the link refusal. The Working rules now allow six rewritten tests. T026 classes the link without reading through it. Plan S1 lists the guard change | spec.md:250-254, 335; data-model.md:59-66; plan.md:275; tasks.md:61-63, 384-385 (T026), 489-526 (T106), 549-553 (T107), 1133 |
+| D1 (MED) | New T108 in 2B runs v0.1.1's own `registry.load` on registries saved by the new code. The automatic-only registry must load; one with an exec-only entry must give `registry_unreadable`, and neither file may change. T095 (README) and T099 (CHANGELOG) document running `wtenv down` before a downgrade | tasks.md:206-217 (T108), 960-962, 968 (T095), 1009-1016 (T099) |
+| C3 (MED) | Inventory: an unrecorded regular file at another override name that starts with wtenv's header is `ownership_conflict` (as v0.1.1), not `repository_owned`. T026 has the case | data-model.md:59-61; tasks.md:378-380 (T026) |
+| U1 (MED) | FR-033 check 1 also reads `.env` beside the compose file (spec FR-033, edge case, assumption; data-model check 1; cli.md details). T051 adds the `.env` cases, T052 shares the parsing rule with `up`, and new mutation T109 covers it | spec.md:285, 347-348, 567-568; data-model.md:121; contracts/cli.md:32; tasks.md:628-629 (T051), 650-652 (T052), 657-660 (T109), 1141 |
+| U2 (MED) | `isolation.py` "imports only `errors`, `identity`, `registry`; never `compose`, `provision`, `database`" (no longer "standard library only"). It holds wtenv's header line and the isolation path (T105), and the `.env` pattern (T052); `compose.py` imports them | plan.md:89, 124-127; tasks.md:44-46, 428-436 (T105), 481-485 (T033), 650-652 (T052) |
+| G1 (MED) | T065 adds a symlinked `.wtenv/` and a symlinked isolation file in `down`, `down --dry-run`, `gc` and `gc --release` (`failed`, target untouched). New mutation T110 removes the teardown link check. Plan S4 names both | plan.md:315-317; tasks.md:716-719 (T065), 742-745 (T110), 1147 |
+| G2 (MED) | T049's mutation makes the adoption branch unlink the adopted file directly, so T046's byte-identical assertion fails | tasks.md:615-617 (T049) |
+| A1 (MED) | The data-model Transitions table is rewritten as the two-save sequence (step 8 saves the old record as `removing`; step 11 unlinks, then saves the new record with `repository_override` set or cleared in that same save). It also states the consistency rule at every save, and that adoption is one step-8 save that bypasses the path-change branch. T042 and T047 say the same | data-model.md:74-89; tasks.md:579-581 (T042), 607-610 (T047) |
+| O3 (MED) | T098 keeps the `ci.yml` edit, with a local, grep-based Done-when. The push and the green-CI check move to new T111, after T101, and it requires the CI run's `headSha` to equal `HEAD` | tasks.md:986-999 (T098), 1025-1032 (T111), 1086 |
+| R1 (MED) | 001:FR-056 and FR-057 are marked **Relaxed** for exec-only worktrees in the spec's table and story summary, and in plan's relaxations table. T051 and T052 carry `⚠RELAX(001:FR-056, FR-057)`, which the legend and safety index list | spec.md:450-452, 473; plan.md:369; tasks.md:28-29, 624, 645, 1121 |
+
+Coverage table, mutation index and notes updated for T104–T111: tasks.md:1074, 1133-1147,
+1151-1199, 1203-1207.

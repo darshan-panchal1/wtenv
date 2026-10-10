@@ -86,7 +86,7 @@ the Complexity Tracking table.*
 | V | Zero-Config Default | PASS | PASS | Stories 1 and 2 add no setting and apply whenever `[compose]` is configured (spec, Assumptions). Story 3 is opt-in through `[database] type = "compose"` in a committed `wtenv.toml`. Port and env isolation without a config file are unchanged. |
 | VI | Platforms | PASS | PASS | `COMPOSE_FILE`/`COMPOSE_PATH_SEPARATOR=:` behave the same on macOS, Linux and WSL2. Paths containing `:` are refused with a stable reason (R2). |
 | VII | Test-First | PASS | PASS | Test strategy below: a failing test first in every task group, a mutation check per guard, unit tests for the rule and the classifiers, integration tests with real worktrees and real Compose 2.24.4 in CI. `isolation.py` joins the 80 % coverage list. `mypy --strict` unchanged. |
-| VIII | Simplicity | PASS | PASS | No new dependency, no daemon. `exec` imports one new standard-library-only module, not `wtenv.compose` (NFR-001; the lazy-import test is extended). |
+| VIII | Simplicity | PASS | PASS | No new dependency, no daemon. `exec` imports one new module, `isolation.py`, which imports only `errors`, `identity` and `registry` and never `compose`, `provision` or `database` (NFR-001; the lazy-import test is extended). |
 | IX | Readability | PASS | PASS | Plain functions and frozen dataclasses: an override inventory, a storage classifier, an environment builder. No metaprogramming. `exclude_if` is a documented pydantic field option with a one-line lambda. |
 | X | Small Surface | PASS | PASS | New settings are only those FR-017/FR-018 require (`type = "compose"`, `service`, the `{port}` placeholder) and the credential source the spec asked planning to confirm (`{compose_env:NAME}`; spec, Assumptions). New error codes are required by FR-031. Everything else that came up is listed under "Roadmap entries" to be recorded in `docs/roadmap.md`. |
 
@@ -121,8 +121,10 @@ src/wtenv/
 ├── config.py       # [database] type "compose", `service`, URL placeholders {port}, {compose_env:NAME}
 ├── compose.py      # resolution with the repository override; override inventory; database port
 │                   # and storage classification; isolation-file path in `override_problem`
-├── isolation.py    # NEW, stdlib only: isolation-file checks and the COMPOSE_FILE environment,
-│                   # shared by exec, post-up commands and `up`'s verification
+├── isolation.py    # NEW; imports only errors, identity, registry (never compose, provision,
+│                   # database): wtenv's header line, the isolation path, the FR-033 checks and
+│                   # the COMPOSE_FILE environment, shared by exec, post-up commands and `up`'s
+│                   # verification; compose.py imports the header and the path from here
 ├── ports.py        # port_variable_name(); collision check
 ├── provision.py    # `up`: mode choice, transitions, Story 2 variables, compose database URL
 ├── execcmd.py      # FR-033 checks before exec, COMPOSE_FILE in repository-override worktrees
@@ -221,7 +223,7 @@ existing test in `tests/`.
 | FR-025 | README | Host-side values documented | — |
 | FR-026 | `compose.py` (`database_storage`) | Warning `compose_database_data_kept` | 001 reading R6 (anonymous volumes kept) |
 | FR-027 | `compose.py` (`database_storage`), `errors.py` | `database_storage_shared` before step 8 | Reading R8 name rule; real paths (`test_a_bind_through_a_symlink_to_outside_the_worktree_is_refused` **(new)**) |
-| FR-028 | `config.py`, `provision.py` | v0.1.1 configurations unchanged | `test_every_v0_1_1_config_fixture_is_accepted_and_provisions_identically` **(new)** |
+| FR-028 | `config.py`, `provision.py` | v0.1.1 configurations unchanged, except the three setups FR-028 refuses | `test_every_v0_1_1_config_fixture_is_accepted_and_provisions_identically` **(new)** |
 | FR-029 | `registry.py` | One optional field, omitted when unset | v0.1.1 registry round trip byte-identical (`test_a_v0_1_1_registry_is_saved_byte_for_byte` **(new)**); 001:FR-070 |
 | FR-030 | all | No 001 guard relaxed beyond FR-004/FR-006 | Every existing guard test kept (Test strategy, "Existing tests") |
 | FR-031 | `errors.py`, `output.py`, contracts | Codes 20 to 23, warnings, reasons | Contract tests compare with `contracts/json_models.py` |
@@ -270,6 +272,7 @@ in turn and requires that named test to fail.
 | An unrecorded file at the path is not wtenv's | Step 5: a file at the isolation path that the entry does not record → `ownership_conflict` (`kind` `compose_override`) | new `test_an_unrecorded_file_at_the_isolation_path_is_an_ownership_conflict_and_is_kept` |
 | Header check before a rewrite (001:FR-087) | `check_recorded_override` in step 5 and again immediately before the write in step 11, on the isolation path | `test_up_does_not_rewrite_an_override_that_lost_the_header_after_the_plan`, parametrised over both arrangements |
 | No symbolic link (001:FR-086) | `_refuse_symlink(root, ".wtenv/compose.isolation.yaml")` covers `.wtenv/` and the file | new `test_a_symlinked_wtenv_directory_is_refused_in_the_exec_only_arrangement` |
+| Links at wtenv's paths only (001:FR-086, FR-009) | **Guard change** in `_check_override_links`: a link at an unrecorded override name is the repository's override and is no longer refused; a link at the recorded path or at the isolation path still fails closed, with no header read through it | `test_a_compose_override_that_is_a_link_is_refused_before_anything_changes` (kept) and the isolation-path link case (tasks T106, T107); `test_a_compose_override_that_is_a_link_is_refused_on_a_first_up_too` is rewritten (T106) |
 | Excluded from `git status` (001:FR-018) | `/.wtenv/compose.isolation.yaml` added to `exclude_patterns` in step 8, written in step 9 | new `test_git_status_is_clean_after_up_in_the_exec_only_arrangement` |
 | Verification, and removal of only the file just written (001:FR-033) | `write_and_verify_override` unchanged; the verification command gets the `isolation.compose_environment` result | `test_a_replaced_override_that_fails_verification_is_removed_too`, parametrised |
 
@@ -309,7 +312,9 @@ is accepted.
 
 - Tests: `test_a_recorded_path_of_a_form_wtenv_never_records_is_left_alone` (kept), extended
   with `.wtenv/notes.yaml`, `.wtenv/sub/compose.isolation.yaml` and `../.wtenv/compose.isolation.yaml`,
-  each left alone; new `test_down_removes_the_isolation_file_and_never_the_repository_override`.
+  each left alone; new `test_down_removes_the_isolation_file_and_never_the_repository_override`;
+  a symlinked `.wtenv/` or isolation file is `failed` in `down` and `gc`, its target untouched
+  (tasks T065, T110).
 
 ### S5. Environment injection by `exec` and post-up commands (FR-004, FR-033; relaxes 001:FR-030 only in exec-only worktrees)
 
@@ -361,6 +366,8 @@ that unknown fields still make a registry unreadable (001:FR-070).
 |-----------------|----------|-------|-------------|
 | FR-030 (plain Compose isolated) | **Yes**, exec-only worktrees only (FR-004) | S5 | Detected, reported (text, JSON, warning), documented; automatic arrangement unchanged and tested |
 | FR-087 (header check) | **Outcome only**, git-tracked header-less file at the recorded path (FR-006) | S3 | Never written or deleted; untracked case unchanged |
+| FR-056, FR-057 (`exec` runs the command; only "not provisioned" refuses) | **Yes**, exec-only worktrees only (FR-033) | S5 | Every command is refused only when the isolation settings cannot be applied; automatic arrangement unchanged and tested |
+| FR-031 (ports tied to variables) | **Narrowed**: the three setups of the FR-028 exception are refused (FR-012) | R5 | `port_variable_conflict` before step 8, nothing changed; named in the CHANGELOG |
 | FR-018, FR-039, FR-067, FR-070, FR-086, FR-088 | No | S1–S7 | Applied to the isolation file unchanged |
 
 ## Test strategy
@@ -433,8 +440,9 @@ so the review can overturn them before `/speckit-tasks`:
 2. **`WTENV_PORT_` prefix** in the variable names (R5).
 3. **One container port published twice** (for example by a repository override that adds a
    second host port, E1.6b) is refused by `port_variable_conflict`, as the spec's edge case
-   says. A compose setup that v0.1.1 accepted can therefore fail after the upgrade. FR-028
-   speaks only of `wtenv.toml`, so this is consistent with the spec, but it is a visible change.
+   says. A compose setup that v0.1.1 accepted can therefore fail after the upgrade. FR-028 names
+   this as one of its three exceptions (with colliding service names and a `ports` entry equal
+   to a derived name); it is a visible change, listed in the CHANGELOG.
 4. **Every writable mount of the database service counts as data** (R4), which can refuse a
    writable bind outside the worktree that is not the data directory. The fix for the user is
    `:ro`.

@@ -29,7 +29,7 @@ Keys may be added; none is removed or renamed (unchanged rule).
 
 | Code | Keys |
 |------|------|
-| `isolation_unavailable` | `reason`: `compose_env_override` (with `variable`), `recorded_value_invalid`, `symlink` (`path` is the link), `isolation_file_missing`, `isolation_file_not_wtenvs`, `repository_override_missing`, or `override_appeared`; `path` (the file concerned, absolute) |
+| `isolation_unavailable` | `reason`: `compose_env_override` (with `variable`; `path` is the `.env` file when the value comes from it), `recorded_value_invalid`, `symlink` (`path` is the link), `isolation_file_missing`, `isolation_file_not_wtenvs`, `repository_override_missing`, or `override_appeared`; `path` (the file concerned, absolute) |
 | `override_ambiguous` | `files` (absolute paths, sorted) |
 | `port_variable_conflict` | `variable` (the name); `sources` (two strings, each either `service <name>, container port <n>/<protocol>`, `wtenv.toml ports`, or `DATABASE_URL`) |
 | `database_storage_shared` | `service`; `storage`: `fixed_name_volume`, `external_volume`, or `host_directory`; `name` (the volume's resolved name, or the directory's real path) |

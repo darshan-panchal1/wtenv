@@ -56,10 +56,14 @@ Each existing path among the four override names beside the compose file is clas
 | = `ComposeRecord.override` | present | — | `wtenv_own` |
 | = `ComposeRecord.override` | absent | yes | `adopt` (FR-006): counted as repository-owned |
 | = `ComposeRecord.override` | absent | no | `ownership_conflict`, as 001:FR-087 |
-| any other of the four names | any | any | `repository_owned` (spec, Terms: "wtenv did not create and has not recorded") |
+| any other of the four names, a regular file | present | any | `ownership_conflict`, as v0.1.1: wtenv's header means wtenv wrote it, for example before the registry was lost |
+| any other of the four names, a regular file | absent | any | `repository_owned` (spec, Terms: "wtenv did not create and has not recorded") |
+| any other of the four names, a symbolic link | not read | any | `repository_owned` (spec, Edge cases): kept, never written, deleted, excluded or followed for writing |
 
-A symbolic link at the recorded path is refused first, by the unchanged step-5 link check
-(001:FR-086). A repository-owned override may be a link: wtenv only reads it.
+A symbolic link at the recorded path, or at `.wtenv/compose.isolation.yaml` or `.wtenv/`, fails
+closed first, by the step-5 link check (001:FR-086, `_check_override_links`), and no header is
+read through it (FR-009). Only a link at an unrecorded override name is accepted, as the
+repository's override.
 
 `repository_owned` + `adopt` count | Result
 ---|---
@@ -67,17 +71,22 @@ A symbolic link at the recorded path is refused first, by the unchanged step-5 l
 1 | `exec_only`; every `wtenv_own` file is removed in step 11 (FR-007)
 ≥ 2 | `override_ambiguous`, naming every file; nothing changes
 
-### Transitions (step 8 records them; step 11 carries them out)
+### Transitions (registry saves in order; step 8 then step 11)
 
-| From | To | Registry in step 8 | Files in step 11 |
-|------|----|--------------------|------------------|
+`ComposeRecord` holds one `override`, so a change of path is two saves, as for a moved compose
+file in v0.1.x (`_compose_record`, then the path-change branch of `_compose_step`). Every save
+keeps the consistency rule above: `repository_override` changes only in the save that also
+changes `override`, or, when `override` stays the isolation path, in step 8.
+
+| From | To | Save in step 8 | Step 11, in order |
+|------|----|----------------|-------------------|
 | none | `automatic` | v0.1.1 | v0.1.1 |
-| none | `exec_only` | `override = .wtenv/compose.isolation.yaml` (`creating`), `repository_override = <path>` | write + verify the isolation file |
-| `automatic` | `exec_only` (a repository override appeared under **another** name) | as above; the old record is first kept as `removing` | `_remove_override` on the old file (header rechecked), then write + verify |
-| `automatic` | `exec_only` by adoption (FR-006: the recorded path now holds a tracked, header-less file) | `override = .wtenv/compose.isolation.yaml` (`creating`), `repository_override = <old override path>`; the old path's pattern leaves `exclude_patterns`; warning `compose_override_adopted` | write + verify; the adopted file is **not** touched |
-| `exec_only` | `automatic` (the repository override disappeared; FR-008, spec Edge cases) | old record `removing`, new auto-loaded override `creating`, `repository_override` cleared | `_remove_override` on the isolation file, then write + verify the auto-loaded override |
-| `exec_only` | `exec_only`, another repository override name | `repository_override` updated | isolation file rewritten if its text changed |
-| any | no `[compose]` | unchanged from v0.1.x (`removing`) | wtenv's recorded file removed (header rechecked); `repository_override` cleared with it |
+| none | `exec_only` | new record: `override = .wtenv/compose.isolation.yaml` (`creating`), `repository_override = <path>` | write + verify the isolation file; save `created` |
+| `automatic` | `exec_only` (a repository override appeared under **another** name) | the old record, fields unchanged (`repository_override` absent), as `removing` | `_remove_override` on the old file (header rechecked immediately before the unlink); save the new record: `override = .wtenv/compose.isolation.yaml` (`creating`), `repository_override = <path>`; write + verify; save `created` |
+| `automatic` | `exec_only` by adoption (FR-006: the recorded path now holds a tracked, header-less file) | one save that replaces the record: `override = .wtenv/compose.isolation.yaml` (`creating`), `repository_override = <old override path>`; the old path's pattern leaves `exclude_patterns`; warning `compose_override_adopted`. The old record is **never** marked `removing` | the path-change branch is **not** taken (`override` already equals the plan's); write + verify the isolation file; save `created`. The adopted file is **not** touched |
+| `exec_only` | `automatic` (the repository override disappeared; FR-008, spec Edge cases) | the old record, fields unchanged (`repository_override` still set), as `removing` | `_remove_override` on the isolation file (header rechecked); save the new record: auto-loaded override (`creating`), no `repository_override`; write + verify; save `created` |
+| `exec_only` | `exec_only`, another repository override name | the record with `repository_override` updated; `override` unchanged | isolation file rewritten if its text changed |
+| any | no `[compose]` | unchanged from v0.1.x (`removing`) | wtenv's recorded file removed (header rechecked); `repository_override` goes with the record |
 
 An interrupted `up` leaves a record that is `creating` or `removing`. The next `up` finishes it
 through the same branches as in v0.1.x (001 data-model.md, Resource states).
@@ -109,7 +118,7 @@ arrangement only:
 
 | # | Check | `reason` of `isolation_unavailable` |
 |---|-------|-------------------------------------|
-| 1 | `COMPOSE_PROJECT_NAME` or `COMPOSE_FILE` non-empty in the calling environment | `compose_env_override` (`variable`) |
+| 1 | `COMPOSE_PROJECT_NAME` or `COMPOSE_FILE` non-empty in the calling environment, or set in `.env` beside the compose file (the same rule as `up`'s `check_environment`) | `compose_env_override` (`variable`; `path` is the `.env` file when the value comes from it) |
 | 2 | `override` is exactly the isolation path, `repository_override` and `file` pass `recorded_path_problem` | `recorded_value_invalid` |
 | 3 | No symbolic link from the root down to the isolation file (`identity.symlinked_part`) | `symlink` (`path` is the link) |
 | 4 | The isolation file exists | `isolation_file_missing` |
