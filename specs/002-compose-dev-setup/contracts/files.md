@@ -58,7 +58,11 @@ DATABASE_URL=postgresql://postgres:changethis@localhost:20003/app
 
 Unchanged rules. In the exec-only arrangement, the worktree's generated path is
 `/.wtenv/compose.isolation.yaml` instead of the auto-loaded override name. The repository's own
-override file is never added (FR-002). When `up` adopts a tracked file (FR-006), that file's
+override file is never added (FR-002). The block is shared by every worktree of the repository
+and its lines are root-anchored, so a line added for worktree A (`/compose.override.yaml`) also
+makes git ignore an untracked repository override of that name in worktree B; `up` in B warns
+`compose_override_excluded` when it finds that ([cli.md](cli.md), step 5). git has no
+per-worktree exclude file, so wtenv cannot avoid it. When `up` adopts a tracked file (FR-006), that file's
 pattern is removed from the worktree's recorded `exclude_patterns`. Git ignores exclude rules
 for tracked files, and `up` still only adds lines to the block (001), so the line stays until
 the block is removed with the repository's last registered worktree.
@@ -96,7 +100,7 @@ services:
   (001:FR-087).
 - Compose loads this file only through `COMPOSE_FILE`, which `wtenv exec` and post-up commands set
   to three absolute paths in this order: the compose file, the repository's override, this file.
-  They also set `COMPOSE_PATH_SEPARATOR=:` ([cli.md](cli.md), `wtenv exec`). A plain
+  They also set `COMPOSE_PATH_SEPARATOR=:` and `COMPOSE_ENV_FILES` ([cli.md](cli.md), `wtenv exec`). A plain
   `docker compose` in that worktree does not load it and is **not isolated** (FR-004).
 - Written with mode `0644` through a temporary file and an atomic rename, like the override. A
   repeat `up` with nothing changed leaves identical bytes.

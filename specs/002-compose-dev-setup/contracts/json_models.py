@@ -120,9 +120,13 @@ class WarningCode(StrEnum):
     # 002: the compose-hosted database's data is in an anonymous volume, in no volume, or in a
     # directory inside the worktree, which `down` and `gc` keep (FR-026, FR-027).
     COMPOSE_DATABASE_DATA_KEPT = "compose_database_data_kept"
-    # 002: a git-tracked file without wtenv's header at the recorded override path is now
-    # treated as the repository's; wtenv stopped recording it and never touched it (FR-006).
+    # 002: a git-tracked file at the recorded override path, with or without wtenv's header, is
+    # now treated as the repository's; wtenv stopped recording it and never touched it (FR-006).
     COMPOSE_OVERRIDE_ADOPTED = "compose_override_adopted"
+    # 002: git ignores the untracked repository override because of a line of wtenv's exclude
+    # block written for another worktree; a checkout or `git clean -X` could then overwrite or
+    # delete it (FR-002).
+    COMPOSE_OVERRIDE_EXCLUDED = "compose_override_excluded"
 
 
 class FindingCode(StrEnum):
@@ -301,8 +305,8 @@ class FailedItem(Item):
 class KeptItem(Item):
     """002: a recorded item that `down` or `gc` found to be the repository's and left alone.
 
-    "repository_owned": the recorded override path holds a file without wtenv's header that git
-    tracks (FR-006). Its record was dropped; the file was not touched.
+    "repository_owned": the recorded override path holds a file that git tracks, with or without
+    wtenv's header (FR-006). Its record was dropped; the file was not touched.
     """
 
     reason: Literal["repository_owned"]

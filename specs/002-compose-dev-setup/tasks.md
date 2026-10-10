@@ -388,6 +388,11 @@ byte-identical throughout.
   - Read only: it writes, renames and deletes nothing. `check_override_files` stays until T033
     switches `up` to the inventory.
   - **Done when** `uv run pytest tests/unit/test_override_inventory.py tests/unit/test_compose_checks.py -q` exits 0.
+- [ ] T147 [US1] Mutation check: an unrecorded override file that starts with wtenv's header is `ownership_conflict`, in `src/wtenv/compose.py` (restored afterwards)
+  - Guard: data-model.md, Override inventory, row "any other of the four names, a regular file,
+    header present" (analysis C3; safety review, item 8). Classify that file as
+    `repository_owned`; its case in `tests/unit/test_override_inventory.py` (T026) must fail.
+  - **Done when** as in Working rules, "Mutation check".
 - [ ] T028 [US1] Group check 4A: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(compose): classify override files beside the compose file`.
 
@@ -410,6 +415,10 @@ byte-identical throughout.
   - **Done when** the new cases fail under the failing-test rule.
 - [ ] T030 [US1] Accept the repository override in `resolution_command` and `resolve_model`, and add the `:` check, in `src/wtenv/compose.py`
   - **Done when** `uv run pytest tests/unit/test_compose_model.py tests/unit/test_compose_checks.py -q` exits 0.
+- [ ] T146 [US1] Mutation check: the `compose_path_separator` refusal of a path that contains `:`, in `src/wtenv/compose.py` (restored afterwards)
+  - Guard: plan.md, "Error codes", `unsupported` reason `compose_path_separator` (research R2;
+    safety review, item 8). Remove the check; the `:` cases of T029 must fail.
+  - **Done when** as in Working rules, "Mutation check".
 - [ ] T031 [US1] Group check 4B: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(compose): resolve the compose file together with the repository override`.
 
@@ -551,6 +560,31 @@ byte-identical throughout.
     `_refuse_symlink` on the recorded path; both cases of
     `test_a_link_at_a_recorded_override_path_is_refused_in_both_arrangements` must fail.
   - **Done when** as in Working rules, "Mutation check".
+- [ ] T122 [US1] Add failing tests for the excluded-override warning to `tests/integration/test_us1_repository_override.py` and `tests/integration/test_gitutil_git.py`
+  - FR-002 (amended by safety finding M3); cli.md, `wtenv up` step 5; files.md,
+    `.git/info/exclude` block; plan.md, Decisions to review 1.
+  - New `test_an_untracked_repository_override_ignored_through_wtenvs_block_is_warned`: worktree
+    A in the automatic arrangement (its `up` adds `/compose.override.yaml` to wtenv's block);
+    worktree B of the same repository with an untracked `compose.override.yaml` of its own.
+    `up` in B: exit 0, `compose_isolation` `exec_only`, warning `compose_override_excluded` with
+    `details.file` B's override (absolute) and `details.pattern` `/compose.override.yaml`; B's
+    override byte-identical; no line of `.git/info/exclude` removed.
+  - Not warned: the same file when git tracks it; an untracked override matched only by a line
+    outside wtenv's block (the developer's own exclude or `.gitignore` line); an untracked
+    override that no line matches.
+  - **Done when** the new cases fail under the failing-test rule.
+- [ ] T123 [US1] Warn `compose_override_excluded` in the exec-only `up`, in `src/wtenv/gitutil.py`, `src/wtenv/provision.py`, and `src/wtenv/output.py`
+  - Needs T033. In step 5, after the inventory, when the repository override is untracked:
+    `git check-ignore -v --no-index -- <path>`; the warning only when the reported source is
+    the repository's `info/exclude` and the reported line lies inside wtenv's block markers.
+    Read only: no file and no exclude line changes. The warning code is the member T006 ported
+    from `json_models.py`.
+  - **Done when** `uv run pytest tests/integration/test_us1_repository_override.py tests/integration/test_gitutil_git.py -q`
+    exits 0 and `grep -n 'COMPOSE_OVERRIDE_EXCLUDED' src/wtenv/output.py` prints a line.
+- [ ] T124 [US1] Mutation check: the excluded-override warning, in `src/wtenv/provision.py` (restored afterwards)
+  - Guard: FR-002, safety finding M3. Skip the `check-ignore` call;
+    `test_an_untracked_repository_override_ignored_through_wtenvs_block_is_warned` must fail.
+  - **Done when** as in Working rules, "Mutation check".
 - [ ] T040 [US1] Group check 4C: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(up): write a recorded isolation file beside a repository-owned override`.
 
@@ -642,6 +676,23 @@ byte-identical throughout.
   - User Story 1 scenario 10.
   - `tests/unit/test_lazy_imports.py`: new `test_exec_does_not_load_the_compose_module` (NFR-001).
   - **Done when** these files fail under the failing-test rule.
+- [ ] T131 [US1] Add a failing test for post-up commands on a repeat `up` with nothing changed, in `tests/integration/test_us1_exec_isolation.py`
+  - FR-033 ("Post-up commands MUST get the same"), FR-010, 001:FR-036; safety finding M6; plan.md
+    S5; cli.md, `wtenv up` step 13.
+  - New `test_post_up_commands_get_the_isolation_environment_on_a_repeat_up`: an exec-only
+    worktree with `post_up = ["env > <file>"]`. `up`, then a second `up` with nothing changed
+    (every change `unchanged`), which runs the post-up commands from the early-return branch of
+    `provision.up` (the `_run_post_up` call near `provision.py:149` in v0.1.1). The file written
+    by the second run has `COMPOSE_FILE` equal to the three absolute paths of data-model.md
+    ("Isolation environment"), `COMPOSE_PATH_SEPARATOR=:`, and one `WTENV_PORT_…` line per
+    published port, and these lines equal the first run's.
+  - **Done when** the new test fails under the failing-test rule.
+- [ ] T132 [US1] Build the post-up environment inside `_run_post_up` from the entry, at both call sites, in `src/wtenv/provision.py`
+  - Needs T033 (`isolation.compose_environment`). `_run_post_up` takes the entry (and the plan
+    for `DATABASE_URL`) and builds its environment itself: the section's variables, plus, in the
+    exec-only arrangement, `isolation.compose_environment`. Both call sites, the repeat-`up`
+    branch and step 13, pass the entry instead of a variable list, so they cannot differ.
+  - **Done when** `uv run pytest tests/integration/test_us1_exec_isolation.py -q -k repeat_up` exits 0.
 - [ ] T052 [US1] ⚠RELAX(001:FR-030) ⚠RELAX(001:FR-056, FR-057) Apply the FR-033 checks and the isolation environment in `src/wtenv/isolation.py`, `src/wtenv/execcmd.py`, and `src/wtenv/provision.py`
   - The checks run only when the entry records `repository_override`, after the `provisioned`
     check, and before `os.execvpe`. On failure: `isolation_unavailable`, exit 125, nothing run.
@@ -678,6 +729,118 @@ byte-identical throughout.
   - **Done when** as in Working rules, "Mutation check".
 - [ ] T060 [US1] Mutation check: `COMPOSE_PROJECT_NAME` is not injected, in `src/wtenv/isolation.py` (restored afterwards)
   - Add it to `compose_environment`; `test_exec_never_sets_compose_project_name` must fail.
+  - **Done when** as in Working rules, "Mutation check".
+- [ ] T114 [US1] ⚠RELAX(001:FR-056, FR-057) Add failing tests for check A, an inherited `COMPOSE_FILE` that names another worktree's isolation file, to `tests/integration/test_us1_exec_isolation.py` and `tests/unit/test_isolation.py`
+  - FR-033 (amended by safety finding M1); data-model.md, "`exec` checks in every other
+    worktree", row A; spec, Edge cases.
+  - New `test_exec_refuses_another_worktrees_isolation_file_in_compose_file`: worktree A
+    exec-only, worktree B automatic, worktree C without `[compose]`, all provisioned. With
+    `COMPOSE_FILE` set to the value `exec` sets in A (as a shell started by `wtenv exec -- sh` in
+    A leaves it), `wtenv exec -- touch <sentinel>` in B and in C → exit 125, `error.code`
+    `isolation_unavailable`, `details.reason` `compose_env_override`, `details.variable`
+    `COMPOSE_FILE`, `details.path` A's isolation file (absolute); the sentinel not created. The
+    same with `COMPOSE_PATH_SEPARATOR=';'` and the list joined with `;`.
+  - As in v0.1.1 (the command runs, exit 0, `COMPOSE_FILE` passed through unchanged):
+    `COMPOSE_FILE` naming B's own compose file; naming a `compose.isolation.yaml` that is not
+    in a `.wtenv/` directory; naming `<B root>/.wtenv/compose.isolation.yaml`.
+  - **Done when** the new cases fail under the failing-test rule.
+- [ ] T115 [US1] ⚠RELAX(001:FR-056, FR-057) Apply check A in every worktree that is not exec-only, in `src/wtenv/isolation.py` and `src/wtenv/execcmd.py`
+  - Needs T052. After the `provisioned` check and before `os.execvpe`; on failure
+    `isolation_unavailable`, exit 125, nothing run. The command's environment is unchanged
+    (v0.1.1's plus the section). `exec` still does not import `wtenv.compose`.
+  - **Done when** `uv run pytest tests/unit/test_isolation.py tests/integration/test_us1_exec_isolation.py tests/unit/test_lazy_imports.py -q` exits 0.
+- [ ] T116 [US1] Mutation check: check A, in `src/wtenv/isolation.py` (restored afterwards)
+  - Guard: FR-033, safety finding M1. Remove it; the refusal cases of
+    `test_exec_refuses_another_worktrees_isolation_file_in_compose_file` must fail.
+  - **Done when** as in Working rules, "Mutation check".
+- [ ] T117 [US1] Add failing tests for the `.env` line forms and `COMPOSE_ENV_FILES` to `tests/unit/test_isolation.py`, `tests/unit/test_compose_checks.py`, and `tests/integration/test_us1_exec_isolation.py`
+  - FR-033 (amended by safety finding M2); research R7 (E6.1, E6.3); data-model.md, check 1 and
+    "Isolation environment"; spec, Known limits.
+  - Check 1 and `up`'s `check_environment`, one case per E6.1 form, for `COMPOSE_PROJECT_NAME`
+    and for `COMPOSE_FILE`: `KEY: value`, `KEY:value`, `export KEY: value`, `   KEY : value`,
+    a CRLF line end, and a UTF-8 byte-order mark before `KEY=value`. Each →
+    `compose_env_override` (`exec`: exit 125, sentinel not run; `up`: `unsupported`, nothing
+    changed). Still accepted: `# COMPOSE_PROJECT_NAME: x` and an empty value. Kept unchanged:
+    `test_the_variable_in_dot_env_beside_the_compose_file_is_unsupported` and the other `.env`
+    tests of `tests/unit/test_compose_checks.py`.
+  - `COMPOSE_ENV_FILES` non-empty in the calling environment of an exec-only `exec` →
+    `compose_env_override`, `details.variable` `COMPOSE_ENV_FILES`, exit 125, sentinel not run.
+  - `isolation.compose_environment` also returns `COMPOSE_ENV_FILES`: the absolute `.env` beside
+    the compose file when it exists, else `/dev/null`. Update the T032 case of
+    `tests/unit/test_isolation.py` that expects exactly two variables (a test of this feature,
+    not one of the v0.1.1 tests the Working rules protect).
+  - Integration, run by the CI Compose and by the `minimums` job (2.24.4): after `up` in an
+    exec-only worktree, a subdirectory `sub/` whose `.env` sets
+    `COMPOSE_PROJECT_NAME=wtenv-test-<random>`; `wtenv exec -- sh -c 'cd sub && docker compose config --format json'`
+    reports the recorded project, and a value of the project's `.env` is interpolated (E6.3b).
+  - **Done when** the new cases fail under the failing-test rule.
+- [ ] T118 [US1] Widen the `.env` pattern, refuse an inherited `COMPOSE_ENV_FILES`, and set `COMPOSE_ENV_FILES`, in `src/wtenv/isolation.py`, `src/wtenv/compose.py`, `src/wtenv/execcmd.py`, and `src/wtenv/provision.py`
+  - Needs T052 (the pattern lives in `isolation.py` and `compose.check_environment` imports it).
+    The pattern is data-model.md's (`[=:]` and an optional byte-order mark).
+    `compose_environment` adds `COMPOSE_ENV_FILES`; `exec`, post-up commands and `up`'s
+    verification take it from there. The automatic arrangement's environment does not change.
+  - **Done when** `uv run pytest tests/unit/test_isolation.py tests/unit/test_compose_checks.py tests/integration/test_us1_exec_isolation.py tests/integration/test_us3_compose.py -q` exits 0.
+- [ ] T119 [US1] Mutation check: the `.env` pattern accepts `:` and a byte-order mark, in `src/wtenv/isolation.py` (restored afterwards)
+  - Guard: research R7, E6.1. First put back v0.1.1's `=`-only pattern: the `KEY: value` cases
+    of T117 must fail. Then, separately, drop only the byte-order-mark part: the byte-order-mark
+    case must fail.
+  - **Done when** as in Working rules, "Mutation check", for both mutations.
+- [ ] T120 [US1] Mutation check: `exec` sets `COMPOSE_ENV_FILES`, in `src/wtenv/isolation.py` (restored afterwards)
+  - Guard: research R7, E6.3. Remove `COMPOSE_ENV_FILES` from `compose_environment`; the
+    subdirectory case of T117 must fail.
+  - **Done when** as in Working rules, "Mutation check".
+- [ ] T121 [US1] Mutation check: an inherited `COMPOSE_ENV_FILES` is refused, in `src/wtenv/isolation.py` (restored afterwards)
+  - Guard: research R7, E6.3d. Drop `COMPOSE_ENV_FILES` from the variables check 1 reads; its
+    case of T117 must fail.
+  - **Done when** as in Working rules, "Mutation check".
+- [ ] T128 [US1] ⚠RELAX(001:FR-056, FR-057) Add failing tests for check B, an override that appeared in the automatic arrangement, to `tests/integration/test_us1_exec_isolation.py`
+  - FR-033 (amended by safety finding M5), FR-008; research R7, E6.2; data-model.md, "`exec`
+    checks in every other worktree", row B; spec, Edge cases ("appears after provisioning").
+  - New `test_exec_refuses_an_override_that_appeared_in_an_automatic_worktree`: after `up` in the
+    automatic arrangement (wtenv's `compose.override.yaml`), each of these → exit 125,
+    `isolation_unavailable`, sentinel not run: a tracked `compose.override.yml` added
+    (`override_appeared`, `path` that file); an untracked `docker-compose.override.yaml` added;
+    `compose.override.yaml` replaced by a header-less file (`override_appeared`, `path` it);
+    `compose.override.yaml` replaced by a symbolic link to a file in `decoy` that starts with
+    wtenv's header (`symlink`; nothing read through the link).
+  - As in v0.1.1 (the command runs): nothing changed since `up`; `compose.override.yaml` deleted;
+    a worktree without `[compose]`.
+  - **Done when** the new cases fail under the failing-test rule.
+- [ ] T129 [US1] ⚠RELAX(001:FR-056, FR-057) Apply check B in the automatic arrangement, in `src/wtenv/isolation.py` and `src/wtenv/execcmd.py`
+  - Needs T052 (the four override names and the header line, as check 7 uses them). `lstat` on
+    the four names and one read of the recorded file's first line; the link check comes before
+    the read. `exec` still does not import `wtenv.compose`.
+  - **Done when** `uv run pytest tests/integration/test_us1_exec_isolation.py tests/unit/test_lazy_imports.py -q` exits 0.
+- [ ] T130 [US1] Mutation check: check B, in `src/wtenv/isolation.py` (restored afterwards)
+  - Guard: FR-033, safety finding M5. Remove it; the refusal cases of
+    `test_exec_refuses_an_override_that_appeared_in_an_automatic_worktree` must fail.
+  - **Done when** as in Working rules, "Mutation check".
+- [ ] T133 [US1] Mutation check: post-up commands of a repeat `up` get the isolation environment, in `src/wtenv/provision.py` (restored afterwards)
+  - Guard: FR-033, safety finding M6. Make the repeat-`up` branch run the post-up commands with
+    v0.1.1's `{**os.environ, **variables}`; `test_post_up_commands_get_the_isolation_environment_on_a_repeat_up`
+    (T131) must fail.
+  - **Done when** as in Working rules, "Mutation check".
+- [ ] T140 [US1] Add failing tests for check 2's override-name rule to `tests/integration/test_us1_exec_isolation.py`
+  - FR-033 check 2; safety finding L4; data-model.md, `exec` checks, row 2.
+  - Hand-edited registry, `repository_override` set to each of: `deploy/compose.prod.yml`;
+    `compose.prod.yml`; `compose.override.yml` when the compose file is `deploy/compose.yaml`;
+    `deploy/compose.override.yml` when the compose file is at the root (each file present). Each
+    → exit 125, `recorded_value_invalid`, sentinel not run. Accepted: `compose.override.yml`
+    beside a root `compose.yaml`; `deploy/docker-compose.override.yaml` beside
+    `deploy/compose.yaml`.
+  - **Done when** the new cases fail under the failing-test rule.
+- [ ] T141 [US1] Require `repository_override` to be one of the four override names beside the compose file, in check 2 of `src/wtenv/isolation.py`
+  - Needs T052. `posixpath.dirname(repository_override) == posixpath.dirname(file)` and the base
+    name is one of the four names, after `recorded_path_problem`.
+  - **Done when** `uv run pytest tests/integration/test_us1_exec_isolation.py -q` exits 0.
+- [ ] T142 [US1] Mutation check: check 2's override-name rule, in `src/wtenv/isolation.py` (restored afterwards)
+  - Guard: safety finding L4. Accept any plain path (only `recorded_path_problem`); the
+    `deploy/compose.prod.yml` case of T140 must fail.
+  - **Done when** as in Working rules, "Mutation check".
+- [ ] T143 [US1] Mutation check: post-up commands get the isolation environment at all (FR-033), in `src/wtenv/provision.py` (restored afterwards)
+  - Guard: safety review, item 8. Make `_run_post_up` use v0.1.1's `{**os.environ, **variables}`
+    at both call sites; `test_post_up_commands_get_the_same_compose_environment_as_exec` (T051)
+    and `test_post_up_commands_get_the_isolation_environment_on_a_repeat_up` (T131) must both fail.
   - **Done when** as in Working rules, "Mutation check".
 - [ ] T061 [US1] Group check 4F: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(exec): apply the isolation file in worktrees with a repository-owned override`.
@@ -743,6 +906,48 @@ byte-identical throughout.
   - Guard: analysis G1. Remove the `symlinked_part` check in `_override_step`; the symbolic-link
     cases of T065 (`.wtenv/` and the isolation file) must fail.
   - **Done when** as in Working rules, "Mutation check".
+- [ ] T134 [US1] Add failing tests for the header recheck after the `removing` save to `tests/integration/test_us3_compose.py` and `tests/unit/test_teardown_paths.py`
+  - FR-007, FR-009, 001:FR-087 ("immediately before"); safety finding L1; plan.md S2.
+  - In `up` (the `[compose]`-removed transition of T041) and in `down` and `gc`: monkeypatch the
+    `removing` save (`provision._save_compose_record`, `teardown._set_override_state`) so that,
+    after saving, it replaces the file at the recorded path with an untracked header-less file,
+    as a checkout during the registry-lock wait would. That file survives byte-identical; `up`
+    fails with `ownership_conflict`; `down` and `gc` report it under `failed` and keep the
+    record. Kept: `test_up_does_not_delete_an_override_that_lost_the_header_after_the_plan`.
+  - **Done when** the new cases fail under the failing-test rule.
+- [ ] T135 [US1] Recheck the header after the `removing` save, immediately before the unlink, in `_remove_override` (`src/wtenv/provision.py`) and `_override_step` (`src/wtenv/teardown.py`)
+  - Needs T066. The check before the save stays (a header-less file is never marked
+    `removing`); the new one runs after the save, right before `unlink`. No new unlink call site.
+  - **Done when** `uv run pytest tests/integration/test_us3_compose.py tests/unit/test_teardown_paths.py -q` exits 0.
+- [ ] T136 [US1] Mutation check: the header recheck after the `removing` save, in `src/wtenv/provision.py` and `src/wtenv/teardown.py` (restored afterwards)
+  - Guard: 001:FR-087, safety finding L1. Remove the check after the save, one file at a time;
+    the `up` cases of T134 must fail with the first, the `down`/`gc` cases with the second.
+  - **Done when** as in Working rules, "Mutation check", for both mutations.
+- [ ] T137 [US1] ⚠RELAX(001:FR-087 outcome) Add failing tests for a git-tracked file that keeps wtenv's header to `tests/unit/test_override_inventory.py`, `tests/integration/test_us1_repository_override.py`, and `tests/unit/test_teardown_paths.py`
+  - FR-006 (amended by safety finding L2), SC-007; data-model.md, Override inventory, row
+    "recorded, header present, tracked"; cli.md, `wtenv up` step 5 and `wtenv down`; plan.md,
+    Decisions to review 8.
+  - After an automatic `up`, `git add -f compose.override.yaml` (wtenv's file, header intact):
+    a second `up` → exit 0 and adoption as in T046 (`exec_only`, `repository_override` the
+    path, warning `compose_override_adopted`), the file byte-identical, mode and mtime
+    unchanged. `down --dry-run`, `down`, `gc`, `gc --release` → `kept_items`
+    (`repository_owned`), never `removed`; the file byte-identical.
+  - After an exec-only `up`, `git add -f .wtenv/compose.isolation.yaml`: `up` →
+    `ownership_conflict` (exit 11), nothing changed; `down` and `gc` → `kept_items`, the file
+    byte-identical.
+  - The race of T134 with a tracked file that keeps the header: the file survives.
+  - Inventory unit: recorded path, header present, tracked → `adopt`; untracked → `wtenv_own`.
+  - **Done when** the new cases fail under the failing-test rule.
+- [ ] T138 [US1] ⚠RELAX(001:FR-087 outcome) Never rewrite or delete a git-tracked file at a recorded path, in `src/wtenv/compose.py`, `src/wtenv/provision.py`, and `src/wtenv/teardown.py`
+  - Needs T135. `gitutil.is_tracked` is asked whenever a file exists at the recorded path, not
+    only when the header is missing: in the inventory, in the step-5 isolation-path check, in
+    the recheck before every rewrite (`_compose_step`) and unlink (`_remove_override`, before
+    and after the `removing` save), and in `_override_step`.
+  - **Done when** `uv run pytest tests/unit/test_override_inventory.py tests/integration/test_us1_repository_override.py tests/integration/test_us3_compose.py tests/unit/test_teardown_paths.py -q` exits 0.
+- [ ] T139 [US1] Mutation check: `is_tracked` for a file that keeps wtenv's header, in `src/wtenv/compose.py` (restored afterwards)
+  - Guard: FR-006, safety finding L2. Ask `is_tracked` only when the header is missing (the
+    order before L2); the header-carrying tracked cases of T137 must fail.
+  - **Done when** as in Working rules, "Mutation check".
 - [ ] T071 [US1] Group check 4H: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(down): remove the isolation file and keep repository-owned overrides`.
 
@@ -763,6 +968,16 @@ byte-identical throughout.
   - Only within FR-001 to FR-009 and FR-033. A failure that needs a new behaviour: stop and ask.
   - **Done when** `uv run pytest tests/integration/test_us1_repository_override.py -q` exits 0
     (or T072 passed first, and this task says so).
+- [ ] T144 [US1] Mutation check: `up` never writes, deletes or excludes the repository override (FR-002), in `src/wtenv/provision.py` (restored afterwards)
+  - Guard: plan.md, requirement map, FR-002; safety review, item 8 (T049 covers only the adoption
+    unlink, T070 only teardown). Three mutations, one at a time: (1) in `_compose_step`, also
+    write the isolation text to the path in `repository_override`; (2) when `[compose]` is
+    removed in the exec-only arrangement (T041), also unlink `repository_override`; (3) in
+    `_registry_step`, also add the repository override's pattern to `exclude_patterns`.
+    `test_the_repository_override_is_byte_identical_through_up_down_gc_and_dry_runs` (T072) must
+    fail on (1), the `[compose]`-removed case of T041 on (2), and the exclude assertion of T032
+    ("never the repository override's path") on (3).
+  - **Done when** as in Working rules, "Mutation check", for each of the three mutations.
 - [ ] T074 [US1] Group check 4I: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `test(us1): run three worktrees with a repository-owned override end to end`.
 
@@ -793,6 +1008,12 @@ in CI) and a named project volume.
   - **Done when** the new cases fail under the failing-test rule.
 - [ ] T076 [US3] Resolve `{port}` and `{compose_env:NAME}` in `resolve_url`, in `src/wtenv/database.py`
   - **Done when** `uv run pytest tests/unit/test_database_url.py -q` exits 0.
+- [ ] T145 [US3] Mutation check: `{compose_env:NAME}` values are percent-encoded, in `src/wtenv/database.py` (restored afterwards)
+  - Guard: plan.md, "Points the maintainer should confirm" 5; data-model.md, Compose-hosted
+    database, `url`; safety review, item 8 (it keeps the URL's host local, FR-018, 001:FR-025).
+    Insert the value verbatim; the T075 case with a password holding `@`, `/`, `:` and `%` must
+    fail.
+  - **Done when** as in Working rules, "Mutation check".
 - [ ] T077 [US3] Group check 5A: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(database): build the URL of a compose-hosted database`.
 
@@ -817,11 +1038,60 @@ in CI) and a named project volume.
   - **Done when** the file fails under the failing-test rule.
 - [ ] T079 [US3] Implement `database_port()` and `database_storage()` in `src/wtenv/compose.py`
   - **Done when** `uv run pytest tests/unit/test_compose_database.py -q` exits 0.
+- [ ] T112 [US3] Add failing tests for volume names judged under the wtenv project to `tests/unit/test_compose_database.py`, `tests/unit/test_compose_model.py`, and `tests/integration/test_us3_storage_names.py` (new; `pytestmark = pytest.mark.integration`; Docker)
+  - FR-027, SC-003, SC-004; safety finding H1; data-model.md, Data storage classification;
+    research R4, R7 (last paragraph).
+  - The case: the compose file sets `name: app`; service `db` mounts volume `pgdata`; top-level
+    `volumes: {pgdata: {name: app_pgdata}}`, a name that starts with the repository's own
+    project name; the worktree's wtenv project is the generated `wtenv-feature-x-<hash>`, which
+    differs from `app`. Expected: `database_storage_shared`, `storage` `fixed_name_volume`,
+    `name` `app_pgdata`. The same with no `name:` in the compose file and the compose file's
+    directory named `app`. Control: `volumes: {pgdata: {}}` → project-scoped, accepted, no
+    warning.
+  - Unit: through the step-5 resolution with a stub runner that answers as Compose does
+    (research R4): without `-p`, model `name` `app` and the unnamed `pgdata` resolved to
+    `app_pgdata`; with `-p P`, model `name` P and the unnamed `pgdata` resolved to `P_pgdata`;
+    a `name:` is kept as written either way. `resolution_command` includes `-p <project>` with
+    `type = "compose"` and is v0.1.1's command otherwise (T029's case unchanged).
+  - Integration: the same files resolved by the real Compose through `compose.resolve_model` and
+    `compose.database_storage`. Only `docker compose config` runs; nothing is created.
+  - **Done when** the new cases fail under the failing-test rule.
+- [ ] T113 [US3] Resolve with `-p <project>` for the storage check, in `src/wtenv/compose.py` and `src/wtenv/provision.py`
+  - Needs T079. `resolution_command` takes an optional project; `_compose_plan` passes the
+    recorded or generated project when `[database] type = "compose"`. `database_storage`
+    compares a volume's `name` with `<project>_<key>`. Without `type = "compose"`, the command
+    and every result are v0.1.1's (FR-008, FR-028).
+  - **Done when** `uv run pytest tests/unit/test_compose_database.py tests/unit/test_compose_model.py tests/integration/test_us3_storage_names.py -q` exits 0.
+- [ ] T125 [US3] Add failing tests for a volume device that is not an absolute path to `tests/unit/test_compose_database.py`
+  - FR-027 (amended by safety finding M4); data-model.md, Data storage classification, row
+    `device_not_absolute`; research R4.
+  - `database_storage_shared`, `storage` `device_not_absolute`, `details.name` the device as
+    written, for: `driver_opts: {type: nfs, o: "addr=10.0.0.5,rw", device: ":/exports/pg"}`;
+    `type: nfs` with `device: exports/pg`; `type: cifs` with `device: nas/pg`; `type: none`,
+    `o: bind` with `device: ./data` and with `device: data`. The test runs with the current
+    directory set to the worktree root, so a device resolved against it would land inside the
+    worktree.
+  - Unchanged: an absolute device is still judged as a bind (inside → warning
+    `worktree_directory`, outside → `host_directory`); a volume without `driver_opts`.
+  - **Done when** the new cases fail under the failing-test rule.
+- [ ] T126 [US3] Refuse a non-absolute `nfs`, `cifs` or local-bind device, in `database_storage` (`src/wtenv/compose.py`)
+  - Needs T113. `os.path.isabs(device)` on the device as written; a relative device is never
+    passed to `realpath`.
+  - **Done when** `uv run pytest tests/unit/test_compose_database.py -q` exits 0.
+- [ ] T127 [US3] Mutation check: the non-absolute device row, in `src/wtenv/compose.py` (restored afterwards)
+  - Guard: FR-027, safety finding M4. Judge a relative device as a bind resolved against the
+    current directory (the plan before M4); the `device: ./data` case of T125 must fail (it is
+    then classed `worktree_directory`).
+  - **Done when** as in Working rules, "Mutation check".
 - [ ] T080 [US3] Mutation check: FR-027 row "external volume", in `src/wtenv/compose.py` (restored afterwards)
   - Classify `external: true` as accepted; its case must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T081 [US3] Mutation check: FR-027 row "fixed-name volume" (R8 name rule), in `src/wtenv/compose.py` (restored afterwards)
-  - Classify a fixed `name` as project-scoped; its case must fail.
+- [ ] T081 [US3] Mutation check: FR-027 row "fixed-name volume" (R8 name rule, judged under the wtenv project), in `src/wtenv/compose.py` (restored afterwards)
+  - Restore the old comparison: resolve without `-p` and compare the volume's `name` with
+    `<model name>_<key>`. The case of T112 (compose `name: app`, volume `name: app_pgdata`, a
+    wtenv project other than `app`) must fail, in the unit and in the integration test. A case
+    whose fixed name has nothing in common with the project name does not count: it is refused
+    under the old comparison too, so it cannot show safety finding H1.
   - **Done when** as in Working rules, "Mutation check".
 - [ ] T082 [US3] Mutation check: FR-027 row "`driver_opts.device`", in `src/wtenv/compose.py` (restored afterwards)
   - Ignore `device`; the case of a project-named volume whose device is outside the worktree must fail.
@@ -933,7 +1203,8 @@ For these tasks the failing check is the task's `grep` command, run before the e
 fail.
 
 - [ ] T095 [P] ⚠RELAX(001:FR-030) Document spec 002 in `README.md`
-  - FR-004, FR-011, FR-025; cli.md, "User documentation (README) obligations".
+  - FR-002, FR-004, FR-011, FR-025, FR-033; cli.md, "User documentation (README) obligations";
+    spec, Known limits.
   - **Override and `exec`**: in a repository that tracks its own Compose override, Compose
     commands are isolated **only when run through `wtenv exec`**; how to start the stack
     (`wtenv exec -- docker compose up -d`); post-up commands get the same isolation.
@@ -957,6 +1228,14 @@ fail.
     named like a `WTENV_PORT_…` variable); every writable mount
     of the database service counts as data (use `:ro`); fixed `image:` tags are shared between
     worktrees; `isolation_unavailable` reasons and fixes; exit statuses 20–23 in the status table.
+  - **`.env` files and the exclude block** (safety findings M2, M3; spec, Known limits): through
+    `wtenv exec` in an exec-only worktree Compose reads only the `.env` beside the compose file
+    (`COMPOSE_ENV_FILES`); elsewhere a `.env` in the current directory (Compose 2.24.4: instead
+    of the project's; 5.1.4: as well, winning) or a `COMPOSE_ENV_FILES` file can change the
+    project name, so run Compose from the compose file's directory. An untracked override of
+    your own can be ignored by git through wtenv's exclude block, written for another worktree;
+    then a checkout or `git clean -X` can overwrite or delete it, and `up` warns
+    `compose_override_excluded`.
   - **Downgrade** (D1): before going back to v0.1.x, run `wtenv down` in every exec-only
     worktree. Otherwise the registry, one file for every repository on the machine, becomes
     unreadable to v0.1.x (`registry_unreadable`), and the post-checkout hook then fails silently.
@@ -965,7 +1244,8 @@ fail.
     `grep -n 'without isolation' README.md`, `grep -n 'type = "compose"' README.md`,
     `grep -n 'host-side' README.md`, `grep -n 'isolation_unavailable' README.md`,
     `grep -n 'port_variable_conflict' README.md`, `grep -n '2.24.4' README.md`,
-    `grep -n 'my_api' README.md`, `grep -in 'downgrad' README.md`; and
+    `grep -n 'my_api' README.md`, `grep -in 'downgrad' README.md`,
+    `grep -n 'compose_override_excluded' README.md`, `grep -n 'COMPOSE_ENV_FILES' README.md`; and
     `grep -c 'already exists and wtenv did not' README.md` prints `0` (the v0.1 refusal line is
     gone).
 - [ ] T096 [P] Update `docs/roadmap.md`
@@ -975,9 +1255,11 @@ fail.
     `VOLUME`/`PGDATA` to narrow FR-026/FR-027; naming two host addresses of one container port
     apart. In "From the fastapi-template dogfood run", mark the three rows delivered in 0.2.0
     (spec 002), noting the variable names are `WTENV_PORT_…`, not the `WTENV_BACKEND_8000` example.
-    Add every idea noted during implementation, with its source.
-  - **Done when** `grep -n 'From planning feature 002' docs/roadmap.md` and
-    `grep -c 'spec 002' docs/roadmap.md` (≥ 3) both succeed.
+    Add every idea noted during implementation, with its source, and the entries proposed in
+    this file's "Deferred" section (safety review, 2026-10-10).
+  - **Done when** `grep -n 'From planning feature 002' docs/roadmap.md`,
+    `grep -c 'spec 002' docs/roadmap.md` (≥ 3) and `grep -n 'volumes_from' docs/roadmap.md` all
+    succeed.
 - [ ] T097 Group check 7A: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `docs: document overrides, port variables and compose-hosted databases`.
 
@@ -988,7 +1270,7 @@ fail.
     listed; a step that fails unless the log has `PASSED` for
     `test_the_isolation_file_replaces_the_repository_overrides_ports_on_this_compose` and has
     lines for `test_us1_repository_override.py`, `test_us1_exec_isolation.py`,
-    `test_us2_port_variables.py` and `test_us3_compose_database.py`; the existing no-skip step
+    `test_us2_port_variables.py`, `test_us3_compose_database.py` and `test_us3_storage_names.py`; the existing no-skip step
     unchanged (only `--orphan` allowed). Pull every image the new tests use (expected:
     `postgres:17` and `valkey/valkey:latest`, already pulled; add any other in all three jobs).
   - `coverage` job: add `uv run coverage report --fail-under=80 --include='*/wtenv/isolation.py'`.
@@ -1007,7 +1289,12 @@ fail.
     repository override that adds a second host port for the same container port); two service
     names that map to one variable name (`my-api` and `my_api`, `API` and `api`); and a `ports`
     entry named like a `WTENV_PORT_…` variable. Existing compose users see new `WTENV_PORT_…`
-    lines in wtenv's env-file section, reported `updated` on the first `up`. **Known limits**: a
+    lines in wtenv's env-file section, reported `updated` on the first `up`. Also changed for
+    v0.1.1 setups (plan.md, Decisions to review): `up` refuses `COMPOSE_PROJECT_NAME` and
+    `COMPOSE_FILE` in the `.env` forms `KEY: value` and after a byte-order mark; `exec` exits 125
+    when an inherited `COMPOSE_FILE` names another worktree's isolation file, or when an override
+    file appeared beside wtenv's override; a git-tracked generated override is adopted and kept,
+    never rewritten or deleted. **Known limits**: a
     plain `docker compose` in an exec-only worktree is not isolated; before downgrading to
     v0.1.x, run `wtenv down` in exec-only worktrees, or the registry becomes unreadable to v0.1.x
     for every worktree (D1).
@@ -1080,6 +1367,14 @@ fail.
   4C; 4H needs 4E (adopted files) and 4C. Inside 4C: T104 → T105 → T032 → T033 → T106, then the
   mutation checks; T033 needs T105 (`override_problem` accepts the isolation path), and T106
   needs T033.
+- **Safety review fixes** (T112–T147): each sits in the group whose code it changes and runs
+  failing test → change → mutation check in file order. 4A: T147 after T027. 4B: T146 after
+  T030. 4C: T122 → T123 → T124 after T107 (T123 needs T033). 4F: T131 → T132 between T051 and
+  T052 (T132 needs T033); after T060: T114 → T115 → T116, T117 → T118 → T119–T121, T128 → T129 →
+  T130, T133, T140 → T141 → T142, T143 (T115, T118, T129 and T141 need T052). 4H: T134 → T135 →
+  T136 → T137 → T138 → T139 after T110 (T135 needs T066, T138 needs T135). 4I: T144 after T073.
+  5A: T145 after T076. 5B: T112 → T113 → T125 → T126 → T127 after T079 (T113 needs T079, T126
+  needs T113), before T080; T081 uses T112's case.
 - **Phase 5, US3** (T075–T090): after Phase 4 (the database service is found in the combined
   model; teardown runs in both arrangements). 5A and 5B are independent; 5C needs both; 5D needs 5C.
 - **Phase 6** (T091–T094): after Phase 5.
@@ -1117,8 +1412,8 @@ Phase 7:  T095 (README) | T096 (roadmap); T099 (CHANGELOG) | T100 (version)
 | Relaxation | Tasks | Containment (plan.md) |
 |------------|-------|-----------------------|
 | ⚠RELAX(001:FR-030): plain `docker compose` is not isolated in exec-only worktrees | T025, T032, T033, T051, T052, T062, T095 | S5: only when a repository-owned override is detected; reported in text, JSON and the `compose_isolation_exec_only` warning; documented; automatic arrangement unchanged (T032 scenario 6, T051 `test_exec_in_an_automatic_worktree_sets_exactly_the_section`) |
-| ⚠RELAX(001:FR-087 outcome): a git-tracked header-less file at the recorded path is adopted/kept instead of `ownership_conflict`/`failed` | T046, T047, T065, T066 | S3: header check unchanged; both conditions required; never written or deleted; untracked case unchanged (T046, T068) |
-| ⚠RELAX(001:FR-056, FR-057): in exec-only worktrees `exec` refuses every command when it cannot apply the isolation settings | T051, T052 | S5: only when a repository-owned override is detected; one stable code, `isolation_unavailable`; automatic arrangement unchanged (T051 `test_exec_in_an_automatic_worktree_sets_exactly_the_section`) |
+| ⚠RELAX(001:FR-087 outcome): a git-tracked file at the recorded path, header-less or keeping wtenv's header, is adopted/kept instead of `ownership_conflict`/`failed` or a rewrite/delete | T046, T047, T065, T066, T137, T138 | S3: header check unchanged; `is_tracked` required; never written or deleted; untracked case unchanged (T046, T068, T139) |
+| ⚠RELAX(001:FR-056, FR-057): in exec-only worktrees `exec` refuses every command when it cannot apply the isolation settings; in every other worktree only checks A and B (safety M1, M5) | T051, T052, T114, T115, T128, T129 | S5: only when a repository-owned override is detected, or for checks A and B; one stable code, `isolation_unavailable`; the automatic arrangement's environment unchanged (T051 `test_exec_in_an_automatic_worktree_sets_exactly_the_section`) |
 
 ### Mutation checks, one per guard
 
@@ -1145,8 +1440,23 @@ Phase 7:  T095 (README) | T096 (roadmap); T099 (CHANGELOG) | T100 (version)
 | Header check before delete (teardown) | S4 | T069 |
 | Only `ComposeRecord.override` is deleted | FR-002 | T070 |
 | Symbolic-link refusal when teardown deletes the isolation file | S4 | T110 |
-| FR-027 rows: external, fixed name, device, outside bind | S6, R4 | T080–T083 |
+| FR-027 rows: external, fixed name (judged under the wtenv project, safety H1), device, outside bind | S6, R4 | T080–T083 |
 | `<project>_` prefix rule (reading R8) | S6 | T089 |
+| FR-027 row: non-absolute `nfs`/`cifs`/local-bind device (safety M4) | R4 | T127 |
+| FR-033 check A: inherited `COMPOSE_FILE` naming another worktree's isolation file (safety M1) | S5 | T116 |
+| `.env` pattern accepts `:` and a byte-order mark (safety M2) | S5, R7 | T119 |
+| `exec` sets `COMPOSE_ENV_FILES`; an inherited one is refused (safety M2) | S5, R7 | T120, T121 |
+| FR-033 check B: an override appeared in the automatic arrangement (safety M5) | S5 | T130 |
+| Post-up isolation on a repeat `up` (safety M6) | S5 | T133 |
+| Post-up isolation at all (safety review, item 8) | S5 | T143 |
+| Check 2: `repository_override` is an override name beside the compose file (safety L4) | S5 | T142 |
+| Excluded-override warning (safety M3) | FR-002 | T124 |
+| Header recheck after the `removing` save (safety L1) | S2, S4 | T136 |
+| `is_tracked` for a file that keeps wtenv's header (safety L2) | S3 | T139 |
+| `up` never writes, deletes or excludes the repository override (item 8) | FR-002 | T144 |
+| `{compose_env:}` percent-encoding (item 8) | FR-018 | T145 |
+| `compose_path_separator` refusal (item 8) | R2 | T146 |
+| Inventory: unrecorded file with wtenv's header is `ownership_conflict` (item 8, C3) | FR-001 | T147 |
 
 ## Requirement coverage
 
@@ -1155,16 +1465,16 @@ SC-001…SC-009: none is uncovered.
 
 | Requirement | Tasks |
 |-------------|-------|
-| FR-001 | T025, T026, T027, T032, T033, T072, T106 |
-| FR-002 | T032, T033, T041, T065, T066, T070, T072, T106 |
-| FR-003 | T029, T030, T032, T033 |
+| FR-001 | T025, T026, T027, T032, T033, T072, T106, T147 |
+| FR-002 | T032, T033, T041, T065, T066, T070, T072, T106, T122, T123, T124, T144 |
+| FR-003 | T029, T030, T032, T033, T146 |
 | FR-004 | T051, T052, T062, T095 |
 | FR-005 | T062, T063 |
-| FR-006 | T026, T046, T047, T048, T049, T065, T066, T068 |
-| FR-007 | T025, T026, T027, T041, T042 |
+| FR-006 | T026, T046, T047, T048, T049, T065, T066, T068, T137, T138, T139 |
+| FR-007 | T025, T026, T027, T041, T042, T134, T135, T136 |
 | FR-008 | T002, T032, T041, T091 |
-| FR-009 | T032–T039, T041, T065–T069, T104–T107, T110 |
-| FR-010 | T019, T020 |
+| FR-009 | T032–T039, T041, T065–T069, T104–T107, T110, T134, T135, T136 |
+| FR-010 | T019, T020, T131, T132 |
 | FR-011 | T015, T016, T095 |
 | FR-012 | T015, T016, T017, T019, T029, T085 |
 | FR-013 | T019, T020, T086 |
@@ -1172,7 +1482,7 @@ SC-001…SC-009: none is uncovered.
 | FR-015 | T016, T019, T029 |
 | FR-016 | T019 |
 | FR-017 | T012, T013 |
-| FR-018 | T012, T013, T075, T076 |
+| FR-018 | T012, T013, T075, T076, T145 |
 | FR-019 | T085, T086 |
 | FR-020 | T008, T012, T075, T085 |
 | FR-021 | T078, T079, T085 |
@@ -1181,27 +1491,27 @@ SC-001…SC-009: none is uncovered.
 | FR-024 | T085, T086 |
 | FR-025 | T095 |
 | FR-026 | T078, T079, T085 |
-| FR-027 | T078–T083, T085 |
+| FR-027 | T078–T083, T085, T112, T113, T125, T126, T127 |
 | FR-028 | T002, T012, T019, T091, T092 |
 | FR-029 | T002, T008, T009, T010, T108 |
-| FR-030 | T010, T017, T034–T039, T043, T044, T048, T049, T053–T060, T067–T070, T080–T083, T089, T091, T107, T109, T110 |
+| FR-030 | T010, T017, T034–T039, T043, T044, T048, T049, T053–T060, T067–T070, T080–T083, T089, T091, T107, T109, T110, T116, T119–T121, T124, T127, T130, T133, T136, T139, T142–T147 |
 | FR-031 | T003, T004, T005, T006 |
 | FR-032 | T003, T006, T062, T091 |
-| FR-033 | T051–T061, T109 |
+| FR-033 | T051–T061, T109, T114–T121, T128–T133, T140–T143 |
 | SC-001 | T102 |
 | SC-002 | T019, T102 |
-| SC-003 | T085, T102 |
-| SC-004 | T088, T102 |
+| SC-003 | T085, T102, T112 |
+| SC-004 | T088, T102, T112 |
 | SC-005 | T072, T102 |
 | SC-006 | T091, T093, T102 |
-| SC-007 | T065, T072, T088, T102 |
+| SC-007 | T065, T072, T088, T102, T137 |
 | SC-008 | T015, T102 |
 | SC-009 | T091, T102 |
 
 ## Notes
 
-- Total: 111 tasks (T001–T111). T104–T111 were added by the analysis fixes; their place in the
-  file, not their number, gives the order.
+- Total: 147 tasks (T001–T147). T104–T111 were added by the analysis fixes and T112–T147 by the
+  safety review fixes; their place in the file, not their number, gives the order.
 - plan.md's "Existing tests whose expected outcome this feature changes" names three tests; the
   code has five that assert the v0.1 refusal. The maintainer chose (2026-10-10) to rewrite all
   five (T025, T032), and a sixth for the symbolic-link rule (T106). plan.md is not edited by this
@@ -1236,3 +1546,68 @@ R2, D2) are not applied.
 
 Coverage table, mutation index and notes updated for T104–T111: tasks.md:1074, 1133-1147,
 1151-1199, 1203-1207.
+
+## Deferred
+
+LOW findings of the spec 002 safety review (2026-10-10) that touch no write or delete path, and
+one gap found while fixing H1. They are **not** built by this task list. The text below is
+proposed for `docs/roadmap.md`; T096 adds it there. `docs/roadmap.md` itself is not edited by
+these fixes.
+
+```markdown
+### From the spec 002 safety review (2026-10-10)
+
+- **Check the resolved compose database URL for a local host** (safety L3). `{env:NAME}` is
+  inserted verbatim, so a value such as `x@db.internal:5432/app?` moves the host of
+  `DATABASE_URL` off the machine, and host-side migrations or test resets reach a non-local
+  database. Postgres mode already checks the resolved URL again (`postgres_target`); compose
+  mode should apply the same host check to the resolved URL in steps 7 and 12 (FR-018,
+  001:FR-025).
+- **Refuse `volumes_from` on the compose-hosted database service** (safety L5). The storage
+  classifier looks only at the service's own `volumes`, so `volumes_from:
+  ["container:myapp-db-1"]`, or a service whose volume has a fixed name, shares data while
+  `up` only warns `no_volume` (FR-027).
+- **`exec` checks that the isolation file is still current** (safety L6). A `git pull` that
+  adds a published port to the repository's override leaves the isolation file without an
+  `!override` entry for it, so `wtenv exec -- docker compose up -d` publishes that port
+  un-remapped until the next `up`. Record the SHA-256 of the repository override in the
+  exec-only record (an optional field, as FR-029 allows) and fail with a new reason,
+  `repository_override_changed`. v0.1.1 has the same gap for the compose file in the automatic
+  arrangement.
+- **`compose_fixed_volume_name` judged under the wtenv project** (found while fixing safety H1).
+  The v0.1.x warning still compares a volume's `name` with the repository's own model name, so
+  `name: app_pgdata` in a repository named `app` is not warned about for services other than a
+  compose-hosted database. Resolving with `-p <project>` in every mode would fix it but changes
+  v0.1.1's resolution command (plan.md, Decisions to review 7).
+```
+
+## Safety review fixes
+
+Fixes for the spec 002 safety review (2026-10-10), applied to the spec artifacts only. The three
+Compose claims the review took from compose-go were first checked by experiment on Compose
+2.24.4 and 5.1.4 (research R7): all three hold, and two results go further (the current
+directory's `.env` is read by 5.1.4 too; a `COMPOSE_ENV_FILES` file can set the project name).
+The maintainer decided M1 and M5. Every fix follows the same order: failing test, change,
+mutation check. Line numbers are those of this commit.
+
+| Finding | What changed | File and lines |
+|---------|--------------|----------------|
+| H1 (HIGH) | The storage classifier judges volume names on the model resolved with `-p <project>` (recorded or generated wtenv project); `-p` is passed only with `[database] type = "compose"`, so v0.1.1 resolution is unchanged. New T112 (failing test: compose `name: app`, volume `name: app_pgdata`, a wtenv project other than `app`; unit with a stub runner and integration with the real Compose), T113 (change). T081 is the mutation: it restores the old comparison and must fail on T112's case | spec.md:595-597; data-model.md:185-190, 196-200; research.md:329-332, 628-634; contracts/cli.md:69-71; plan.md:226, 518-522; tasks.md:1041-1064 (T112, T113), 1089-1095 (T081) |
+| M1 (MED, decided) | In any worktree that is not exec-only, `exec` fails with `isolation_unavailable` (exit 125, `compose_env_override`, `path` the other file) when an inherited `COMPOSE_FILE` names another worktree's `.wtenv/compose.isolation.yaml`; any other `COMPOSE_FILE` is v0.1.1's (check A). FR-033's "behaves as in v0.1.1" sentence and the Relationship-to-001 bullet and table row are amended. Post-up commands are not covered (plan.md, Decisions to review 4). New T114, T115, T116 | spec.md:284-288, 359-367, 470-473, 494; data-model.md:131-141; contracts/cli.md:15, 32, 189-194; plan.md:208, 242, 327-331, 381, 504-507; tasks.md:733-755 |
+| M2 (MED) | Check 1 and `up`'s `check_environment` share a pattern that accepts `=` or `:` and a leading byte-order mark (E6.1); check 1 also refuses an inherited `COMPOSE_ENV_FILES` (E6.3d); `exec`, post-up commands and `up`'s verification set `COMPOSE_ENV_FILES` to the checked `.env` or `/dev/null` (E6.3b, E6.3c). The spec's new Known limits state what stays undetected (automatic arrangement and plain commands). R2's E2.11 claim and known-limit text are corrected. New T117–T121 | spec.md:278, 285-288, 354-360, 589-590, 606-620; data-model.md:115, 123; research.md:14-15, 165-167, 170-182, 526-634; contracts/cli.md:15, 66-68, 100-102, 178-186, 215-223; contracts/files.md:103; plan.md:335-338, 492-503; tasks.md:756-795, 1231-1238 (T095), 1248, 1292-1297 (T099) |
+| M3 (MED) | The smallest fix: in the exec-only `up`, an untracked repository override is checked with `git check-ignore -v --no-index`; a match from a line inside wtenv's block gives the new warning `compose_override_excluded` (`file`, `pattern`), and the README says why. The change for v0.1.1 users is stated in plan.md, Decisions to review 1. New T122, T123, T124 | spec.md:303-306; data-model.md:217; contracts/cli.md:60-64, 124, 223-225; contracts/files.md:61-65; contracts/json_models.py:129-133; plan.md:200, 261, 479-491; tasks.md:563-587, 1231-1238 (T095) |
+| M4 (MED) | A volume of the `nfs`, `cifs` or local bind driver whose `driver_opts.device` is not an absolute path is refused with `database_storage_shared`, new `storage` value `device_not_absolute`, the device never resolved against any directory. New T125, T126, T127 | spec.md:425-427; data-model.md:199; research.md:330; contracts/cli.md:35; plan.md:226, 245, 515-517; tasks.md:1065-1085 |
+| M5 (MED, decided) | In a worktree whose recorded compose arrangement is automatic, `exec` fails (`override_appeared`, or `symlink`) when another override name exists beside the compose file or the recorded override is a link or lost wtenv's header (check B; Compose prefers `compose.override.yml` and only warns, E6.2). FR-033 amended. New T128, T129, T130 | spec.md:363-367, 470-473, 494; data-model.md:135-141; research.md:581-584; contracts/cli.md:32, 189-194; plan.md:208, 327-331, 508-514; tasks.md:796-817 |
+| M6 (MED) | New T131 (failing test: post-up commands of a repeat `up` with nothing changed get `COMPOSE_FILE`, `COMPOSE_PATH_SEPARATOR` and the port variables), T132 (`_run_post_up` builds its environment from the entry at both call sites), placed before T052; T133 is the mutation (repeat-`up` branch gets v0.1.1's environment) | contracts/cli.md:100-102; plan.md:208, 343-345; tasks.md:679-695, 818-822 |
+| L1 (LOW, write/delete path) | The header is rechecked after the `removing` save, immediately before the unlink, in `_remove_override` and `_override_step`. New T134, T135, T136 | plan.md:283-286; tasks.md:909-925 |
+| L2 (LOW, write/delete path) | A git-tracked file at a recorded path is never rewritten or deleted, whatever its header: adopted at an auto-loaded name, `ownership_conflict` at the isolation path, `kept_items` in `down`/`gc`. FR-006, the 001:FR-087 row, the inventory, the adoption row, cli.md and `KeptItem` amended. New T137, T138, T139 | spec.md:325-330, 496; data-model.md:56-58, 87; contracts/cli.md:51-53, 60-61, 139-140; contracts/json_models.py:123-125, 308-309; plan.md:204, 297-299, 523-528; tasks.md:926-950, 1415 |
+| L4 (LOW, write path) | Check 2 also requires `repository_override` to be exactly `dirname(file)/` plus one of the four override names. New T140, T141, T142 | data-model.md:124; tasks.md:823-839 |
+| L3, L5, L6 (LOW) | Deferred: proposed `docs/roadmap.md` text in "Deferred" (with the `compose_fixed_volume_name` gap found while fixing H1); T096 copies it to the roadmap. Not built | tasks.md:1258-1262 (T096), 1550-1582 |
+| Item 8 (uncovered guards) | Mutation checks: T143 post-up isolation at both call sites; T144 `up` never writes, deletes or excludes the repository override (FR-002, three mutations); T145 `{compose_env:}` percent-encoding; T146 the `:` path refusal; T147 the inventory's refusal of an unrecorded file with wtenv's header | tasks.md:391-395 (T147), 418-421 (T146), 840-844 (T143), 971-980 (T144), 1011-1016 (T145) |
+
+Also updated for T112–T147: the dependency lines (tasks.md:1370-1377), the relaxations and
+mutation indexes (tasks.md:1415-1416, 1443-1459), the coverage table (tasks.md:1468-1507), the
+notes (tasks.md:1513-1514), T098's list of CI test files (tasks.md:1273), plan.md's mutation
+list (plan.md:411-417) and its new "Decisions to review" (plan.md:474-528). Research harness:
+`research/e6.sh`, `research/e6_pattern.py`; logs `research/out-e6-2.24.4.txt`,
+`research/out-e6-5.1.4.txt`.

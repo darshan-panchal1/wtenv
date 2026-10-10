@@ -53,7 +53,8 @@ Each existing path among the four override names beside the compose file is clas
 
 | Path | Header line | Git tracks it | Class |
 |------|-------------|---------------|-------|
-| = `ComposeRecord.override` | present | — | `wtenv_own` |
+| = `ComposeRecord.override` | present | no | `wtenv_own` |
+| = `ComposeRecord.override` | present | yes | `adopt` (FR-006): counted as repository-owned; a tracked file is never written or deleted, whatever its header |
 | = `ComposeRecord.override` | absent | yes | `adopt` (FR-006): counted as repository-owned |
 | = `ComposeRecord.override` | absent | no | `ownership_conflict`, as 001:FR-087 |
 | any other of the four names, a regular file | present | any | `ownership_conflict`, as v0.1.1: wtenv's header means wtenv wrote it, for example before the registry was lost |
@@ -83,7 +84,7 @@ changes `override`, or, when `override` stays the isolation path, in step 8.
 | none | `automatic` | v0.1.1 | v0.1.1 |
 | none | `exec_only` | new record: `override = .wtenv/compose.isolation.yaml` (`creating`), `repository_override = <path>` | write + verify the isolation file; save `created` |
 | `automatic` | `exec_only` (a repository override appeared under **another** name) | the old record, fields unchanged (`repository_override` absent), as `removing` | `_remove_override` on the old file (header rechecked immediately before the unlink); save the new record: `override = .wtenv/compose.isolation.yaml` (`creating`), `repository_override = <path>`; write + verify; save `created` |
-| `automatic` | `exec_only` by adoption (FR-006: the recorded path now holds a tracked, header-less file) | one save that replaces the record: `override = .wtenv/compose.isolation.yaml` (`creating`), `repository_override = <old override path>`; the old path's pattern leaves `exclude_patterns`; warning `compose_override_adopted`. The old record is **never** marked `removing` | the path-change branch is **not** taken (`override` already equals the plan's); write + verify the isolation file; save `created`. The adopted file is **not** touched |
+| `automatic` | `exec_only` by adoption (FR-006: the recorded path now holds a tracked file, header-less or with wtenv's header) | one save that replaces the record: `override = .wtenv/compose.isolation.yaml` (`creating`), `repository_override = <old override path>`; the old path's pattern leaves `exclude_patterns`; warning `compose_override_adopted`. The old record is **never** marked `removing` | the path-change branch is **not** taken (`override` already equals the plan's); write + verify the isolation file; save `created`. The adopted file is **not** touched |
 | `exec_only` | `automatic` (the repository override disappeared; FR-008, spec Edge cases) | the old record, fields unchanged (`repository_override` still set), as `removing` | `_remove_override` on the isolation file (header rechecked); save the new record: auto-loaded override (`creating`), no `repository_override`; write + verify; save `created` |
 | `exec_only` | `exec_only`, another repository override name | the record with `repository_override` updated; `override` unchanged | isolation file rewritten if its text changed |
 | any | no `[compose]` | unchanged from v0.1.x (`removing`) | wtenv's recorded file removed (header rechecked); `repository_override` goes with the record |
@@ -111,6 +112,7 @@ arrangement only:
 |----------|-------|
 | `COMPOSE_FILE` | `<root>/<file>:<root>/<repository_override>:<root>/.wtenv/compose.isolation.yaml` (absolute paths, `<root>` = recorded worktree path) |
 | `COMPOSE_PATH_SEPARATOR` | `:` |
+| `COMPOSE_ENV_FILES` | `<root>/<dirname(file)>/.env`, the file check 1 read, when it exists; otherwise `/dev/null`. Compose then reads no other `.env`, from any directory (research R7, E6.3b, E6.3c) |
 
 `COMPOSE_PROJECT_NAME` is never set (research R2).
 
@@ -118,8 +120,8 @@ arrangement only:
 
 | # | Check | `reason` of `isolation_unavailable` |
 |---|-------|-------------------------------------|
-| 1 | `COMPOSE_PROJECT_NAME` or `COMPOSE_FILE` non-empty in the calling environment, or set in `.env` beside the compose file (the same rule as `up`'s `check_environment`) | `compose_env_override` (`variable`; `path` is the `.env` file when the value comes from it) |
-| 2 | `override` is exactly the isolation path, `repository_override` and `file` pass `recorded_path_problem` | `recorded_value_invalid` |
+| 1 | `COMPOSE_PROJECT_NAME`, `COMPOSE_FILE` or `COMPOSE_ENV_FILES` non-empty in the calling environment, or `COMPOSE_PROJECT_NAME` or `COMPOSE_FILE` set in `.env` beside the compose file (the same rule as `up`'s `check_environment`; the line pattern accepts `=` or `:` after the name and an optional leading byte-order mark: `\ufeff?\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*[=:]\s*(.*)`, research R7) | `compose_env_override` (`variable`; `path` is the `.env` file when the value comes from it) |
+| 2 | `override` is exactly the isolation path, `repository_override` and `file` pass `recorded_path_problem`, and `repository_override` is exactly `dirname(file)/` plus one of the four override names (001 files.md, Names) | `recorded_value_invalid` |
 | 3 | No symbolic link from the root down to the isolation file (`identity.symlinked_part`) | `symlink` (`path` is the link) |
 | 4 | The isolation file exists | `isolation_file_missing` |
 | 5 | Its first line is wtenv's header | `isolation_file_not_wtenvs` |
@@ -127,7 +129,15 @@ arrangement only:
 | 7 | No other of the four override names exists beside the compose file | `override_appeared` (`path`) |
 
 The worktree must still be `provisioned` first (001:FR-057, unchanged). In an automatic
-worktree none of these checks run, and `exec` is v0.1.1's.
+worktree checks 1 to 7 do not run, the command's environment is v0.1.1's, and `exec` runs only
+the checks below (FR-033), with the same error code, exit status 125 and nothing run.
+
+### `exec` checks in every other worktree (FR-033)
+
+| # | Applies to | Check | `reason` of `isolation_unavailable` |
+|---|------------|-------|-------------------------------------|
+| A | every provisioned worktree that is not exec-only (with or without `[compose]`) | No entry of the inherited `COMPOSE_FILE` (split on the inherited `COMPOSE_PATH_SEPARATOR`, default `:`) ends in `/.wtenv/compose.isolation.yaml` and differs from `<root>/.wtenv/compose.isolation.yaml`. Any other `COMPOSE_FILE` is passed through as in v0.1.1 | `compose_env_override` (`variable` `COMPOSE_FILE`; `path` the other worktree's isolation file) |
+| B | the automatic arrangement (a compose record whose `override` is an auto-loaded name) | No other of the four override names exists beside the compose file (`os.path.lexists`); the recorded override, when it exists, is not a symbolic link and starts with wtenv's header line. A missing recorded override is not checked (v0.1.1) | `override_appeared` (`path` the file that appeared, or the recorded one); `symlink` (`path` the link) |
 
 ## Published port and port variable (Story 2)
 
@@ -173,16 +183,22 @@ Details in [contracts/config.md](contracts/config.md).
 ### Data storage classification (FR-026, FR-027; research R4)
 
 Data mounts: the service's `volumes` entries of type `volume` or `bind` that are not
-`read_only`.
+`read_only`. Volume names are judged on the model resolved with `-p <project>`, the recorded
+project or, on a first `up`, the generated one: `<project>` below is that name. In that model a
+project-scoped volume is named `<project>_<key>` and an explicit `name:` is kept as written, so
+`name: app_pgdata` in a repository whose own model is named `app` is a fixed name (safety
+finding H1). Step 5 adds `-p <project>` to the resolution command only when `[database] type =
+"compose"`; otherwise the command is v0.1.1's.
 
 | Mount | Class | Result |
 |-------|-------|--------|
 | none at all | `no_volume` | warning `compose_database_data_kept` |
 | `volume` without `source` | `anonymous_volume` | warning `compose_database_data_kept` |
 | `volume` → top-level `external: true` | `external_volume` | `database_storage_shared` |
-| `volume` → top-level `name` ≠ `<model name>_<key>` | `fixed_name_volume` | `database_storage_shared` |
-| `volume` → top-level `driver_opts.device` = D | judged as a bind of D | see the two bind rows |
-| `volume` → `<model name>_<key>`, no device | project-scoped | accepted, no warning |
+| `volume` → top-level `name` ≠ `<project>_<key>` | `fixed_name_volume` | `database_storage_shared` |
+| `volume` → top-level `driver_opts.type` `nfs`, `cifs` or `none` (local bind), `driver_opts.device` = D not an absolute path (not resolved against any directory) | `device_not_absolute` | `database_storage_shared` (`name` D as written) |
+| `volume` → top-level `driver_opts.device` = D, absolute | judged as a bind of D | see the two bind rows |
+| `volume` → `<project>_<key>`, no device | project-scoped | accepted, no warning |
 | `bind`, `realpath(source)` inside `realpath(root)` | `worktree_directory` | warning `compose_database_data_kept` |
 | `bind`, `realpath(source)` outside `realpath(root)` | `host_directory` | `database_storage_shared` |
 
@@ -198,7 +214,7 @@ mount.
 | `UpResult` | `compose_database: ComposeDatabaseView \| None` (service, target, protocol, port, port_variable, url_variable) |
 | `DownResult`, `GcResult` | `kept_items: list[KeptItem]` (`KeptItem` = `Item` + `reason: "repository_owned"`) |
 | `ErrorCode` | `isolation_unavailable` (20), `override_ambiguous` (21), `port_variable_conflict` (22), `database_storage_shared` (23) |
-| `WarningCode` | `compose_isolation_exec_only`, `compose_database_data_kept`, `compose_override_adopted` |
+| `WarningCode` | `compose_isolation_exec_only`, `compose_database_data_kept`, `compose_override_adopted`, `compose_override_excluded` |
 
 `SCHEMA_VERSION` stays 1: every change is an addition (001 json_models.py: "New codes may be
 added; existing ones never change meaning").

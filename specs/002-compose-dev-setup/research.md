@@ -11,7 +11,8 @@ the same Docker engine (29.5.3, Docker Desktop, macOS arm64):
 | Docker Compose **v5.1.4** | Docker Desktop's bundled plugin | The newest build installed here |
 
 The harness is in [research/](research/): `run.sh` (E1 to E5), `e2b.sh` (E2.13 to E2.15),
-`e1c.sh` (E1.6) and `e5_rule.py` (E5). The full logs are `research/out-*.txt`. In them, `<W>`
+`e1c.sh` (E1.6), `e5_rule.py` (E5), and `e6.sh` with `e6_pattern.py` (E6, R7). The full logs are
+`research/out-*.txt`. In them, `<W>`
 stands for the throwaway work directory and `<S>` for the scratch directory. Each command line
 in the logs is followed by its output and by `[exit N]`, which is Compose's own exit status
 (the pipeline runs with `pipefail`).
@@ -161,17 +162,22 @@ or `COMPOSE_PROJECT_NAME`?
 - A deleted isolation file makes Compose fail with "no such file or directory" (E2.12), so a
   missing file can never be silently skipped. `exec` checks for it anyway, to give the stable
   error FR-033 asks for and to not run the command at all.
-- `--env-file` and `COMPOSE_ENV_FILES` only feed interpolation. They cannot add a compose file
-  or change the project name (E2.11).
+- `--env-file` and `COMPOSE_ENV_FILES` cannot add a compose file (E2.11). They **can** set the
+  project name when the file holds `COMPOSE_PROJECT_NAME` (R7, E6.3d; E2.11's file held none,
+  so it did not test that).
 
 **Known limit, observed and not caused by wtenv.** Compose 2.24.4 reads `.env` from the
-**current directory**, Compose 5.1.4 from the project directory. A Compose command started from
+**current directory**, Compose 5.1.4 from the project directory, and also from the current
+directory when it has one, whose values then win (R7, E6.3a). A Compose command started from
 a subdirectory therefore misses the repository's `.env` interpolation values on 2.24.4: with
 `COMPOSE_FILE` (E2.3), with `COMPOSE_PROJECT_DIRECTORY` (E2.13, ignored for `.env` on 2.24.4),
 and equally with no wtenv involved at all (E2.15). `--project-directory` fixes it (E2.14) but is
-a command-line flag that `exec` cannot inject. The project name and the ports are not affected:
-they come from the files, not from `.env`. The user documentation states the limit. wtenv does
-not set `COMPOSE_PROJECT_DIRECTORY`.
+a command-line flag that `exec` cannot inject. The ports are not affected: they come from the
+files. The project name is affected when the current directory's `.env` sets
+`COMPOSE_PROJECT_NAME` (R7). The user documentation states the limit. wtenv does not set
+`COMPOSE_PROJECT_DIRECTORY`. Since R7, `exec` in the exec-only arrangement sets
+`COMPOSE_ENV_FILES` to the `.env` beside the compose file, which removes this limit for
+commands run through it.
 
 **Alternatives considered.**
 
@@ -320,9 +326,10 @@ model alone:
 |----------------|-------|------|
 | `type: volume`, no `source` | anonymous volume | accepts, warns `compose_database_data_kept` (`anonymous_volume`) (FR-026) |
 | `type: volume`, `source: K`, `volumes.K.external` true | external volume | refuses, `database_storage_shared` (`external_volume`) (FR-027) |
-| `type: volume`, `source: K`, `volumes.K.name` is not `<model name>_K` | fixed-name volume (reading R8) | refuses, `database_storage_shared` (`fixed_name_volume`) |
-| `type: volume`, `source: K`, `volumes.K.driver_opts.device` set | host directory behind a volume | judged as a `bind` with that path (next two rows) |
-| `type: volume`, `source: K`, name `<model name>_K`, no `device` | project-scoped volume | accepts silently |
+| `type: volume`, `source: K`, `volumes.K.name` is not `<project>_K`, in the model resolved with `-p <project>` (the recorded or generated wtenv project; R7) | fixed-name volume (reading R8) | refuses, `database_storage_shared` (`fixed_name_volume`) |
+| `type: volume`, `source: K`, `volumes.K.driver_opts.type` `nfs`, `cifs` or `none` (local bind), `device` not an absolute path (resolved against nothing) | a device wtenv cannot place | refuses, `database_storage_shared` (`device_not_absolute`) |
+| `type: volume`, `source: K`, `volumes.K.driver_opts.device` set and absolute | host directory behind a volume | judged as a `bind` with that path (next two rows) |
+| `type: volume`, `source: K`, name `<project>_K`, no `device` | project-scoped volume | accepts silently |
 | `type: bind`, real path of `source` inside the worktree's real root | host directory inside the worktree | accepts, warns `compose_database_data_kept` (`worktree_directory`) (FR-027) |
 | `type: bind`, real path of `source` outside the worktree's real root | host directory outside the worktree | refuses, `database_storage_shared` (`host_directory`) |
 
@@ -511,5 +518,117 @@ variable names are derived from what the registry already records (`PublishedPor
 compose` subprocess, and pydantic features already pinned. Principle VIII holds.
 
 **Startup (NFR-001).** The checks `exec` adds read the registry entry it already reads, and run
-`lstat`/`open` on at most five paths. They live in a new standard-library-only module
+`lstat`/`open` on a few paths (more since R7: checks A and B of data-model.md). They live in a new standard-library-only module
 (`wtenv/isolation.py`) so that `exec` still does not import `wtenv.compose`.
+
+---
+
+## R7. Safety review claims about `.env`, override files and `COMPOSE_ENV_FILES` (FR-033)
+
+**Question.** The spec 002 safety review (2026-10-10) took three claims about Compose from
+reading compose-go: (a) `.env` accepts `KEY: value`, so `COMPOSE_PROJECT_NAME: x` sets the
+project name; (b) with both `compose.override.yml` and `compose.override.yaml` present, Compose
+loads `.yml`; (c) `COMPOSE_ENV_FILES` stops Compose 2.24.4 from reading the `.env` of the
+child's current directory. Are they true on 2.24.4 and on the newest build installed?
+
+**How it was run.** `research/e6.sh` and `research/e6_pattern.py`, on the same engine (29.5.3)
+with Compose **v2.24.4** (the official `docker-compose-darwin-aarch64`, downloaded again on
+2026-10-10, SHA-256 `e5d7dd8f0cccbbb729200cc1bf7fbf626cda79e36689ee8b4fd3d878cbbb09d9`, equal to
+the line in the release's `checksums.txt`, installed as a CLI plugin in a separate
+`DOCKER_CONFIG`) and with **v5.1.4** (Docker Desktop's plugin). Only `docker compose config`
+runs, so no container, volume or network was created. `docker ps -a`, `docker volume ls` and
+`docker network ls` were saved before the first run and were identical afterwards. Full logs:
+`research/out-e6-2.24.4.txt`, `research/out-e6-5.1.4.txt`. `e6_pattern.py` reads each `.env`
+the way `compose.check_environment` does and prints what v0.1.1's pattern (`=` only) and two
+candidate patterns find.
+
+**Results.**
+
+| Claim | 2.24.4 | 5.1.4 | Verdict |
+|-------|--------|-------|---------|
+| (a) `KEY: value` in `.env` sets the project name | yes (E6.1 a2–a5, a7) | yes | **Confirmed.** Also `KEY:value`, `export KEY: value`, leading spaces, CRLF, and a UTF-8 byte-order mark before `KEY=value` (a6). `COMPOSE_FILE: other.yaml` is honoured too (a8b). v0.1.1's pattern finds none of them; `[=:]` finds all but the byte-order-mark case |
+| (b) both `.yml` and `.yaml`: Compose loads `compose.override.yml` | yes, and warns | yes, and warns | **Confirmed.** The warning is two lines on standard error (`Found multiple override files…`, `Using …/compose.override.yml`); the exit status is 0. With all four names, `compose.override.yml` is still the one loaded (E6.2b) |
+| (c) `COMPOSE_ENV_FILES` stops the current directory's `.env` on 2.24.4 | yes (E6.3b, E6.3c) | yes | **Confirmed**, and it also works with `/dev/null` when there is no `.env` |
+
+Two results go **beyond** the report:
+
+- **The current directory's `.env` is not a 2.24.4-only hazard.** On 5.1.4 a command run from a
+  subdirectory reads that subdirectory's `.env` **as well as** the project directory's, and the
+  subdirectory's values win (E6.3a: `only_project` is `yes`, the name is the subdirectory's).
+  On 2.24.4 only the current directory's is read. So the report's M2(b) scenario applies to
+  both builds. The fix it proposes (`exec` sets `COMPOSE_ENV_FILES`) works on both (E6.3b), so
+  the size of the fix is unchanged; its scope is "every supported Compose", not "2.24.4".
+- **A file named by `COMPOSE_ENV_FILES` can set the project name** (E6.3d). R2's line "they
+  cannot … change the project name (E2.11)" was not tested by E2.11, whose file held no
+  `COMPOSE_PROJECT_NAME`; it is corrected in R2. Consequence: when `exec` sets
+  `COMPOSE_ENV_FILES`, a value the caller already set cannot simply be kept, because `exec`
+  would then have to check files it does not know. `exec` refuses it instead, as it refuses an
+  inherited `COMPOSE_FILE` (spec, Assumptions: fail rather than be replaced silently).
+
+**Decision.**
+
+- FR-033 check 1 and `up`'s `check_environment` share one pattern that accepts `=` or `:`
+  after the name and an optional leading byte-order mark:
+  `﻿?\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*[=:]\s*(.*)`. A line it reads as setting
+  `COMPOSE_PROJECT_NAME` or `COMPOSE_FILE` to a non-empty text fails closed, even when Compose
+  would expand that text to an empty value.
+- In the exec-only arrangement, `exec`, post-up commands and `up`'s verification also set
+  `COMPOSE_ENV_FILES` to the absolute path of the `.env` beside the compose file, the one check
+  1 read, or to `/dev/null` when there is none. Compose then reads no other `.env`, from any
+  directory (E6.3b, E6.3c). This also removes R2's known limit for commands run through
+  `exec` in that arrangement.
+- Check 1 also fails when `COMPOSE_ENV_FILES` is non-empty in the calling environment (E6.3d).
+- Claim (b) means a repository override that appears as `compose.override.yml` beside wtenv's
+  `compose.override.yaml` silently replaces wtenv's file. So `exec` in the automatic
+  arrangement checks that no other override name has appeared (safety finding M5; data-model.md,
+  `exec` checks).
+- Not covered, and documented as a known limit (spec, Known limits): a plain `docker compose`
+  anywhere, and `exec` or post-up commands in the automatic arrangement, still read the current
+  directory's `.env` and any `COMPOSE_ENV_FILES` file, as in v0.1.1. A command's own
+  `--env-file` wins, as `-p` and `-f` do.
+
+**Evidence** (`<W>` is the work directory; both builds print the same JSON unless marked):
+
+```text
+## E6.1 a2 KEY: value             .env: COMPOSE_PROJECT_NAME: wtenv-research-e6-colon
+$ cd <W>/wtenv-research-e6a && COMPOSE_FILE=<W>/wtenv-research-e6a/compose.yaml docker compose config --format json | jq -c '{name, …}'
+{"name":"wtenv-research-e6-colon","web":[],"dotenv":"unset"}
+$ python3 -I <research>/e6_pattern.py <W>/wtenv-research-e6a/.env
+v0.1.1 '=' only: -
+'[=:]':          COMPOSE_PROJECT_NAME
+'[=:]' + BOM:    COMPOSE_PROJECT_NAME
+## E6.1 a4 export KEY: value      -> {"name":"wtenv-research-e6-export-colon",…}   v0.1.1 pattern: -
+## E6.1 a6 BOM, then KEY=value    -> {"name":"wtenv-research-e6-bom",…}            v0.1.1: -   '[=:]': -   '[=:]' + BOM: COMPOSE_PROJECT_NAME
+## E6.1 a8b .env: COMPOSE_FILE: other.yaml, plain command
+service "web" has neither an image nor a build context specified: invalid compose project   (other.yaml was loaded alone)
+## E6.2a compose.yaml (18001) + compose.override.yml (18002) + compose.override.yaml (18003)
+$ cd <W>/wtenv-research-e6b && docker compose config --format json 2>stderr.txt | jq -c …; cat stderr.txt
+{"name":"wtenv-research-e6b","web":["18001","18002"],"dotenv":null}
+level=warning msg="Found multiple override files with supported names: <W>/wtenv-research-e6b/compose.override.yml, <W>/wtenv-research-e6b/compose.override.yaml"
+level=warning msg="Using <W>/wtenv-research-e6b/compose.override.yml"
+[exit 0]
+## E6.3a from sub/, whose .env sets COMPOSE_PROJECT_NAME; COMPOSE_FILE only
+$ cd <W>/wtenv-research-e6c/sub && COMPOSE_FILE=<W>/wtenv-research-e6c/compose.yaml docker compose config --format json | jq -c …
+{"name":"wtenv-research-e6c-subdir","dotenv":"subdir","only_project":"unset"}   # 2.24.4
+{"name":"wtenv-research-e6c-subdir","dotenv":"subdir","only_project":"yes"}     # 5.1.4: both files read, sub/ wins
+## E6.3b the same, plus COMPOSE_ENV_FILES=<W>/wtenv-research-e6c/.env
+{"name":"wtenv-research-e6c-iso","dotenv":"project","only_project":"yes"}
+## E6.3c the same, plus COMPOSE_ENV_FILES=/dev/null
+{"name":"wtenv-research-e6c-iso","dotenv":"unset","only_project":"unset"}
+## E6.3d from the project directory, COMPOSE_ENV_FILES names a file that sets COMPOSE_PROJECT_NAME
+{"name":"wtenv-research-e6c-envfiles","dotenv":"envfiles","only_project":"unset"}
+## E6.3f control: from sub/ with no sub/.env, COMPOSE_FILE only
+{"name":"wtenv-research-e6c-iso","dotenv":"unset","only_project":"unset"}       # 2.24.4 (R2's known limit)
+{"name":"wtenv-research-e6c-iso","dotenv":"project","only_project":"yes"}       # 5.1.4
+```
+
+Differences between the builds: 2.24.4 prints the E6.2 warning twice; the `.env` lookup of
+E6.3a and E6.3f, described above.
+
+**Not an experiment: the volume names of the storage classifier (safety finding H1).** No new
+run was needed. R4's evidence already shows that a project-scoped volume resolves to
+`<model name>_<key>` and that an explicit `name:` is kept as written. When the repository's own
+model name is `app` and a volume is `name: app_pgdata`, the two cannot be told apart unless the
+model is resolved under the project the stack really runs under. So R4's fixed-name rule now
+compares against a model resolved with `-p <wtenv project>` (data-model.md, Data storage
+classification).

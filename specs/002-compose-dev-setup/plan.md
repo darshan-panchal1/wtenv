@@ -62,7 +62,8 @@ whole suite on git 2.31.0 and Compose 2.24.4.
 **Project Type**: single-package CLI (`src/wtenv/`).
 
 **Performance Goals**: CLI startup under 300 ms (NFR-001). `exec` gains only `lstat`/`open`
-calls on at most five paths and does not import `wtenv.compose`.
+calls on a few paths beside the compose file and under `.wtenv/` (the FR-033 checks, including
+checks A and B of data-model.md in automatic worktrees) and does not import `wtenv.compose`.
 
 **Constraints**: minimum versions stay git 2.31 and Compose 2.24.4 (R1 shows `!override` works
 there). No registry migration (FR-029; R6). Every 001 guard kept (FR-030).
@@ -196,15 +197,15 @@ existing test in `tests/`.
 | FR | Module(s) | What changes | Guard it must keep (and the test that holds it) |
 |----|-----------|--------------|--------------------------------------------------|
 | FR-001 | `compose.py` (`override_inventory`), `provision.py` (`_compose_plan`) | A repository-owned override selects the exec-only arrangement instead of `ownership_conflict` | 001:FR-087: a header-less file **at the recorded path** that git does not track is still `ownership_conflict` (`test_up_refuses_a_recorded_override_that_is_not_wtenvs_before_changing_anything`, kept) |
-| FR-002 | `provision.py`, `teardown.py`, `exclude.py` (unchanged) | `repository_override` is never passed to a write, unlink, chmod or exclude call | Only `ComposeRecord.override` is ever written or deleted (`test_the_repository_override_is_byte_identical_through_up_down_gc_and_dry_runs` **(new)**; decoy `test_a_hand_edited_repository_override_record_is_never_deleted` **(new)**) |
+| FR-002 | `provision.py`, `teardown.py`, `exclude.py` (unchanged), `gitutil.py` | `repository_override` is never passed to a write, unlink, chmod or exclude call; an untracked repository override that git ignores through wtenv's block gets the warning `compose_override_excluded` (safety M3) | Only `ComposeRecord.override` is ever written or deleted (`test_the_repository_override_is_byte_identical_through_up_down_gc_and_dry_runs` **(new)**; decoy `test_a_hand_edited_repository_override_record_is_never_deleted` **(new)**) |
 | FR-003 | `compose.py` (`resolution_command`, `override_text` unchanged) | Resolution reads `-f compose -f repository override`; the isolation file holds `ports: !override` for every service of the combined model | 001:FR-033: verification of exact ports and name, removal of the just-written file on failure (`test_an_override_that_fails_verification_is_removed_and_the_error_is_raised`, extended to the isolation file); `compose_port_range` for a range in the repository override |
 | FR-004 | `isolation.py`, `execcmd.py`, `provision.py` (`_run_post_up`), README | `COMPOSE_FILE` + `COMPOSE_PATH_SEPARATOR` in exec and post-up; documented relaxation | exec fails closed (FR-033 tests); automatic arrangement unchanged (`test_exec_in_an_automatic_worktree_sets_exactly_the_section` **(new)**) |
 | FR-005 | `output.py`, `listing.py`, `provision.py` | `WorktreeView.compose_isolation`, `compose_repository_override`; warning `compose_isolation_exec_only`; text line | FR-058 single JSON document (contract tests) |
-| FR-006 | `compose.py` (inventory), `provision.py` (adoption), `teardown.py` (`_override_step`) | A header-less, **git-tracked** file at the recorded path is adopted: `up` drops wtenv's record of it; `down`/`gc` report it in `kept_items` and drop the record | Never written or deleted; only `is_tracked` true **and** header missing qualifies (`test_an_untracked_headerless_file_at_the_recorded_path_is_still_an_ownership_conflict` **(new)**) |
+| FR-006 | `compose.py` (inventory), `provision.py` (adoption), `teardown.py` (`_override_step`) | A **git-tracked** file at the recorded path, header-less or with wtenv's header (safety L2), is adopted: `up` drops wtenv's record of it; `down`/`gc` report it in `kept_items` and drop the record. At the isolation path, `up` refuses it (`ownership_conflict`) | Never written or deleted; `is_tracked` decides, the header no longer does for a tracked file; an untracked header-less file is still `ownership_conflict` (`test_an_untracked_headerless_file_at_the_recorded_path_is_still_an_ownership_conflict` **(new)**) |
 | FR-007 | `compose.py` (inventory), `provision.py` (`_remove_override`) | One repository-owned + wtenv's recorded → remove wtenv's under the header check and continue; two or more repository-owned → `override_ambiguous` | 001:FR-087 header recheck immediately before unlink; `removing` recorded first; 001:FR-086 (`test_up_does_not_delete_an_override_that_lost_the_header_after_the_plan`, kept) |
 | FR-008 | `provision.py`, `compose.override_text` (unchanged) | The automatic arrangement keeps v0.1.1 behaviour | Golden file byte-identity (`test_the_example_input_generates_the_golden_file_byte_for_byte`, kept) |
 | FR-009 | `provision.py` (`_registry_step`, `_compose_step`), `compose.override_problem` | The isolation file goes through every path the generated override goes through | 001:FR-067 record first, FR-018 exclude, FR-086 links, FR-087 header, recorded form: `override_problem` accepts **exactly** `.wtenv/compose.isolation.yaml` beyond the four names (`test_a_recorded_path_of_a_form_wtenv_never_records_is_left_alone`, extended with the paths listed in Safety S4) |
-| FR-033 | `isolation.py`, `execcmd.py`, `provision.py` | Checks before exec; same environment for post-up; `isolation_unavailable` | Command never run on failure (`test_exec_does_not_run_the_command_when_isolation_cannot_apply` **(new)**, one case per reason) |
+| FR-033 | `isolation.py`, `execcmd.py`, `provision.py` | Checks before exec; same environment for post-up at both call sites (safety M6); `COMPOSE_ENV_FILES` (M2); the widened `.env` pattern (M2); check 2 requires an override name beside the compose file (L4); checks A and B in every other worktree (M1, M5); `isolation_unavailable` | Command never run on failure (`test_exec_does_not_run_the_command_when_isolation_cannot_apply` **(new)**, one case per reason) |
 | FR-010 | `ports.py`, `provision.py` (`_variables`) | One `WTENV_PORT_…` variable per published port in the section and in exec | Section markers and format (001:FR-016; the `envfile` tests, unchanged) |
 | FR-011 | `ports.py` (`port_variable_name`) | The rule of R5 | Pure function: same name for every block and order (`test_the_variable_name_depends_only_on_service_port_and_protocol` **(new)**) |
 | FR-012 | `ports.py` (`check_port_variables`), `provision.py` | `port_variable_conflict` before step 8 | Nothing changed on failure (`test_a_name_collision_changes_nothing` **(new)**) |
@@ -222,7 +223,7 @@ existing test in `tests/`.
 | FR-024 | `provision.py` (`_has_nothing_to_change`) | Repeat `up` keeps port and URL; no data reset | 001:FR-023 |
 | FR-025 | README | Host-side values documented | — |
 | FR-026 | `compose.py` (`database_storage`) | Warning `compose_database_data_kept` | 001 reading R6 (anonymous volumes kept) |
-| FR-027 | `compose.py` (`database_storage`), `errors.py` | `database_storage_shared` before step 8 | Reading R8 name rule; real paths (`test_a_bind_through_a_symlink_to_outside_the_worktree_is_refused` **(new)**) |
+| FR-027 | `compose.py` (`database_storage`, `resolution_command`), `errors.py` | `database_storage_shared` before step 8; volume names judged on the model resolved with `-p <project>` (safety H1); a non-absolute `nfs`/`cifs`/local-bind device refused (M4) | Reading R8 name rule; real paths (`test_a_bind_through_a_symlink_to_outside_the_worktree_is_refused` **(new)**) |
 | FR-028 | `config.py`, `provision.py` | v0.1.1 configurations unchanged, except the three setups FR-028 refuses | `test_every_v0_1_1_config_fixture_is_accepted_and_provisions_identically` **(new)** |
 | FR-029 | `registry.py` | One optional field, omitted when unset | v0.1.1 registry round trip byte-identical (`test_a_v0_1_1_registry_is_saved_byte_for_byte` **(new)**); 001:FR-070 |
 | FR-030 | all | No 001 guard relaxed beyond FR-004/FR-006 | Every existing guard test kept (Test strategy, "Existing tests") |
@@ -238,10 +239,10 @@ No existing code, status or reason changes meaning. The table of 001 keeps codes
 
 | Exit | Code (new) | Raised by | When | `details` |
 |------|------------|-----------|------|-----------|
-| 20 | `isolation_unavailable` | `exec` (reported with exit **125**, as every wtenv failure in `exec`) | FR-033: the isolation settings cannot be applied in an exec-only worktree | `reason`: `compose_env_override` (+`variable`), `isolation_file_missing`, `isolation_file_not_wtenvs`, `symlink`, `recorded_value_invalid`, `repository_override_missing`, `override_appeared`; `path` |
+| 20 | `isolation_unavailable` | `exec` (reported with exit **125**, as every wtenv failure in `exec`) | FR-033: the isolation settings cannot be applied in an exec-only worktree; in any other worktree, checks A and B of data-model.md | `reason`: `compose_env_override` (+`variable`), `isolation_file_missing`, `isolation_file_not_wtenvs`, `symlink`, `recorded_value_invalid`, `repository_override_missing`, `override_appeared`; `path` |
 | 21 | `override_ambiguous` | `up` | FR-007: two or more repository-owned override files beside the compose file | `files` (list of paths) |
 | 22 | `port_variable_conflict` | `up` | FR-012: two published ports with one name, or a name equal to a configured variable | `variable`; `sources` (list of two descriptions) |
-| 23 | `database_storage_shared` | `up` | FR-027: the database service's data is in a fixed-name volume, an external volume, or a host directory outside the worktree | `service`; `storage`: `fixed_name_volume`, `external_volume`, `host_directory`; `name` (volume name or real path) |
+| 23 | `database_storage_shared` | `up` | FR-027: the database service's data is in a fixed-name volume, an external volume, a volume whose `nfs`/`cifs`/local-bind device is not an absolute path, or a host directory outside the worktree | `service`; `storage`: `fixed_name_volume`, `external_volume`, `device_not_absolute`, `host_directory`; `name` (volume name, device as written, or real path) |
 
 Status 20 is assigned so that the 001 rule "one code, one exit status" keeps holding. Only
 `exec` raises the code, and `exec` reports every failure of wtenv itself as 125 with the code in
@@ -257,6 +258,7 @@ Status 20 is assigned so that the 001 rule "one code, one exit status" keeps hol
 | `compose_isolation_exec_only` | Every `up` in the exec-only arrangement (FR-004, FR-005) | `repository_override`, `isolation_file` |
 | `compose_database_data_kept` | FR-026 / FR-027 accepted storage | `service`; `storage`: `anonymous_volume`, `no_volume`, `worktree_directory`; `name` when there is one |
 | `compose_override_adopted` | FR-006 adoption by `up` | `file` |
+| `compose_override_excluded` | FR-002: in the exec-only arrangement, `git check-ignore -v --no-index` matches the untracked repository override to a line of wtenv's exclude block (safety M3) | `file`, `pattern` |
 
 ## Safety
 
@@ -279,7 +281,9 @@ in turn and requires that named test to fail.
 ### S2. Removing wtenv's own auto-loaded override on a change of arrangement (FR-007, FR-008)
 
 Unchanged code path `_remove_override`: recorded form check, symbolic-link check, `removing`
-recorded first, header recheck **immediately** before `unlink`. The only new caller is the
+recorded first, header recheck **immediately** before `unlink`, that is **after** the
+`removing` save, which can wait up to 10 s for the registry lock (safety L1; v0.1.1 checks the
+header before that save). The same order in teardown's `_override_step`. The only new caller is the
 arrangement change, through the same branch a moved compose file uses. Tests:
 `test_up_does_not_delete_an_override_that_lost_the_header_after_the_plan` (kept),
 `test_a_new_compose_file_moves_the_override_and_keeps_the_project_name` (kept), new
@@ -290,8 +294,9 @@ arrangement change, through the same branch a moved compose file uses. Tests:
 - The header check is **not** changed. What changes is the outcome for one case: a header-less
   file at the recorded path that **git tracks** is adopted instead of being `ownership_conflict`
   (in `up`) or `failed` (in `down`/`gc`).
-- Containment: (1) both conditions are required, header missing **and** `gitutil.is_tracked`
-  true; (2) adoption never writes, renames, deletes or chmods the file: it only changes the
+- Containment: (1) `gitutil.is_tracked` true is required; a tracked file is adopted whether or
+  not it starts with wtenv's header, because a tracked file must never be rewritten or deleted
+  (safety L2), and an untracked header-less file is never adopted; (2) adoption never writes, renames, deletes or chmods the file: it only changes the
   registry; (3) an untracked header-less file is `ownership_conflict` exactly as 001 says; (4)
   `down`/`gc` drop the record only when the project step did not fail, as for the override
   today; (5) the adopted path is dropped from the entry's `exclude_patterns` (git ignores
@@ -318,19 +323,26 @@ is accepted.
 
 ### S5. Environment injection by `exec` and post-up commands (FR-004, FR-033; relaxes 001:FR-030 only in exec-only worktrees)
 
-- Applies only when the entry records `repository_override`. Otherwise `exec` is the v0.1.1
-  code path, byte for byte the same environment (`test_exec_in_an_automatic_worktree_sets_exactly_the_section`).
+- Applies only when the entry records `repository_override`. Otherwise `exec` gives the command
+  the v0.1.1 environment, byte for byte (`test_exec_in_an_automatic_worktree_sets_exactly_the_section`),
+  and runs only checks A (an inherited `COMPOSE_FILE` naming another worktree's isolation file;
+  safety M1) and B (automatic arrangement: an override name appeared, or the recorded override is
+  a link or lost its header; safety M5) of data-model.md.
 - Fail closed: every FR-033 condition is checked before `os.execvpe`. On any failure the command
   is not run, and the exit is 125 with `isolation_unavailable`. One test per `reason`, each
   asserting that a sentinel command did **not** run (it would create a file).
-- What is injected: `COMPOSE_FILE` (three absolute paths) and `COMPOSE_PATH_SEPARATOR=:`.
+- What is injected: `COMPOSE_FILE` (three absolute paths), `COMPOSE_PATH_SEPARATOR=:`, and
+  `COMPOSE_ENV_FILES` (the `.env` beside the compose file, or `/dev/null`), so a `.env` in the
+  child's current directory cannot set the project name (research R7; safety M2). An inherited
+  `COMPOSE_ENV_FILES` is refused by check 1.
   **Not** `COMPOSE_PROJECT_NAME`, so that a child with its own `-f` cannot start other files
   under wtenv's project label, which `down` would remove (R2). Test:
   `test_exec_never_sets_compose_project_name`.
 - The isolation file's `name:` is the recorded project, checked by `project_problem` in `up`
   (001:FR-088, kept).
-- Post-up commands get the same environment from the same builder. Test:
-  `test_post_up_commands_get_the_same_compose_environment_as_exec`.
+- Post-up commands get the same environment from the same builder, built inside `_run_post_up`
+  from the entry, so the repeat-`up` call site (nothing changed) gets it too (safety M6). Test:
+  `test_post_up_commands_get_the_same_compose_environment_as_exec`, with a repeat-`up` case.
 - Containment of the 001:FR-030 relaxation: it happens only when a repository-owned override
   exists (detected, never configured); `up` reports it in text, JSON and a warning; the user
   documentation states that a plain `docker compose` runs **without** isolation, and that such
@@ -366,7 +378,7 @@ that unknown fields still make a registry unreadable (001:FR-070).
 |-----------------|----------|-------|-------------|
 | FR-030 (plain Compose isolated) | **Yes**, exec-only worktrees only (FR-004) | S5 | Detected, reported (text, JSON, warning), documented; automatic arrangement unchanged and tested |
 | FR-087 (header check) | **Outcome only**, git-tracked header-less file at the recorded path (FR-006) | S3 | Never written or deleted; untracked case unchanged |
-| FR-056, FR-057 (`exec` runs the command; only "not provisioned" refuses) | **Yes**, exec-only worktrees only (FR-033) | S5 | Every command is refused only when the isolation settings cannot be applied; automatic arrangement unchanged and tested |
+| FR-056, FR-057 (`exec` runs the command; only "not provisioned" refuses) | **Yes**, exec-only worktrees (FR-033); in every other worktree only checks A and B (safety M1, M5) | S5 | Every command is refused only when the isolation settings cannot be applied, or by checks A and B; the automatic arrangement's environment unchanged and tested |
 | FR-031 (ports tied to variables) | **Narrowed**: the three setups of the FR-028 exception are refused (FR-012) | R5 | `port_variable_conflict` before step 8, nothing changed; named in the CHANGELOG |
 | FR-018, FR-039, FR-067, FR-070, FR-086, FR-088 | No | S1–S7 | Applied to the isolation file unchanged |
 
@@ -396,6 +408,12 @@ delete; record-before-create; unrecorded-file refusal at the isolation path; sym
 `.wtenv/`; exact-path acceptance in `override_problem`; `is_tracked` in adoption; each FR-033
 exec check; `COMPOSE_PROJECT_NAME` not injected; R8 prefix rule; FR-027 classifier rows
 (external, fixed name, device, outside bind); collision check; `exclude_if` on the new field.
+Added by the safety review fixes (tasks.md, "Safety review fixes"): `-p` in the storage
+classifier's resolution; the non-absolute device row; checks A and B; the widened `.env`
+pattern; `COMPOSE_ENV_FILES`; post-up isolation at both call sites; the excluded-override
+warning; the header recheck after the `removing` save; `is_tracked` for a header-carrying file;
+the override-name rule of check 2; FR-002 in `up`; percent-encoding of `{compose_env:}`; the `:`
+path check; the inventory's refusal of an unrecorded file with wtenv's header.
 
 **Integration tests use only what they create.** Compose projects, volumes and networks in new
 tests are named `wtenv-test-<random>`, or are wtenv projects of worktrees created by the test.
@@ -452,3 +470,59 @@ so the review can overturn them before `/speckit-tasks`:
 ## Complexity Tracking
 
 No Constitution Check violation. Nothing to justify.
+
+## Decisions to review
+
+Taken while applying the safety review fixes (tasks.md, "Safety review fixes"). Each one says
+what changes for someone who uses v0.1.1 today.
+
+1. **M3, an untracked repository override hidden by wtenv's exclude block.** The fix is the
+   report's smallest one. In the exec-only arrangement, when the repository's override is
+   untracked, `up` runs `git check-ignore -v --no-index -- <path>`. When the matching line is
+   inside wtenv's block (a line written for another worktree, such as `/compose.override.yaml`),
+   `up` succeeds and adds the new warning `compose_override_excluded` (`file`, `pattern`). The
+   README says why: git then treats the file as ignored, so a checkout of a branch that tracks
+   that path overwrites it silently, and `git clean -X` deletes it. wtenv does not remove the
+   line, because the other worktree still needs it, and git has no per-worktree exclude file.
+   **For v0.1.1 users**: nothing is refused and no file or exclude line changes. The new
+   warning appears only in a worktree that uses the exec-only arrangement, which v0.1.1 refused
+   with `ownership_conflict`. A main checkout that v0.1.1 already exposes the same way, and that
+   is never `up`-ed in the exec-only arrangement, gets no warning; the README is the only
+   notice there. It is a new warning code (schema version unchanged; FR-031).
+2. **M2, `up` refuses more `.env` lines.** Check 1 and `up`'s `check_environment` share one
+   pattern, so `up` now also refuses `COMPOSE_PROJECT_NAME: x`, `export COMPOSE_FILE: x` and a
+   first line behind a byte-order mark. **For v0.1.1 users**: a repository whose `.env` sets
+   either variable in one of those forms, which v0.1.1 provisioned (and left un-isolated,
+   research R7), now gets `unsupported` (`compose_env_override`) from `up`, in both
+   arrangements. Nothing else changes.
+3. **M2, `COMPOSE_ENV_FILES`.** In the exec-only arrangement only, `exec`, post-up commands and
+   `up`'s verification set it to the `.env` beside the compose file (or `/dev/null`), and an
+   inherited `COMPOSE_ENV_FILES` makes `exec` fail, as an inherited `COMPOSE_FILE` already does.
+   Effect inside `exec`: a Compose command run from a subdirectory now interpolates from the
+   project's `.env` (Compose 2.24.4 used the subdirectory's only; 5.1.4 merged both). **For
+   v0.1.1 users**: none; the automatic arrangement is untouched (spec, Known limits).
+4. **M1, post-up commands not covered.** The decision covers `exec`. The report also proposed
+   the same check in `_run_post_up` of a worktree without `[compose]` (with `[compose]`, `up`
+   already refuses any `COMPOSE_FILE`). Not applied: please decide whether post-up commands
+   should refuse an inherited `COMPOSE_FILE` that names another worktree's isolation file.
+5. **M5, what "no longer matches the record" means in the automatic arrangement.** Check B
+   refuses when another override name exists beside the compose file, or when the recorded
+   override is a symbolic link or lacks wtenv's header (a repository file now at wtenv's path).
+   A **missing** recorded override is not refused: v0.1.1 runs the command then, and the
+   decision names only an override that appeared. **For v0.1.1 users**: `exec` in an automatic
+   worktree can now fail with exit 125 in those two cases, where v0.1.1 ran the command
+   un-isolated.
+6. **M4, the `storage` value.** A non-absolute device is reported as `database_storage_shared`
+   with the new `storage` value `device_not_absolute` and `name` the device as written. A new
+   `details` value is allowed by FR-031. No v0.1.1 effect (compose databases are new).
+7. **H1, `-p` only with `[database] type = "compose"`.** The resolution command gains
+   `-p <project>` only in that mode, so v0.1.1 configurations resolve exactly as before
+   (FR-008, FR-028). The v0.1.1 warning `compose_fixed_volume_name` keeps comparing against the
+   repository's own model name, so it keeps the same blind spot for other services; that is
+   proposed for the roadmap (tasks.md, "Deferred").
+8. **L2, a tracked file at the isolation path.** A git-tracked `.wtenv/compose.isolation.yaml`
+   is refused by `up` (`ownership_conflict`), with or without wtenv's header, and kept by
+   `down` and `gc` (`kept_items`). That matches the rule the spec already had for a header-less
+   file there. **For v0.1.1 users**: a v0.1.1 worktree whose generated `compose.override.yaml`
+   was force-added to git is now adopted (`compose_override_adopted`) instead of rewritten, and
+   `down` keeps it instead of deleting it.
