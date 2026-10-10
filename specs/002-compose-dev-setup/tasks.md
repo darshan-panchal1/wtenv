@@ -499,8 +499,11 @@ byte-identical throughout.
     `grep -n '_OVERRIDE_HEADER = ' src/wtenv/compose.py` prints nothing.
 - [ ] T032 [US1] ⚠RELAX(001:FR-030) Add failing tests for the exec-only arrangement in `up`, in `tests/integration/test_us1_repository_override.py` (new), `tests/integration/test_us3_compose.py`, `tests/integration/test_recovery.py`, `tests/unit/test_compose_write.py`, and `tests/unit/test_isolation.py` (new)
   - Rewrite the fifth test, `tests/integration/test_us3_compose.py::test_a_developers_override_is_an_ownership_conflict_and_is_not_modified`,
-    in place → exit 0, `compose_isolation` `exec_only`, the committed override byte-identical,
-    `.wtenv/compose.isolation.yaml` written (FR-001, FR-002). Rename it to
+    in place → exit 0, the registry records the exec-only arrangement (`override` is
+    `.wtenv/compose.isolation.yaml`, `repository_override` is the committed override's path), the
+    committed override byte-identical (SHA-256 before and after), `.wtenv/compose.isolation.yaml`
+    written (FR-001, FR-002). The reported fields `compose_isolation` and
+    `compose_repository_override` are asserted in 4G (T062), not here. Rename it to
     `test_a_developers_override_is_used_through_exec_and_is_not_modified`, with the old name in
     its docstring.
   - New, in `test_us1_repository_override.py`, one per scenario of User Story 1: 1 (exit 0,
@@ -556,7 +559,8 @@ byte-identical throughout.
   - Step 1, failing tests (failing-test rule; result recorded under this task):
     - New `test_a_link_at_an_unrecorded_override_name_is_the_repository_override`: an untracked
       `compose.override.yaml` that links to a valid override in `decoy` → exit 0,
-      `compose_isolation` `exec_only`, `repository_override` the link's path; the link and
+      the registry records the exec-only arrangement (`override` is the isolation path,
+      `repository_override` is the link's path); the link and
       `snapshot_tree(decoy)` unchanged; the link's path is not in the exclude block.
     - New `test_a_link_at_a_recorded_override_path_is_refused_in_both_arrangements`: after an
       automatic `up`, `compose.override.yaml` replaced by a link; after an exec-only `up`,
@@ -620,7 +624,8 @@ byte-identical throughout.
   - New `test_an_untracked_repository_override_ignored_through_wtenvs_block_is_warned`: worktree
     A in the automatic arrangement (its `up` adds `/compose.override.yaml` to wtenv's block);
     worktree B of the same repository with an untracked `compose.override.yaml` of its own.
-    `up` in B: exit 0, `compose_isolation` `exec_only`, warning `compose_override_excluded` with
+    `up` in B: exit 0, the registry records the exec-only arrangement (`override` is the isolation
+    path, `repository_override` is B's override path), warning `compose_override_excluded` with
     `details.file` B's override (absolute) and `details.pattern` `/compose.override.yaml`; B's
     override byte-identical; no line of `.git/info/exclude` removed.
   - Not warned: the same file when git tracks it; an untracked override matched only by a line
