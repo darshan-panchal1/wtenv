@@ -495,3 +495,48 @@ def test_a_listing_that_fails_is_dependency_unavailable_and_not_a_free_name() ->
 
     assert raised.value.code is ErrorCode.DEPENDENCY_UNAVAILABLE
     assert raised.value.details["dependency"] == "docker"
+
+
+# --- a ':' in a path COMPOSE_FILE would have to carry (research R2; FR-003) ---------------------
+
+COMPOSE = Path("/w/app/compose.yaml")
+REPOSITORY_OVERRIDE = Path("/w/app/compose.override.yml")
+ISOLATION = Path("/w/app/.wtenv/compose.isolation.yaml")
+
+
+def path_separator(files: Sequence[Path]) -> WtenvError:
+    with pytest.raises(WtenvError) as caught:
+        compose.check_path_separator(files)
+    return caught.value
+
+
+def test_paths_without_a_colon_pass() -> None:
+    compose.check_path_separator([COMPOSE, REPOSITORY_OVERRIDE, ISOLATION])
+
+
+@pytest.mark.parametrize(
+    ("position", "bad"),
+    [
+        (0, Path("/w:x/app/compose.yaml")),
+        (1, Path("/w/app/compose.override:v2.yml")),
+        (2, Path("/w/app:1/.wtenv/compose.isolation.yaml")),
+    ],
+    ids=["compose file", "repository override", "isolation file"],
+)
+def test_an_absolute_path_with_a_colon_is_unsupported_and_names_the_path(
+    position: int, bad: Path
+) -> None:
+    files = [COMPOSE, REPOSITORY_OVERRIDE, ISOLATION]
+    files[position] = bad
+
+    error = path_separator(files)
+
+    assert error.code is ErrorCode.UNSUPPORTED
+    assert error.details == {"reason": "compose_path_separator", "file": str(bad)}
+    assert str(bad) in error.message
+
+
+def test_the_first_path_with_a_colon_is_the_one_named() -> None:
+    first, second = Path("/a:b/compose.yaml"), Path("/c:d/compose.override.yml")
+
+    assert path_separator([COMPOSE, first, second]).details["file"] == str(first)

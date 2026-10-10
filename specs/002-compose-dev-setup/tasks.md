@@ -452,7 +452,7 @@ byte-identical throughout.
 
 ### 4B. Resolving the compose file with the repository override (`compose.py`)
 
-- [ ] T029 [P] [US1] Add failing tests for the combined model to `tests/unit/test_compose_model.py` and `tests/unit/test_compose_checks.py`
+- [X] T029 [P] [US1] Add failing tests for the combined model to `tests/unit/test_compose_model.py` and `tests/unit/test_compose_checks.py`
   - FR-003, FR-015; research.md R1, R2; cli.md, `wtenv up` step 5.
   - `resolution_command(file, repository_override)` is `docker compose -f <file> -f <override>
     --profile "*" config --format json`; without an override it is exactly v0.1.1's command.
@@ -467,13 +467,13 @@ byte-identical throughout.
   - An absolute path of the compose file, the repository override or the isolation file
     containing `:`: `unsupported`, reason `compose_path_separator`, `details.file` that path.
   - **Done when** the new cases fail under the failing-test rule.
-- [ ] T030 [US1] Accept the repository override in `resolution_command` and `resolve_model`, and add the `:` check, in `src/wtenv/compose.py`
+- [X] T030 [US1] Accept the repository override in `resolution_command` and `resolve_model`, and add the `:` check, in `src/wtenv/compose.py`
   - **Done when** `uv run pytest tests/unit/test_compose_model.py tests/unit/test_compose_checks.py -q` exits 0.
-- [ ] T146 [US1] Mutation check: the `compose_path_separator` refusal of a path that contains `:`, in `src/wtenv/compose.py` (restored afterwards)
+- [X] T146 [US1] Mutation check: the `compose_path_separator` refusal of a path that contains `:`, in `src/wtenv/compose.py` (restored afterwards)
   - Guard: plan.md, "Error codes", `unsupported` reason `compose_path_separator` (research R2;
     safety review, item 8). Remove the check; the `:` cases of T029 must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T031 [US1] Group check 4B: runs G5 from the repository root; edits no file
+- [X] T031 [US1] Group check 4B: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(compose): resolve the compose file together with the repository override`.
 
 ### 4C. Safety group — writing the isolation file (`compose.py`, `provision.py`, `isolation.py`; plan.md S1, S4)

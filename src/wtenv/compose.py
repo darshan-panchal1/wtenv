@@ -90,19 +90,18 @@ class ComposeModel:
 # --- resolving the compose file (research.md §4, Decision) -------------------------------------
 
 
-def resolution_command(file: str | Path) -> list[str]:
-    """Return the command that resolves `file` with every profile (research.md §4)."""
-    return [
-        "docker",
-        "compose",
-        "-f",
-        str(file),
-        "--profile",
-        "*",
-        "config",
-        "--format",
-        "json",
-    ]
+def resolution_command(
+    file: str | Path, repository_override: str | Path | None = None
+) -> list[str]:
+    """Return the command that resolves `file` with every profile (research.md §4).
+
+    With a `repository_override`, Compose reads it after `file`, so the model is the combined one
+    (FR-003). Without one the command is exactly v0.1.1's.
+    """
+    files = ["-f", str(file)]
+    if repository_override is not None:
+        files += ["-f", str(repository_override)]
+    return ["docker", "compose", *files, "--profile", "*", "config", "--format", "json"]
 
 
 def marker_environment(variables: Sequence[str]) -> dict[str, str]:
@@ -118,17 +117,19 @@ def resolve_model(
     file: Path,
     variables: Sequence[str],
     *,
+    repository_override: Path | None = None,
     run: Runner = run_command,
     environ: Mapping[str, str] | None = None,
 ) -> ComposeModel:
     """Have Compose resolve `file` with the markers of `variables`, and parse the result.
 
+    With a `repository_override` the model is the combined one of `file` and that override.
     Raises `config_invalid` (naming `compose.file`) when Compose cannot resolve the file, and
     `unsupported` for a published range (FR-033). `environ` defaults to the process environment.
     """
     base = os.environ if environ is None else environ
     process = run(
-        resolution_command(file),
+        resolution_command(file, repository_override),
         {**base, **marker_environment(variables)},
         file.parent,
     )
@@ -609,6 +610,25 @@ def _override_ambiguous(root: Path, files: Sequence[OverrideFile]) -> WtenvError
         hint="Keep one of them, then run `wtenv up` again. Nothing was changed.",
         details={"files": list(names)},
     )
+
+
+def check_path_separator(files: Sequence[Path]) -> None:
+    """Raise `unsupported` (`compose_path_separator`) when an absolute path in `files` has a `:`.
+
+    `COMPOSE_FILE` joins the compose file, the repository override and the isolation file with
+    `:` (research.md R2), so a path that contains one cannot be told apart from two paths.
+    `details.file` is the first such path.
+    """
+    for file in files:
+        if ":" in str(file):
+            raise WtenvError(
+                ErrorCode.UNSUPPORTED,
+                f"{file} contains ':', which wtenv needs to separate the files in COMPOSE_FILE",
+                hint="Move or rename the directory so that no path of the compose file, its "
+                "override or the worktree contains ':', then run `wtenv up` again. Nothing was "
+                "changed.",
+                details={"reason": "compose_path_separator", "file": str(file)},
+            )
 
 
 def check_recorded_override(root: Path, relative: str) -> None:
