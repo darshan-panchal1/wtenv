@@ -19,9 +19,10 @@ from urllib.parse import urlsplit
 
 from wtenv.config import COMPOSE_FILE_NAMES
 from wtenv.database import Removal
-from wtenv.envfile import write_atomic
+from wtenv.envfile import unusable, write_atomic
 from wtenv.errors import ErrorCode, JsonValue, WtenvError
-from wtenv.identity import short_id, slug
+from wtenv.gitutil import is_tracked
+from wtenv.identity import short_id, slug, symlinked_part
 from wtenv.output import FailedItem, Item, ItemKind, KeptVolume, WarningCode, WarningInfo
 
 _FILE_SETTING = "compose.file"
@@ -475,6 +476,139 @@ def check_override_files(root: Path, compose_file: str, recorded_override: str |
                 "`wtenv up` again. Nothing was changed.",
                 details={"kind": "compose_override", "name": str(path)},
             )
+
+
+OverrideClass = Literal["wtenv_own", "adopt", "repository_owned"]
+Arrangement = Literal["automatic", "exec_only"]
+
+
+@dataclass(frozen=True)
+class OverrideFile:
+    """One override file beside the compose file, and whose it is (data-model.md, step 5)."""
+
+    path: str  # relative to the worktree root, in the form `override_path` gives
+    kind: OverrideClass
+
+
+@dataclass(frozen=True)
+class OverrideInventory:
+    """The override files beside a compose file, and the arrangement they call for (FR-001)."""
+
+    files: tuple[OverrideFile, ...]  # every existing file among the four names, in name order
+    arrangement: Arrangement
+    # The one file `exec` loads after the compose file; None in the automatic arrangement.
+    repository_override: str | None
+    # wtenv's own files to remove in step 11; only in the exec-only arrangement (FR-007).
+    remove: tuple[str, ...]
+
+
+def override_inventory(
+    root: Path, compose_file: str, recorded_override: str | None
+) -> OverrideInventory:
+    """Classify the override files beside `compose_file` and choose the arrangement (step 5).
+
+    Each existing file among the four override names is `wtenv_own`, `adopt` or
+    `repository_owned` (data-model.md, "Override inventory"). One repository-owned file, adopted
+    or not, selects the exec-only arrangement and marks every `wtenv_own` file for removal; none
+    selects the automatic one. Read only: it writes, renames and deletes nothing, and a header is
+    never read through a symbolic link. `recorded_override` is the registry's override path,
+    relative to `root`.
+
+    Raises `ownership_conflict` for a file that carries wtenv's header but is not recorded, and
+    for a recorded file that has no header and that git does not track; `env_file_unusable`
+    (`symlink`) for a link at the recorded path; `override_ambiguous` for two or more
+    repository-owned files.
+    """
+    directory = posixpath.dirname(compose_file)
+    files = []
+    for name in OVERRIDE_FILE_NAMES:
+        relative = posixpath.join(directory, name)
+        if os.path.lexists(root / relative):
+            kind = _override_class(root, relative, relative == recorded_override)
+            files.append(OverrideFile(path=relative, kind=kind))
+    repository_owned = [file for file in files if file.kind != "wtenv_own"]
+    if len(repository_owned) > 1:
+        raise _override_ambiguous(root, repository_owned)
+    if not repository_owned:
+        return OverrideInventory(
+            files=tuple(files), arrangement="automatic", repository_override=None, remove=()
+        )
+    return OverrideInventory(
+        files=tuple(files),
+        arrangement="exec_only",
+        repository_override=repository_owned[0].path,
+        remove=tuple(file.path for file in files if file.kind == "wtenv_own"),
+    )
+
+
+def _override_class(root: Path, relative: str, recorded: bool) -> OverrideClass:
+    """Return whose the existing override file `relative` is (data-model.md, "Override inventory").
+
+    The recorded path is checked for a link first (001:FR-086), so no header is read through one.
+    A link at any other override name is the repository's and its target is not read.
+    """
+    path = root / relative
+    if not recorded:
+        if path.is_symlink():
+            return "repository_owned"
+        if _starts_with_header(path):
+            # wtenv's header means wtenv wrote it, for example before the registry was lost.
+            raise _unrecorded_header_conflict(path)
+        return "repository_owned"
+    link = symlinked_part(root, relative)
+    if link is not None:
+        raise unusable(link, "symlink")
+    if _starts_with_header(path):
+        return "wtenv_own"
+    if is_tracked(root, relative):
+        return "adopt"  # git tracks it, so it is the repository's (FR-006)
+    raise _recorded_header_conflict(path)
+
+
+def _starts_with_header(path: Path) -> bool:
+    """Return whether the file at `path` starts with wtenv's header line; unreadable is False."""
+    try:
+        with open(path, "rb") as file:
+            first_line = file.readline(len(_OVERRIDE_HEADER) + 1)
+    except OSError:
+        return False
+    return first_line == _OVERRIDE_HEADER.encode("utf-8")
+
+
+def _recorded_header_conflict(path: Path) -> WtenvError:
+    """Build `ownership_conflict` for a recorded override that has no header and is not tracked."""
+    return WtenvError(
+        ErrorCode.OWNERSHIP_CONFLICT,
+        f"{path} is recorded as wtenv's override, but it does not start with wtenv's header "
+        "line, so it is not wtenv's; it was left alone",
+        hint="Move your changes into the compose file, or remove the override, then run "
+        "`wtenv up` again. Nothing was changed.",
+        details={"kind": ItemKind.COMPOSE_OVERRIDE.value, "name": str(path)},
+    )
+
+
+def _unrecorded_header_conflict(path: Path) -> WtenvError:
+    """Build `ownership_conflict` for a file with wtenv's header that the registry does not record."""
+    return WtenvError(
+        ErrorCode.OWNERSHIP_CONFLICT,
+        f"{path} starts with wtenv's header line, but wtenv has no record of writing it, so it "
+        "will neither use nor remove it",
+        hint="Remove the file if wtenv wrote it, or its header line if it is yours, then run "
+        "`wtenv up` again. Nothing was changed.",
+        details={"kind": ItemKind.COMPOSE_OVERRIDE.value, "name": str(path)},
+    )
+
+
+def _override_ambiguous(root: Path, files: Sequence[OverrideFile]) -> WtenvError:
+    """Build `override_ambiguous` naming every repository-owned override file (FR-007)."""
+    names = sorted(str(root / file.path) for file in files)
+    return WtenvError(
+        ErrorCode.OVERRIDE_AMBIGUOUS,
+        f"{len(names)} override files that wtenv did not create sit beside the compose file, "
+        f"and Compose would load only one of them: {', '.join(names)}",
+        hint="Keep one of them, then run `wtenv up` again. Nothing was changed.",
+        details={"files": list(names)},
+    )
 
 
 def check_recorded_override(root: Path, relative: str) -> None:

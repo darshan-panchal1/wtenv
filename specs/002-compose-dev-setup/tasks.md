@@ -408,7 +408,7 @@ byte-identical throughout.
 
 ### 4A. Override inventory and arrangement, read only (`compose.py`)
 
-- [ ] T025 [US1] ⚠RELAX(001:FR-030) Rewrite four existing tests that assert the v0.1 refusal, in `tests/unit/test_compose_checks.py`
+- [X] T025 [US1] ⚠RELAX(001:FR-030) Rewrite four existing tests that assert the v0.1 refusal, in `tests/unit/test_compose_checks.py`
   - Maintainer decision 2026-10-10: plan.md's table names three tests; these four plus T032's
     are the five to rewrite. Each now calls `compose.override_inventory` and keeps its point:
     - `test_any_of_the_four_override_names_that_is_not_recorded_is_an_ownership_conflict` →
@@ -424,7 +424,7 @@ byte-identical throughout.
   - Each test is renamed to say its new outcome, and its old name goes in its docstring, so the
     trace survives. No other test in the file changes.
   - **Done when** the four tests fail under the failing-test rule (stub `override_inventory`).
-- [ ] T026 [P] [US1] Add failing tests for the inventory to `tests/unit/test_override_inventory.py` (new)
+- [X] T026 [P] [US1] Add failing tests for the inventory to `tests/unit/test_override_inventory.py` (new)
   - FR-001, FR-006 (classification only), FR-007; data-model.md, "Override inventory (step 5)".
     Every row of the classification table: `wtenv_own`; `adopt` (recorded path, no header, git
     tracks it, using a real `git init` in `tmp_path`); `ownership_conflict` (recorded path, no
@@ -438,16 +438,16 @@ byte-identical throughout.
     unrecorded override name is `repository_owned`, and its target is not read for the header
     (spec, Edge cases; O2).
   - **Done when** the file fails under the failing-test rule.
-- [ ] T027 [US1] Implement `override_inventory()` and the arrangement result in `src/wtenv/compose.py`
+- [X] T027 [US1] Implement `override_inventory()` and the arrangement result in `src/wtenv/compose.py`
   - Read only: it writes, renames and deletes nothing. `check_override_files` stays until T033
     switches `up` to the inventory.
   - **Done when** `uv run pytest tests/unit/test_override_inventory.py tests/unit/test_compose_checks.py -q` exits 0.
-- [ ] T147 [US1] Mutation check: an unrecorded override file that starts with wtenv's header is `ownership_conflict`, in `src/wtenv/compose.py` (restored afterwards)
+- [X] T147 [US1] Mutation check: an unrecorded override file that starts with wtenv's header is `ownership_conflict`, in `src/wtenv/compose.py` (restored afterwards)
   - Guard: data-model.md, Override inventory, row "any other of the four names, a regular file,
     header present" (analysis C3; safety review, item 8). Classify that file as
     `repository_owned`; its case in `tests/unit/test_override_inventory.py` (T026) must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T028 [US1] Group check 4A: runs G5 from the repository root; edits no file
+- [X] T028 [US1] Group check 4A: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(compose): classify override files beside the compose file`.
 
 ### 4B. Resolving the compose file with the repository override (`compose.py`)
