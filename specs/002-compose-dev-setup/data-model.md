@@ -1,0 +1,195 @@
+# Data model: Compose dev setups (spec 002)
+
+**Feature**: `002-compose-dev-setup` | **Date**: 2026-10-10
+
+This document states only what spec 002 adds to or changes in
+[001 data-model.md](../001-worktree-runtime-isolation/data-model.md). Everything not mentioned
+here is unchanged.
+
+## Registry
+
+`REGISTRY_VERSION` stays **1**. No migration (FR-029; research R6).
+
+### Compose record (`ComposeRecord`): one optional field
+
+| Field | Rules |
+|-------|-------|
+| `project` | Unchanged |
+| `file` | Unchanged |
+| `override` | wtenv's generated compose file, relative to the worktree root. **Automatic** arrangement: the auto-loaded override beside the compose file (v0.1.x). **Exec-only** arrangement: exactly `.wtenv/compose.isolation.yaml`. |
+| `override_state` | Unchanged: a resource state of the file named by `override` |
+| `repository_override` *(new, optional)* | The repository-owned override file the worktree uses, relative to the worktree root, in the plain form of `identity.recorded_path_problem`. Set **only** in the exec-only arrangement. wtenv reads it; nothing ever writes, deletes or excludes it. |
+
+- Serialisation: `repository_override` is written to `registry.json` **only when it is set**
+  (`Field(default=None, exclude_if=lambda value: value is None)`). An entry in the automatic
+  arrangement is saved byte for byte as v0.1.1 saves it, so v0.1.x can still read a registry in
+  which no worktree uses the new arrangement.
+- Consistency rule, checked where the record is used (not by the model, so that a hand-edited
+  registry is reported rather than unreadable): `repository_override` is set if and only if
+  `override` is `.wtenv/compose.isolation.yaml`. `exec` treats any other combination as
+  `isolation_unavailable` (`recorded_value_invalid`); `down` and `gc` look only at `override`.
+- Downgrade (spec, Assumptions): v0.1.x fails with `registry_unreadable` on a registry that holds
+  `repository_override`, and changes nothing (001:FR-070).
+
+### What is deliberately not recorded
+
+| Fact | Why not |
+|------|---------|
+| Port variable names | Derived from `PublishedPort.service`, `target`, `protocol` by the rule (FR-011) whenever needed |
+| The compose-hosted database service, port or URL | wtenv creates nothing for it that it must later remove (FR-022, FR-023). The URL can hold a password (FR-020). `up` recomputes all three from the configuration and the compose model |
+| A `DatabaseRecord` for `type = "compose"` | No database is created by wtenv. `DatabaseRecord.kind` keeps `postgres` and `sqlite` only |
+
+## Compose arrangement (computed by `up`, never configured)
+
+| Arrangement | Condition (beside the compose file, the four auto-loaded override names) | wtenv's file |
+|-------------|----------|--------------|
+| `automatic` | No repository-owned override | Auto-loaded override, v0.1.1 bytes (FR-008) |
+| `exec_only` | Exactly one repository-owned override | `.wtenv/compose.isolation.yaml` (FR-003, FR-009) |
+| *(refused)* | Two or more repository-owned overrides | `override_ambiguous` (FR-007) |
+
+### Override inventory (step 5)
+
+Each existing path among the four override names beside the compose file is classified once:
+
+| Path | Header line | Git tracks it | Class |
+|------|-------------|---------------|-------|
+| = `ComposeRecord.override` | present | — | `wtenv_own` |
+| = `ComposeRecord.override` | absent | yes | `adopt` (FR-006): counted as repository-owned |
+| = `ComposeRecord.override` | absent | no | `ownership_conflict`, as 001:FR-087 |
+| any other of the four names | any | any | `repository_owned` (spec, Terms: "wtenv did not create and has not recorded") |
+
+A symbolic link at the recorded path is refused first, by the unchanged step-5 link check
+(001:FR-086). A repository-owned override may be a link: wtenv only reads it.
+
+`repository_owned` + `adopt` count | Result
+---|---
+0 | `automatic`
+1 | `exec_only`; every `wtenv_own` file is removed in step 11 (FR-007)
+≥ 2 | `override_ambiguous`, naming every file; nothing changes
+
+### Transitions (step 8 records them; step 11 carries them out)
+
+| From | To | Registry in step 8 | Files in step 11 |
+|------|----|--------------------|------------------|
+| none | `automatic` | v0.1.1 | v0.1.1 |
+| none | `exec_only` | `override = .wtenv/compose.isolation.yaml` (`creating`), `repository_override = <path>` | write + verify the isolation file |
+| `automatic` | `exec_only` (a repository override appeared under **another** name) | as above; the old record is first kept as `removing` | `_remove_override` on the old file (header rechecked), then write + verify |
+| `automatic` | `exec_only` by adoption (FR-006: the recorded path now holds a tracked, header-less file) | `override = .wtenv/compose.isolation.yaml` (`creating`), `repository_override = <old override path>`; the old path's pattern leaves `exclude_patterns`; warning `compose_override_adopted` | write + verify; the adopted file is **not** touched |
+| `exec_only` | `automatic` (the repository override disappeared; FR-008, spec Edge cases) | old record `removing`, new auto-loaded override `creating`, `repository_override` cleared | `_remove_override` on the isolation file, then write + verify the auto-loaded override |
+| `exec_only` | `exec_only`, another repository override name | `repository_override` updated | isolation file rewritten if its text changed |
+| any | no `[compose]` | unchanged from v0.1.x (`removing`) | wtenv's recorded file removed (header rechecked); `repository_override` cleared with it |
+
+An interrupted `up` leaves a record that is `creating` or `removing`. The next `up` finishes it
+through the same branches as in v0.1.x (001 data-model.md, Resource states).
+
+## Isolation settings file
+
+`.wtenv/compose.isolation.yaml` (layout in [contracts/files.md](contracts/files.md)):
+
+- Same text as the v0.1.x generated override (`compose.override_text`), from the **combined**
+  model of the compose file and the repository's override. Every published port of the combined
+  model has an entry, and every field Compose reported is repeated with only `published`
+  changed (FR-003).
+- Never loaded by Compose on its own (its name is not an override name). Loaded through
+  `COMPOSE_FILE` by `exec`, post-up commands and `up`'s verification.
+
+### Isolation environment (`isolation.compose_environment`)
+
+The environment `exec`, post-up commands and `up`'s verification add, in the exec-only
+arrangement only:
+
+| Variable | Value |
+|----------|-------|
+| `COMPOSE_FILE` | `<root>/<file>:<root>/<repository_override>:<root>/.wtenv/compose.isolation.yaml` (absolute paths, `<root>` = recorded worktree path) |
+| `COMPOSE_PATH_SEPARATOR` | `:` |
+
+`COMPOSE_PROJECT_NAME` is never set (research R2).
+
+### `exec` checks (FR-033), in order; the first failure stops `exec` before the command runs
+
+| # | Check | `reason` of `isolation_unavailable` |
+|---|-------|-------------------------------------|
+| 1 | `COMPOSE_PROJECT_NAME` or `COMPOSE_FILE` non-empty in the calling environment | `compose_env_override` (`variable`) |
+| 2 | `override` is exactly the isolation path, `repository_override` and `file` pass `recorded_path_problem` | `recorded_value_invalid` |
+| 3 | No symbolic link from the root down to the isolation file (`identity.symlinked_part`) | `symlink` (`path` is the link) |
+| 4 | The isolation file exists | `isolation_file_missing` |
+| 5 | Its first line is wtenv's header | `isolation_file_not_wtenvs` |
+| 6 | The recorded repository override exists (`os.path.lexists`) | `repository_override_missing` |
+| 7 | No other of the four override names exists beside the compose file | `override_appeared` (`path`) |
+
+The worktree must still be `provisioned` first (001:FR-057, unchanged). In an automatic
+worktree none of these checks run, and `exec` is v0.1.1's.
+
+## Published port and port variable (Story 2)
+
+| Element | Rule |
+|---------|------|
+| Published port | `PublishedPort` as recorded (unchanged) |
+| Port variable name | `WTENV_PORT_<SERVICE>_<TARGET>_<PROTOCOL>`: `SERVICE` = service name in upper case with every character outside `A–Z0–9` replaced by `_`; `TARGET` decimal; `PROTOCOL` `TCP`/`UDP` (research R5) |
+| Value | The assigned host port (`PublishedPort.port`) |
+| Uniqueness | Over the combined model: no two published ports and no configured variable (`ports` entries, `DATABASE_URL` when `[database]` is set) may share a name. Otherwise `port_variable_conflict` before step 8 |
+
+### Env-file section order (FR-013)
+
+1. The `ports` variables of `wtenv.toml`, in their order (unchanged).
+2. The port variables, sorted by (service, container port, protocol). Unique by the uniqueness
+   rule, so the order is total.
+3. `DATABASE_URL`, when a database is configured.
+
+## Configuration: `[database]` with `type = "compose"` (Story 3)
+
+Details in [contracts/config.md](contracts/config.md).
+
+| Key | `postgres`, `sqlite` | `compose` |
+|-----|----------------------|-----------|
+| `type` | unchanged | `"compose"` |
+| `template` | required (unchanged) | **not allowed** (FR-017) |
+| `service` *(new)* | **not allowed** | required: a compose service name |
+| `url` | unchanged | required: Postgres scheme, local host (001:FR-025), `{port}` as the port; placeholders `{port}`, `{env:NAME}`, `{compose_env:NAME}` |
+
+`type = "compose"` requires `[compose]`. Otherwise `config_invalid` with `setting`
+`database.type`.
+
+### Compose-hosted database (in memory, built at every `up`)
+
+| Field | Source |
+|-------|--------|
+| `service` | `database.service` |
+| `port mapping` | The **one** published port of that service in the combined model (FR-021). Zero or two or more ports, or no such service: `config_invalid`, `setting` `database.service` |
+| `host port` | Its assigned `PublishedPort.port` |
+| `port variable` | Its Story 2 name |
+| `url` | The pattern with `{port}` → host port, `{env:NAME}` → the process environment (verbatim, v0.1.x), `{compose_env:NAME}` → the service's resolved `environment[NAME]`, percent-encoded. A missing name: `config_invalid` (`variable`). Never printed, never recorded (FR-020) |
+| `storage` | Classification of the service's data mounts (below) |
+
+### Data storage classification (FR-026, FR-027; research R4)
+
+Data mounts: the service's `volumes` entries of type `volume` or `bind` that are not
+`read_only`.
+
+| Mount | Class | Result |
+|-------|-------|--------|
+| none at all | `no_volume` | warning `compose_database_data_kept` |
+| `volume` without `source` | `anonymous_volume` | warning `compose_database_data_kept` |
+| `volume` → top-level `external: true` | `external_volume` | `database_storage_shared` |
+| `volume` → top-level `name` ≠ `<model name>_<key>` | `fixed_name_volume` | `database_storage_shared` |
+| `volume` → top-level `driver_opts.device` = D | judged as a bind of D | see the two bind rows |
+| `volume` → `<model name>_<key>`, no device | project-scoped | accepted, no warning |
+| `bind`, `realpath(source)` inside `realpath(root)` | `worktree_directory` | warning `compose_database_data_kept` |
+| `bind`, `realpath(source)` outside `realpath(root)` | `host_directory` | `database_storage_shared` |
+
+The first refusal found, in mount order, is reported. Warnings are collected for every accepted
+mount.
+
+## Output models (summary; full contract in [contracts/json_models.py](contracts/json_models.py))
+
+| Model | Addition |
+|-------|----------|
+| `PortView` | `port_variable: str \| None` (the Story 2 name; set for every published port) |
+| `WorktreeView` | `compose_isolation: "automatic" \| "exec_only" \| None`; `compose_repository_override: str \| None` |
+| `UpResult` | `compose_database: ComposeDatabaseView \| None` (service, target, protocol, port, port_variable, url_variable) |
+| `DownResult`, `GcResult` | `kept_items: list[KeptItem]` (`KeptItem` = `Item` + `reason: "repository_owned"`) |
+| `ErrorCode` | `isolation_unavailable` (20), `override_ambiguous` (21), `port_variable_conflict` (22), `database_storage_shared` (23) |
+| `WarningCode` | `compose_isolation_exec_only`, `compose_database_data_kept`, `compose_override_adopted` |
+
+`SCHEMA_VERSION` stays 1: every change is an addition (001 json_models.py: "New codes may be
+added; existing ones never change meaning").

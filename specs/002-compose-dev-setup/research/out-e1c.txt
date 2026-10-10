@@ -1,0 +1,26 @@
+=== v2.24.4: Docker Compose version v2.24.4
+
+## E1.6a the override repeats the compose file's entry exactly
+
+$ cd <W>/wtenv-research-e1c && docker compose -p wtenv-research-e1c -f compose.yaml -f same.yaml config --format json | jq -c '[.services.web.ports[] | {target, published}]'
+[{"target":6379,"published":"18001"}]
+[exit 0]
+
+## E1.6b the override publishes the same container port on another host port
+
+$ cd <W>/wtenv-research-e1c && docker compose -p wtenv-research-e1c -f compose.yaml -f other.yaml config --format json | jq -c '[.services.web.ports[] | {target, published}]'
+[{"target":6379,"published":"18001"},{"target":6379,"published":"18002"}]
+[exit 0]
+=== v5.1.4: Docker Compose version v5.1.4
+
+## E1.6a the override repeats the compose file's entry exactly
+
+$ cd <W>/wtenv-research-e1c && docker compose -p wtenv-research-e1c -f compose.yaml -f same.yaml config --format json | jq -c '[.services.web.ports[] | {target, published}]'
+[{"target":6379,"published":"18001"}]
+[exit 0]
+
+## E1.6b the override publishes the same container port on another host port
+
+$ cd <W>/wtenv-research-e1c && docker compose -p wtenv-research-e1c -f compose.yaml -f other.yaml config --format json | jq -c '[.services.web.ports[] | {target, published}]'
+[{"target":6379,"published":"18001"},{"target":6379,"published":"18002"}]
+[exit 0]
