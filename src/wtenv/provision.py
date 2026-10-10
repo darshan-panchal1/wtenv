@@ -406,8 +406,13 @@ def _database_plan(
         return None
     config_file = str(root / CONFIG_FILE_NAME)
     if settings.type == "compose" or settings.template is None:
-        # `type = "compose"` is accepted by config.py (T013); `up` handles it in T086.
-        raise NotImplementedError("a compose-hosted database is not provisioned yet (T086)")
+        # Interim guard: `type = "compose"` is accepted by config.py (T013), and T086 removes this.
+        raise WtenvError(
+            ErrorCode.UNSUPPORTED,
+            "a compose-hosted database is not provisioned by this version of wtenv yet",
+            hint='Remove `type = "compose"` from [database], or wait for the release that adds it.',
+            details={"reason": "compose_database_not_provisioned", "service": settings.service},
+        )
     record = _record_of(known, settings.type)
     if settings.type == "sqlite":
         relative = (
