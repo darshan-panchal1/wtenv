@@ -13,7 +13,9 @@ import pytest
 import wtenv.registry as registry_module
 from wtenv.errors import ErrorCode, WtenvError
 from wtenv.locks import registry_lock, state_dir
+from wtenv.output import ResourceState
 from wtenv.registry import (
+    ComposeRecord,
     HookRecord,
     PortBlock,
     Registry,
@@ -320,3 +322,49 @@ def test_simultaneous_transactions_in_other_processes_lose_no_update() -> None:
 
     assert [process.wait(timeout=60) for process in processes] == [0] * 10
     assert sorted(load().hooks) == sorted(f"/repo/{n}" for n in range(10))
+
+
+# --- a registry that v0.1.1 wrote, and the new optional field (T008; FR-029) -------------------
+
+GOLDEN_REGISTRY = (
+    Path(__file__).resolve().parents[1] / "fixtures" / "v0_1_1" / "golden" / "registry.json"
+)
+
+
+def test_a_v0_1_1_registry_is_saved_byte_for_byte() -> None:
+    # The golden file was written by v0.1.1's own `registry.save` (T002).
+    golden = GOLDEN_REGISTRY.read_bytes()
+    assert b'"compose"' in golden  # it holds a compose entry, so the field would be seen
+    write_registry_file(golden)
+
+    save(load())
+
+    assert registry_path().read_bytes() == golden
+
+
+def test_a_repository_override_is_saved_and_loads_back_and_only_where_it_is_set() -> None:
+    assert "repository_override" in ComposeRecord.model_fields
+    registry = registry_with_entry()
+    entry = registry.worktrees[GIT_DIR]
+    entry.compose = ComposeRecord(
+        project="wtenv-feature-3f9a1c2b",
+        file="compose.yaml",
+        override=".wtenv/compose.isolation.yaml",
+        override_state=ResourceState.CREATED,
+        repository_override="compose.override.yaml",
+    )
+    other = make_entry("/code/app/.git/worktrees/other")
+    other.compose = ComposeRecord(
+        project="wtenv-other-1a2b3c4d",
+        file="compose.yaml",
+        override="compose.override.yaml",
+        override_state=ResourceState.CREATED,
+    )
+    registry.worktrees[other.git_dir] = other
+
+    save(registry)
+
+    written = json.loads(registry_path().read_text())["worktrees"]
+    assert written[GIT_DIR]["compose"]["repository_override"] == "compose.override.yaml"
+    assert "repository_override" not in written[other.git_dir]["compose"]
+    assert load() == registry

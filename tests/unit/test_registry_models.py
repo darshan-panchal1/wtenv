@@ -7,6 +7,7 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 import wtenv.registry as registry_module
+from wtenv.output import ResourceState
 from wtenv.registry import (
     ComposeRecord,
     DatabaseRecord,
@@ -366,3 +367,72 @@ def test_any_other_resource_state_is_rejected(state: str) -> None:
             compose={"project": "p", "file": "f", "override": "o", "override_state": state}
         )
     )
+
+
+# --- the optional `repository_override` of a compose record (T008; FR-029; data-model.md) --------
+
+
+def compose_data(**changes: Any) -> dict[str, Any]:
+    """A valid compose record in the exec-only arrangement, as plain data."""
+    data: dict[str, Any] = {
+        "project": "wtenv-feature-x-3f9a1c2b",
+        "file": "compose.yaml",
+        "override": ".wtenv/compose.isolation.yaml",
+        "override_state": "created",
+        "repository_override": "compose.override.yaml",
+    }
+    data.update(changes)
+    return data
+
+
+def has_repository_override_field() -> bool:
+    return "repository_override" in ComposeRecord.model_fields
+
+
+def test_a_compose_record_has_an_optional_repository_override_that_defaults_to_none() -> None:
+    assert has_repository_override_field()
+    record = ComposeRecord(
+        project="p",
+        file="compose.yaml",
+        override="compose.override.yaml",
+        override_state=ResourceState.CREATED,
+    )
+
+    assert record.repository_override is None
+
+
+def test_an_entry_with_no_repository_override_is_dumped_with_no_such_key() -> None:
+    assert has_repository_override_field()
+    data = registry_data(compose=compose_data())
+    del data["worktrees"][KEY]["compose"]["repository_override"]
+
+    dumped = json.loads(Registry.model_validate(data).model_dump_json())
+
+    assert "repository_override" not in dumped["worktrees"][KEY]["compose"]
+
+
+def test_an_entry_with_a_repository_override_is_loaded_and_dumped_with_it() -> None:
+    assert has_repository_override_field()
+
+    registry = Registry.model_validate(registry_data(compose=compose_data()))
+
+    compose = registry.worktrees[KEY].compose
+    assert compose is not None
+    assert compose.repository_override == "compose.override.yaml"
+    dumped = json.loads(registry.model_dump_json())
+    assert dumped["worktrees"][KEY]["compose"]["repository_override"] == "compose.override.yaml"
+    assert Registry.model_validate_json(registry.model_dump_json()) == registry
+
+
+def test_the_model_does_not_check_that_the_override_matches_repository_override() -> None:
+    # data-model.md: the rule is checked where the record is used, so that a hand-edited
+    # registry is reported, not unreadable.
+    assert has_repository_override_field()
+
+    Registry.model_validate(registry_data(compose=compose_data(override="compose.override.yaml")))
+    Registry.model_validate(registry_data(compose=compose_data(repository_override=None)))
+
+
+def test_the_registry_version_is_still_one() -> None:
+    assert registry_module.REGISTRY_VERSION == 1
+    assert Registry(version=1).version == 1

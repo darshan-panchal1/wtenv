@@ -186,7 +186,7 @@ the optional registry field, and the `[database] type = "compose"` configuration
 
 ### 2B. Registry: one optional field (`registry.py`)
 
-- [ ] T008 Add failing tests for `ComposeRecord.repository_override` to `tests/unit/test_registry_models.py` and `tests/unit/test_registry_store.py`
+- [X] T008 Add failing tests for `ComposeRecord.repository_override` to `tests/unit/test_registry_models.py` and `tests/unit/test_registry_store.py`
   - FR-029; data-model.md, Registry; plan.md S7.
   - New `test_a_v0_1_1_registry_is_saved_byte_for_byte`: load `tests/fixtures/v0_1_1/golden/registry.json`
     (T002) and save it to a temporary state directory. The bytes are identical.
@@ -195,15 +195,21 @@ the optional registry field, and the `[database] type = "compose"` configuration
   - Kept, and must still pass: `test_a_password_cannot_be_stored_in_a_database_record` (FR-020),
     `test_a_volumes_list_added_to_the_compose_record_makes_the_registry_unreadable` (001:FR-070).
   - **Done when** the two files fail under the failing-test rule.
-- [ ] T009 Add `repository_override: str | None = Field(default=None, exclude_if=lambda value: value is None)` to `ComposeRecord` in `src/wtenv/registry.py`
+- [X] T009 Add `repository_override: str | None = Field(default=None, exclude_if=lambda value: value is None)` to `ComposeRecord` in `src/wtenv/registry.py`
   - FR-029. The consistency rule ("set if and only if `override` is
     `.wtenv/compose.isolation.yaml`") is **not** checked by the model, so that a hand-edited
     registry is reported rather than unreadable (data-model.md).
   - **Done when** `uv run pytest tests/unit/test_registry_models.py tests/unit/test_registry_store.py -q` exits 0.
-- [ ] T010 Mutation check: `exclude_if` on the new field, in `src/wtenv/registry.py` (restored afterwards)
+- [X] T010 Mutation check: `exclude_if` on the new field, in `src/wtenv/registry.py` (restored afterwards)
   - Guard: serialise only when set (S7). Remove `exclude_if`; `test_a_v0_1_1_registry_is_saved_byte_for_byte` must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T108 Check the downgrade path with v0.1.1's own `registry.load`, in `tests/fixtures/v0_1_1/check_downgrade.py` (new)
+  - Recorded (2026-10-10): with `exclude_if` removed, `tests/unit/test_registry_store.py::test_a_v0_1_1_registry_is_saved_byte_for_byte`
+    fails (exit 1; first assertion line `assert registry_path().read_bytes() == golden`), and so do
+    `test_the_example_loads_and_dumps_back_to_equal_json`,
+    `test_an_entry_with_no_repository_override_is_dumped_with_no_such_key` and
+    `test_a_repository_override_is_saved_and_loads_back_and_only_where_it_is_set`. After restoring the file
+    from a backup, SHA-256 `1c2f0af21e3b…48838c3` before and after, `cmp` identical, the two files' tests pass (116).
+- [X] T108 Check the downgrade path with v0.1.1's own `registry.load`, in `tests/fixtures/v0_1_1/check_downgrade.py` (new)
   - FR-029; spec, Assumptions, "Downgrade"; data-model.md, Registry; analysis D1.
   - With the new code (after T009), save two registries through `registry.save`, each under its
     own `XDG_STATE_HOME`: `$SCRATCH/down-auto` (the entries of the T002 golden registry, all in the
@@ -215,7 +221,19 @@ the optional registry field, and the `[database] type = "compose"` configuration
   - **Done when** the script prints `loaded` for `down-auto` and `registry_unreadable` for
     `down-exec`, the two SHA-256 values are equal for both, `uv run ruff check tests/fixtures/v0_1_1`
     exits 0, and the output is recorded under this task.
-- [ ] T011 Group check 2B: runs G5 from the repository root; edits no file
+  - Recorded output (run 2026-10-10 with the commands above; the `v0.1.1` worktree was removed afterwards):
+
+    ```text
+    == down-auto (v0.1.1's registry.load)
+    loaded
+    sha256 before: 04c6e079e9026bf5cb99e133fc626794ff9f154377098d10372bb37efab01083
+    sha256 after:  04c6e079e9026bf5cb99e133fc626794ff9f154377098d10372bb37efab01083
+    == down-exec (v0.1.1's registry.load)
+    registry_unreadable (reason: invalid_schema)
+    sha256 before: 3ec49334ffcf1ecdc0be6f3f1b12d165645210d41d5ed799d3809a8267aa7f08
+    sha256 after:  3ec49334ffcf1ecdc0be6f3f1b12d165645210d41d5ed799d3809a8267aa7f08
+    ```
+- [X] T011 Group check 2B: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(registry): record a repository-owned override when one is used`.
 
 ### 2C. Configuration: `[database] type = "compose"` (`config.py`)
