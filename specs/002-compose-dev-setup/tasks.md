@@ -298,8 +298,11 @@ stopped, worktree 2's port refuses and worktree 1's still answers (SC-002).
   - Collisions → `port_variable_conflict` (exit 22), `details.variable` the name, `details.sources`
     two strings of the forms `service <name>, container port <n>/<protocol>`, `wtenv.toml ports`,
     or `DATABASE_URL`: `my-api` and `my_api`; `API` and `api`; `web` 6379/tcp published twice
-    (E1.6b); a name equal to a `ports` entry; a name equal to `DATABASE_URL` when `[database]` is
-    set.
+    (E1.6b); a name equal to a `ports` entry. `DATABASE_URL` is in the set of configured names
+    when `[database]` is set, as data, with no special case in the code; but every derived name
+    starts with `WTENV_PORT_`, so none can equal it. The test asserts that property and that the
+    set includes `DATABASE_URL`, instead of a collision case that cannot occur (maintainer,
+    2026-10-10).
   - SC-008: for every compose model under `tests/` (the `.compose.json` files of T002 and every
     `STACK` constant of `tests/integration/test_us3_compose.py`), either all names are distinct or
     the check raises. Never one name for two ports.
