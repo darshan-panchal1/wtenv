@@ -288,7 +288,7 @@ stopped, worktree 2's port refuses and worktree 1's still answers (SC-002).
 
 ### 3A. The name rule and its collisions (`ports.py`)
 
-- [ ] T015 [P] [US2] Add failing tests for the rule and collisions to `tests/unit/test_port_variables.py`
+- [X] T015 [P] [US2] Add failing tests for the rule and collisions to `tests/unit/test_port_variables.py`
   - FR-011, FR-012, SC-008; research.md R5; files.md, "Env file section".
   - New `test_the_variable_name_depends_only_on_service_port_and_protocol`: the 15 worked examples
     of R5 verbatim (`adminer` → `WTENV_PORT_ADMINER_8080_TCP` … `a-b`/`a--b` distinct); the rule
@@ -307,14 +307,23 @@ stopped, worktree 2's port refuses and worktree 1's still answers (SC-002).
     `STACK` constant of `tests/integration/test_us3_compose.py`), either all names are distinct or
     the check raises. Never one name for two ports.
   - **Done when** the file fails under the failing-test rule.
-- [ ] T016 [US2] Implement `port_variable_name()` and `check_port_variables()` in `src/wtenv/ports.py`
+- [X] T016 [US2] Implement `port_variable_name()` and `check_port_variables()` in `src/wtenv/ports.py`
   - FR-011, FR-012, FR-015: pure functions; no port is assigned for a variable.
   - **Done when** `uv run pytest tests/unit/test_port_variables.py -q` exits 0.
-- [ ] T017 [US2] Mutation check: the collision check, in `src/wtenv/ports.py` (restored afterwards)
+- [X] T017 [US2] Mutation check: the collision check, in `src/wtenv/ports.py` (restored afterwards)
   - Guard: "two different published ports MUST never share a variable name" (FR-012). Make
     `check_port_variables` return without checking; the collision cases of T015 must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T018 [US2] Group check 3A: runs G5 from the repository root; edits no file
+  - Recorded (2026-10-10): with `return` as the first statement of `check_port_variables`'s body,
+    `tests/unit/test_port_variables.py` fails (exit 1; first assertion line `Failed: DID NOT RAISE
+    WtenvError`): 8 tests, namely `test_service_names_that_differ_only_in_punctuation_collide`,
+    `…_in_case_collide`, `test_one_container_port_published_twice_collides`,
+    `test_a_name_equal_to_a_ports_entry_collides`, `test_an_error_message_names_the_variable_and_both_sources`
+    and the `colliding_names`, `dup_port` and `ports_named_like_a_variable` cases of
+    `test_every_compose_model_gives_distinct_names_or_is_refused`. After restoring `ports.py` from a
+    backup (the file holds uncommitted work, so `git checkout` cannot restore it), SHA-256
+    `bd862de80053…975d3ba397` before and after, `cmp` identical, 38 tests pass.
+- [X] T018 [US2] Group check 3A: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(ports): derive a variable name for every published port`.
 
 ### 3B. The variables in the env file and in `exec` (`provision.py`)

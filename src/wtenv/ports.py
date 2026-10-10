@@ -7,7 +7,8 @@ and the same free ports always give the same block (Principle III).
 
 import errno
 import socket
-from collections.abc import Callable, Iterable, Sequence
+import string
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Literal, cast
 
 from wtenv.errors import ErrorCode, WtenvError
@@ -30,6 +31,8 @@ _PROBE_ADDRESSES = (
 )
 # A machine without IPv6 cannot bind `::1`; that says nothing about the port.
 _ADDRESS_UNAVAILABLE = (errno.EADDRNOTAVAIL, errno.EAFNOSUPPORT)
+# The only characters of a service name that a port variable name keeps (FR-011).
+_NAME_CHARACTERS = frozenset(string.ascii_letters + string.digits)
 
 
 def port_is_free(port: int) -> bool:
@@ -182,4 +185,59 @@ def _port_clash(service: str, other: str, port: int) -> WtenvError:
         f"services {other} and {service} publish port {port} with the same protocol and host IP",
         hint="Give each service its own variable, or its own host port in the compose file.",
         details={"reason": "compose_port_clash", "service": service, "port": port},
+    )
+
+
+# --- the port variables of published ports (FR-011, FR-012; research R5) -----------------------
+
+
+def port_variable_name(service: str, target: int, protocol: str) -> str:
+    """Return `WTENV_PORT_<SERVICE>_<CONTAINER PORT>_<PROTOCOL>` for a published port (FR-011).
+
+    `<SERVICE>` is the service name in upper case with every character other than `A-Z` and
+    `0-9` replaced by `_`, one for one. The name depends on these three inputs only.
+    """
+    # Character by character, not `str.upper()` first: `ß` would become two letters.
+    safe = "".join(char.upper() if char in _NAME_CHARACTERS else "_" for char in service)
+    return f"WTENV_PORT_{safe}_{target}_{protocol.upper()}"
+
+
+def configured_variable_names(variables: Sequence[str], *, has_database: bool) -> dict[str, str]:
+    """Return the variable names the configuration defines, each with its source (FR-012).
+
+    The `ports` entries come from `wtenv.toml ports`; `DATABASE_URL` is included, from
+    `DATABASE_URL`, when `[database]` is set.
+    """
+    names = {name: "wtenv.toml ports" for name in variables}
+    if has_database:
+        names["DATABASE_URL"] = "DATABASE_URL"
+    return names
+
+
+def check_port_variables(mappings: Sequence["PortMapping"], configured: Mapping[str, str]) -> None:
+    """Raise `port_variable_conflict` when two names are the same (FR-012).
+
+    The names compared are those of every mapping and the keys of `configured` (name to source).
+    The mappings are taken in the order of `published_order`, and then the configured names; the
+    first name seen twice is reported, with the earlier source first. Pure: no port is assigned,
+    and nothing is changed.
+    """
+    seen: dict[str, str] = {}
+    for mapping in sorted(mappings, key=published_order):
+        name = port_variable_name(mapping.service, mapping.target, mapping.protocol)
+        source = f"service {mapping.service}, container port {mapping.target}/{mapping.protocol}"
+        if name in seen:
+            raise _variable_conflict(name, seen[name], source)
+        seen[name] = source
+    for name, source in configured.items():
+        if name in seen:
+            raise _variable_conflict(name, seen[name], source)
+
+
+def _variable_conflict(name: str, first: str, second: str) -> WtenvError:
+    return WtenvError(
+        ErrorCode.PORT_VARIABLE_CONFLICT,
+        f"{first} and {second} would both set the variable {name}",
+        hint="Rename a service or a `ports` entry, or publish the container port once.",
+        details={"variable": name, "sources": [first, second]},
     )
