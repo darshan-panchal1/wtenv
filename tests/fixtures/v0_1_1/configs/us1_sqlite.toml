@@ -1,0 +1,4 @@
+[database]
+type = "sqlite"
+template = "db/dev.sqlite3"
+url = "sqlite:///{path}"

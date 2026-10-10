@@ -1,0 +1,5 @@
+ports = ["PORT", "CACHE_PORT"]
+block_size = 10
+
+[compose]
+file = "docker-compose.yaml"

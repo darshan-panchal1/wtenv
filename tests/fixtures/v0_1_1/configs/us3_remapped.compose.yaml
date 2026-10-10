@@ -1,0 +1,11 @@
+services:
+  backend:
+    image: valkey/valkey:latest
+    pull_policy: never
+    ports:
+      - "8000:6379"
+  frontend:
+    image: valkey/valkey:latest
+    pull_policy: never
+    ports:
+      - "5173:6379"

@@ -1,0 +1,30 @@
+{
+  "config": {
+    "block_size": 10,
+    "compose": null,
+    "database": {
+      "template": "db/dev.sqlite3",
+      "type": "sqlite",
+      "url": "sqlite:///{path}"
+    },
+    "env_file": ".env.local",
+    "ports": [
+      "PORT"
+    ],
+    "post_up": []
+  },
+  "database": {
+    "kind": "sqlite",
+    "path": "/golden/worktrees/feature-x/.wtenv/dev.sqlite3"
+  },
+  "env_section": "# >>> wtenv managed (rewritten by `wtenv up`; do not edit) >>>\nPORT=20000\n# <<< wtenv managed <<<\n",
+  "ports": [
+    {
+      "port": 20000,
+      "variable": "PORT"
+    }
+  ],
+  "project": null,
+  "published": [],
+  "warnings": []
+}

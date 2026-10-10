@@ -1,0 +1,4 @@
+ports = ["PORT"]
+
+[compose]
+file = "compose.yaml"

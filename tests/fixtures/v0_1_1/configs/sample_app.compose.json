@@ -1,0 +1,40 @@
+{
+  "name": "app",
+  "networks": {
+    "default": {
+      "ipam": {},
+      "name": "app_default"
+    }
+  },
+  "services": {
+    "cache": {
+      "command": null,
+      "entrypoint": null,
+      "image": "redis:7-alpine",
+      "networks": {
+        "default": null
+      },
+      "ports": [
+        {
+          "mode": "ingress",
+          "protocol": "tcp",
+          "published": "2",
+          "target": 6379
+        }
+      ],
+      "volumes": [
+        {
+          "source": "cachedata",
+          "target": "/data",
+          "type": "volume",
+          "volume": {}
+        }
+      ]
+    }
+  },
+  "volumes": {
+    "cachedata": {
+      "name": "app_cachedata"
+    }
+  }
+}

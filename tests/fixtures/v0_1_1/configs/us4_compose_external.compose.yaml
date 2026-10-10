@@ -1,0 +1,14 @@
+services:
+  cache:
+    image: valkey/valkey:latest
+    pull_policy: never
+    ports:
+      - "${CACHE_PORT:-6379}:6379"
+    volumes:
+      - cache-data:/data
+      - kept-data:/kept
+volumes:
+  cache-data:
+  kept-data:
+    external: true
+    name: wtenv-golden-external

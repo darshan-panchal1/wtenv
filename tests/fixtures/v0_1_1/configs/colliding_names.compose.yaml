@@ -1,0 +1,11 @@
+services:
+  my-api:
+    image: valkey/valkey:latest
+    pull_policy: never
+    ports:
+      - "8000"
+  my_api:
+    image: valkey/valkey:latest
+    pull_policy: never
+    ports:
+      - "8000"

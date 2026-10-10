@@ -103,10 +103,10 @@ plan.md, Structure Decision).
 **Purpose**: a green baseline, and v0.1.1's outputs captured by v0.1.1 itself, for the
 compatibility tests (FR-008, FR-028, FR-029).
 
-- [ ] T001 Confirm the baseline: run G5 on the tip of `002-compose-dev-setup` (the commit that adds this file), changing no file in `src/` or `tests/`
+- [X] T001 Confirm the baseline: run G5 on the tip of `002-compose-dev-setup` (the commit that adds this file), changing no file in `src/` or `tests/`
   - Nothing is edited. If a gate fails, stop and ask: the failure predates spec 002.
   - **Done when** G5 prints `G5 PASSED` and `git status --porcelain` prints nothing.
-- [ ] T002 Capture v0.1.1's outputs with v0.1.1's own code, in `tests/fixtures/v0_1_1/make_golden.py`, `tests/fixtures/v0_1_1/configs/`, and `tests/fixtures/v0_1_1/golden/`
+- [X] T002 Capture v0.1.1's outputs with v0.1.1's own code, in `tests/fixtures/v0_1_1/make_golden.py`, `tests/fixtures/v0_1_1/configs/`, and `tests/fixtures/v0_1_1/golden/`
   - FR-008, FR-028, FR-029. The golden files are produced by v0.1.1 (tag `v0.1.1`), never written by
     hand and never by the new code.
   - `configs/`: one `.toml` per configuration the v0.1.1 test suite uses, copied verbatim:

@@ -1,0 +1,36 @@
+{
+  "name": "app",
+  "networks": {
+    "default": {
+      "ipam": {},
+      "name": "app_default"
+    }
+  },
+  "services": {
+    "web": {
+      "command": null,
+      "entrypoint": null,
+      "image": "valkey/valkey:latest",
+      "networks": {
+        "default": null
+      },
+      "ports": [
+        {
+          "host_ip": "127.0.0.1",
+          "mode": "ingress",
+          "protocol": "tcp",
+          "published": "8080",
+          "target": 80
+        },
+        {
+          "host_ip": "127.0.0.2",
+          "mode": "ingress",
+          "protocol": "tcp",
+          "published": "8080",
+          "target": 80
+        }
+      ],
+      "pull_policy": "never"
+    }
+  }
+}
