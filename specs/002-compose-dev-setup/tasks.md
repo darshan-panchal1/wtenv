@@ -702,7 +702,7 @@ byte-identical throughout.
 
 ### 4E. Safety group — adopting a tracked file at the recorded path in `up` (`compose.py`, `provision.py`; plan.md S3)
 
-- [ ] T046 [US1] ⚠RELAX(001:FR-087 outcome) Add failing tests for adoption by `up` to `tests/unit/test_override_inventory.py` and `tests/integration/test_us1_repository_override.py`
+- [X] T046 [US1] ⚠RELAX(001:FR-087 outcome) Add failing tests for adoption by `up` to `tests/unit/test_override_inventory.py` and `tests/integration/test_us1_repository_override.py`
   - FR-006; data-model.md Transitions row "`automatic` → `exec_only` by adoption"; files.md,
     `.git/info/exclude` block.
   - New `test_an_untracked_headerless_file_at_the_recorded_path_is_still_an_ownership_conflict`
@@ -712,7 +712,7 @@ byte-identical throughout.
     `exclude_patterns` (the line stays in the block); warning `compose_override_adopted` with
     `details.file`; the file byte-identical, mode and mtime unchanged.
   - **Done when** the new cases fail under the failing-test rule.
-- [ ] T047 [US1] ⚠RELAX(001:FR-087 outcome) Adopt a tracked header-less file in `src/wtenv/compose.py` and `src/wtenv/provision.py`
+- [X] T047 [US1] ⚠RELAX(001:FR-087 outcome) Adopt a tracked header-less file in `src/wtenv/compose.py` and `src/wtenv/provision.py`
   - Both conditions are required: header missing **and** `gitutil.is_tracked` true. Adoption
     changes only the registry.
   - Adoption bypasses the path-change branch: `_compose_record` replaces the record in one step-8
@@ -720,14 +720,14 @@ byte-identical throughout.
     never marks the adopted path `removing`, so `_compose_step` finds `override` equal to the
     plan's and never calls `_remove_override` on the adopted file (data-model.md Transitions).
   - **Done when** `uv run pytest tests/unit/test_override_inventory.py tests/integration/test_us1_repository_override.py -q` exits 0.
-- [ ] T048 [US1] Mutation check: `is_tracked` in adoption by `up`, in `src/wtenv/compose.py` (restored afterwards)
+- [X] T048 [US1] Mutation check: `is_tracked` in adoption by `up`, in `src/wtenv/compose.py` (restored afterwards)
   - Drop the tracked condition; `test_an_untracked_headerless_file_at_the_recorded_path_is_still_an_ownership_conflict` must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T049 [US1] Mutation check: adoption never writes or deletes the file, in `src/wtenv/provision.py` (restored afterwards)
+- [X] T049 [US1] Mutation check: adoption never writes or deletes the file, in `src/wtenv/provision.py` (restored afterwards)
   - Make the adoption branch unlink the adopted file directly (`os.unlink`, bypassing
     `_remove_override` and its header check); the byte-identical assertion of T046 must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T050 [US1] Group check 4E: runs G5 from the repository root; edits no file
+- [X] T050 [US1] Group check 4E: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(up): adopt a tracked override at the recorded path as the repository's`.
 
 ### 4F. Safety group — environment injection by `exec` and post-up commands (`isolation.py`, `execcmd.py`, `provision.py`; plan.md S5)

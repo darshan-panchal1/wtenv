@@ -1073,3 +1073,112 @@ def test_an_up_interrupted_in_a_transition_leaves_a_recorded_state_and_the_next_
         assert entry.compose.repository_override == "docker-compose.override.yml"
     if repository_before is not None and repository_file.exists():
         assert sha256(repository_file) == repository_before
+
+
+# --- adopting a tracked file at the recorded path (FR-006; data-model.md, Transitions; T046) ------
+
+
+def provisioned_automatic(
+    repo: Path, add_worktree: AddWorktree, run_wtenv: Run, projects: ComposeProjects, name: str
+) -> Path:
+    """An automatic worktree, brought up: wtenv's own `compose.override.yaml` is recorded."""
+    worktree = make_worktree(repo, add_worktree, name, override=None)
+    up(run_wtenv, worktree)
+    projects.track(project_of(worktree))
+    assert (
+        (worktree / OLD_OVERRIDE).read_text(encoding="utf-8").startswith(isolation.OVERRIDE_HEADER)
+    )
+    return worktree
+
+
+def test_an_untracked_headerless_file_at_the_recorded_path_is_still_an_ownership_conflict(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+) -> None:
+    worktree = provisioned_automatic(repo, add_worktree, run_wtenv, compose_projects, "conflict")
+    recorded = worktree / OLD_OVERRIDE
+    recorded.write_text(OVERRIDE, encoding="utf-8")  # replaced, and git does not track it
+    tree_before = snapshot_tree(worktree)
+    registry_before = registry_path().read_bytes()
+
+    status, error = failed_up(run_wtenv, worktree)
+
+    assert (status, error["code"]) == (11, "ownership_conflict")
+    assert error["details"] == {"kind": "compose_override", "name": str(recorded)}
+    assert recorded.read_text(encoding="utf-8") == OVERRIDE
+    assert snapshot_tree(worktree) == tree_before
+    assert registry_path().read_bytes() == registry_before
+
+
+def test_a_tracked_headerless_file_at_the_recorded_path_is_adopted_as_the_repositorys(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+) -> None:
+    worktree = provisioned_automatic(repo, add_worktree, run_wtenv, compose_projects, "adopt")
+    recorded = worktree / OLD_OVERRIDE
+    recorded.write_text(OVERRIDE, encoding="utf-8")  # a checkout brought the repository's file
+    git(worktree, "add", "--force", OLD_OVERRIDE)  # wtenv's block hides it from `add -A`
+    git(worktree, "commit", "-m", "track the override")
+    before, stat_before = sha256(recorded), recorded.stat()
+    block_before = block_lines(exclude_file(repo))
+
+    result = up(run_wtenv, worktree)
+
+    record = entry_of(worktree).compose
+    assert record is not None
+    assert (record.override, record.repository_override) == (ISOLATION_FILE, OLD_OVERRIDE)
+    assert record.override_state is ResourceState.CREATED
+    patterns = entry_of(worktree).exclude_patterns
+    assert f"/{OLD_OVERRIDE}" not in patterns and f"/{ISOLATION_FILE}" in patterns
+    assert block_lines(exclude_file(repo)) == sorted({*block_before, f"/{ISOLATION_FILE}"})
+    (warning,) = [w for w in result.warnings if w.code.value == "compose_override_adopted"]
+    assert warning.details == {"file": str(recorded)}
+    # Adoption changed only the registry: the file is the same bytes, mode and modification time.
+    stat_after = recorded.stat()
+    assert sha256(recorded) == before
+    assert (stat_after.st_mode, stat_after.st_mtime_ns) == (
+        stat_before.st_mode,
+        stat_before.st_mtime_ns,
+    )
+    assert (
+        (worktree / ISOLATION_FILE)
+        .read_text(encoding="utf-8")
+        .startswith(isolation.OVERRIDE_HEADER)
+    )
+    assert ("compose_override", "released") not in kinds_and_actions(result)
+    assert git(worktree, "status", "--short") == ""
+
+    again = up(run_wtenv, worktree)  # a repeat is stable and no longer an adoption
+
+    assert [
+        w.code.value for w in again.warnings if w.code.value == "compose_override_adopted"
+    ] == []
+    assert sha256(recorded) == before
+
+
+def test_an_adopted_file_and_another_repository_override_are_ambiguous(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+) -> None:
+    worktree = provisioned_automatic(repo, add_worktree, run_wtenv, compose_projects, "two")
+    recorded = worktree / OLD_OVERRIDE
+    recorded.write_text(OVERRIDE, encoding="utf-8")
+    other = worktree / REPOSITORY_OVERRIDE
+    other.write_text(OVERRIDE, encoding="utf-8")
+    git(worktree, "add", "--force", OLD_OVERRIDE, REPOSITORY_OVERRIDE)
+    git(worktree, "commit", "-m", "track both")
+    tree_before = snapshot_tree(worktree)
+    registry_before = registry_path().read_bytes()
+
+    status, error = failed_up(run_wtenv, worktree)
+
+    assert (status, error["code"]) == (21, "override_ambiguous")
+    assert error["details"]["files"] == sorted([str(recorded), str(other)])
+    assert snapshot_tree(worktree) == tree_before
+    assert registry_path().read_bytes() == registry_before

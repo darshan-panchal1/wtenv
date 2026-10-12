@@ -480,6 +480,8 @@ class OverrideInventory:
     repository_override: str | None
     # wtenv's own files to remove in step 11; only in the exec-only arrangement (FR-007).
     remove: tuple[str, ...]
+    # The recorded override that git tracks and that wtenv now treats as the repository's (FR-006).
+    adopted: str | None = None
 
 
 def override_inventory(
@@ -518,6 +520,7 @@ def override_inventory(
         arrangement="exec_only",
         repository_override=repository_owned[0].path,
         remove=tuple(file.path for file in files if file.kind == "wtenv_own"),
+        adopted=repository_owned[0].path if repository_owned[0].kind == "adopt" else None,
     )
 
 

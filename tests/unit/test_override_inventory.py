@@ -305,3 +305,45 @@ def test_a_link_at_an_unrecorded_override_name_is_repository_owned_and_its_targe
     assert inventory.repository_override == OTHER
     assert snapshot(decoy) == before
     assert os.path.islink(root / OTHER)
+
+
+@pytest.mark.parametrize("name", list(compose.OVERRIDE_FILE_NAMES))
+def test_a_tracked_headerless_recorded_file_is_named_as_adopted_at_every_override_name(
+    make_repo: Callable[[str], Path], name: str
+) -> None:
+    repo = make_repo("adopt-names")
+    (repo / name).write_text(DEVELOPERS)
+    track(repo, name)
+
+    inventory = compose.override_inventory(repo, "compose.yaml", name)
+
+    assert kinds(inventory) == {name: "adopt"}
+    assert inventory.adopted == name
+    assert inventory.repository_override == name
+    assert inventory.remove == ()  # an adopted file is never marked for removal
+    assert (repo / name).read_text() == DEVELOPERS
+
+
+def test_a_tracked_headerless_file_beside_a_nested_compose_file_is_adopted_with_its_directory(
+    make_repo: Callable[[str], Path],
+) -> None:
+    repo = make_repo("adopt-nested")
+    (repo / "deploy").mkdir()
+    (repo / "deploy" / RECORDED).write_text(DEVELOPERS)
+    track(repo, f"deploy/{RECORDED}")
+
+    inventory = compose.override_inventory(repo, "deploy/compose.yaml", f"deploy/{RECORDED}")
+
+    assert inventory.adopted == f"deploy/{RECORDED}"
+
+
+def test_nothing_is_adopted_unless_a_tracked_headerless_file_is_at_the_recorded_path(
+    make_repo: Callable[[str], Path],
+) -> None:
+    repo = make_repo("adopt-none")
+    (repo / RECORDED).write_text(WTENVS)  # wtenv's own file: not adopted
+    (repo / OTHER).write_text(DEVELOPERS)  # the repository's, but not at the recorded path
+
+    inventory = compose.override_inventory(repo, "compose.yaml", RECORDED)
+
+    assert inventory.adopted is None

@@ -103,7 +103,11 @@ class _ComposePlan:
     # The repository-owned override, relative to the worktree root; set only in the exec-only
     # arrangement, where it is read and never written, deleted or excluded (FR-002).
     repository_override: str | None = None
-    # Warnings that step 5 found and `up` reports: today only `compose_override_excluded`.
+    # The recorded override that git tracks and that this `up` adopts as the repository's (FR-006):
+    # only the registry changes, and the file is never written, renamed or deleted.
+    adopted_override: str | None = None
+    # Warnings that step 5 found and `up` reports: `compose_override_excluded` and
+    # `compose_override_adopted`.
     warnings: tuple[WarningInfo, ...] = ()
 
 
@@ -390,14 +394,20 @@ def _compose_plan(
     inventory = compose.override_inventory(
         root, settings.file, None if recorded is None else recorded.override
     )
-    if recorded is not None and recorded.override == compose.override_path(settings.file):
+    if (
+        recorded is not None
+        and recorded.override == compose.override_path(settings.file)
+        and inventory.adopted is None  # an adopted file is not rewritten (FR-006)
+    ):
         compose.check_recorded_override(root, recorded.override)  # FR-087: step 11 rewrites it
     repository_override = inventory.repository_override
     plan_warnings: tuple[WarningInfo, ...] = ()
+    if inventory.adopted is not None:
+        plan_warnings += (_adopted_warning(root, inventory.adopted),)
     if repository_override is not None:
         _check_isolation_path(root, settings.file, repository_override, recorded)
         excluded = _excluded_override_warning(root, identity, repository_override)
-        plan_warnings = () if excluded is None else (excluded,)
+        plan_warnings += () if excluded is None else (excluded,)
     compose.check_environment(root, settings.file, os.environ)
     model = compose.resolve_model(
         root / settings.file,
@@ -420,7 +430,21 @@ def _compose_plan(
         ),
         model=model,
         repository_override=repository_override,
+        adopted_override=inventory.adopted,
         warnings=plan_warnings,
+    )
+
+
+def _adopted_warning(root: Path, adopted: str) -> WarningInfo:
+    """Return `compose_override_adopted`: git tracks the file wtenv recorded as its own (FR-006)."""
+    path = root / adopted
+    return WarningInfo(
+        code=WarningCode.COMPOSE_OVERRIDE_ADOPTED,
+        message=(
+            f"{path} is tracked by git, so wtenv treats it as the repository's override and no "
+            "longer records it as its own; it is not changed"
+        ),
+        details={"file": str(path)},
     )
 
 
@@ -766,6 +790,9 @@ def _registry_step(
         patterns.add(f"/{compose_plan.override}")
     if before is not None:
         patterns |= set(before.exclude_patterns)
+    if compose_plan is not None and compose_plan.adopted_override is not None:
+        # The file is the repository's now; git ignores exclude lines for a tracked file anyway.
+        patterns.discard(f"/{compose_plan.adopted_override}")
     entry = WorktreeEntry(
         git_dir=identity.git_dir,
         path=identity.path,
@@ -813,6 +840,16 @@ def _compose_record(
             override=compose_plan.override,
             override_state=ResourceState.CREATING,
             repository_override=compose_plan.repository_override,
+        )
+    if compose_plan.adopted_override is not None and old.override == compose_plan.adopted_override:
+        # Adoption (FR-006): one save replaces the record. The adopted path is never marked
+        # `removing`, so the compose step never unlinks it.
+        return ComposeRecord(
+            project=old.project,
+            file=compose_plan.file,
+            override=compose_plan.override,
+            override_state=ResourceState.CREATING,
+            repository_override=compose_plan.adopted_override,
         )
     if old.override != compose_plan.override:
         return old.model_copy(update={"override_state": ResourceState.REMOVING})
