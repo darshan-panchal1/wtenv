@@ -458,27 +458,6 @@ def override_problem(root: Path, relative: str) -> str | None:
     return None
 
 
-def check_override_files(root: Path, compose_file: str, recorded_override: str | None) -> None:
-    """Raise `ownership_conflict` for an override file beside the compose file that is not wtenv's.
-
-    Any of the four override names counts, because Compose loads one of them and wtenv never
-    modifies or replaces a developer's. `recorded_override` is the registry's override path
-    (relative to `root`); that file passes. The file is left as it is (research.md §4).
-    """
-    directory = posixpath.dirname(compose_file)
-    for name in OVERRIDE_FILE_NAMES:
-        relative = posixpath.join(directory, name)
-        path = root / relative
-        if os.path.lexists(path) and relative != recorded_override:
-            raise WtenvError(
-                ErrorCode.OWNERSHIP_CONFLICT,
-                f"{path} exists and wtenv did not create it; Compose loads only one override",
-                hint="Move your override into the compose file, or remove it, then run "
-                "`wtenv up` again. Nothing was changed.",
-                details={"kind": "compose_override", "name": str(path)},
-            )
-
-
 OverrideClass = Literal["wtenv_own", "adopt", "repository_owned"]
 Arrangement = Literal["automatic", "exec_only"]
 

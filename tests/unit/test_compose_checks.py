@@ -257,14 +257,28 @@ def test_any_of_the_four_override_names_that_is_not_recorded_is_the_repository_o
 
 
 def test_the_recorded_override_passes(tmp_path: Path) -> None:
-    (tmp_path / "compose.override.yaml").write_text("# wtenv\n")
+    """Calls `override_inventory` since T033 removed `check_override_files`; same outcome.
 
-    compose.check_override_files(tmp_path, "compose.yaml", "compose.override.yaml")
+    No refusal, and wtenv's own recorded file is not the repository's, so the arrangement is
+    automatic. The file now carries the real header line: the old fixture, `# wtenv`, was not
+    wtenv's header, which the inventory (like 001:FR-087) does not accept as wtenv's.
+    """
+    (tmp_path / "compose.override.yaml").write_text(OWN_HEADER)
+
+    inventory = compose.override_inventory(tmp_path, "compose.yaml", "compose.override.yaml")
+
+    assert inventory.arrangement == "automatic"
+    assert inventory.repository_override is None
+    assert inventory.remove == ()
 
 
 def test_no_override_file_passes(tmp_path: Path) -> None:
-    compose.check_override_files(tmp_path, "compose.yaml", None)
-    compose.check_override_files(tmp_path, "compose.yaml", "compose.override.yaml")
+    """Calls `override_inventory` since T033 removed `check_override_files`; same outcome."""
+    for recorded in (None, "compose.override.yaml"):
+        inventory = compose.override_inventory(tmp_path, "compose.yaml", recorded)
+
+        assert inventory.files == ()
+        assert inventory.arrangement == "automatic"
 
 
 def test_a_second_override_name_beside_the_recorded_one_is_honoured_and_wtenvs_own_is_removed(

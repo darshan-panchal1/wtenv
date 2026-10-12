@@ -20,11 +20,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from wtenv import database, envfile, exclude, ports, registry
+from wtenv import database, envfile, exclude, isolation, ports, registry
 from wtenv.config import CONFIG_FILE_NAME, Config, load_config
 from wtenv.database import PostgresTarget
 from wtenv.errors import ErrorCode, WtenvError
-from wtenv.gitutil import is_tracked
+from wtenv.gitutil import ignore_match, is_tracked
 from wtenv.identity import (
     WorktreeIdentity,
     current_worktree,
@@ -32,6 +32,7 @@ from wtenv.identity import (
     sqlite_copy_problem,
     symlinked_part,
 )
+from wtenv.isolation import ISOLATION_FILE
 from wtenv.listing import database_view, port_views
 from wtenv.locks import WORKTREE_LOCK_TIMEOUT, registry_lock, worktree_lock
 from wtenv.output import (
@@ -93,9 +94,17 @@ class _ComposePlan:
     """What the compose step needs, worked out before anything changes (step 5)."""
 
     file: str  # the compose file, relative to the worktree root
-    override: str  # the override file beside it, relative to the worktree root
+    # wtenv's own file, relative to the worktree root: the auto-loaded override beside the compose
+    # file, or the isolation file in the exec-only arrangement.
+    override: str
     project: str  # the recorded project name, or the one to record
-    model: "ComposeModel"  # the compose file as Compose resolved it
+    # The compose file as Compose resolved it, together with the repository's override.
+    model: "ComposeModel"
+    # The repository-owned override, relative to the worktree root; set only in the exec-only
+    # arrangement, where it is read and never written, deleted or excluded (FR-002).
+    repository_override: str | None = None
+    # Warnings that step 5 found and `up` reports: today only `compose_override_excluded`.
+    warnings: tuple[WarningInfo, ...] = ()
 
 
 def up(cwd: str | Path | None = None, *, lock_timeout: float = WORKTREE_LOCK_TIMEOUT) -> UpResult:
@@ -284,8 +293,13 @@ def _recorded_field_conflict(kind: ItemKind, name: str, field: str, problem: str
 def _check_override_links(root: Path, config: Config, known: WorktreeEntry | None) -> None:
     """Raise `env_file_unusable` when an override file `up` would write or remove is a link.
 
-    That is the override beside the configured compose file, and a recorded one that differs
-    from it, or that `up` removes because `[compose]` is gone (FR-086). Without either, the
+    That is a recorded override: the one beside the configured compose file, one that differs
+    from it, or one that `up` removes because `[compose]` is gone (FR-086). A link at a recorded
+    path always fails closed, and no header is read through it, because this runs before
+    `compose.override_problem`. A link at an override name that is not recorded is the
+    repository's own override (analysis O2): it is never written, deleted or followed for
+    writing, so it is not refused here. In the exec-only arrangement `_compose_plan` refuses a
+    link at `.wtenv/` and at the isolation file. Without `[compose]` and without a record, the
     compose module is not loaded (NFR-001).
     """
     recorded = None if known is None or known.compose is None else known.compose.override
@@ -294,7 +308,6 @@ def _check_override_links(root: Path, config: Config, known: WorktreeEntry | Non
         from wtenv import compose  # only now: the module is not loaded without `[compose]`
 
         new_override = compose.override_path(config.compose.file)
-        _refuse_symlink(root, new_override)
     if recorded is None:
         return
     if recorded == new_override:
@@ -347,9 +360,12 @@ def _compose_plan(
     Returns None without `[compose]`. Raises `dependency_unavailable` (Docker, or Compose older
     than 2.24.4, or a remote engine), `ownership_conflict` (an override file that is not wtenv's,
     or resources already labelled with the project name while the worktree records no project),
-    `unsupported` (`COMPOSE_PROJECT_NAME` or `COMPOSE_FILE`, a published range), or
-    `config_invalid` (Compose cannot resolve the file). Nothing is changed. The project name is
-    the recorded one, and never changes (data-model.md, Compose record).
+    `unsupported` (`COMPOSE_PROJECT_NAME` or `COMPOSE_FILE`, a published range, a `:` in a path
+    of the exec-only arrangement), `override_ambiguous`, `env_file_unusable` (a link at `.wtenv/`
+    or the isolation file), or `config_invalid` (Compose cannot resolve the file). Nothing is
+    changed. The project name is the recorded one, and never changes (data-model.md, Compose
+    record). A repository-owned override beside the compose file selects the exec-only
+    arrangement (FR-001); otherwise the plan is v0.1.1's.
     """
     settings = config.compose
     if settings is None:
@@ -371,27 +387,105 @@ def _compose_plan(
         # states): resources found there are not wtenv's, and `down` would remove them.
         generated = compose.project_name(Path(identity.path).name, identity.git_dir)
         compose.check_project_is_unused(generated)
-    compose.check_override_files(
+    inventory = compose.override_inventory(
         root, settings.file, None if recorded is None else recorded.override
     )
     if recorded is not None and recorded.override == compose.override_path(settings.file):
         compose.check_recorded_override(root, recorded.override)  # FR-087: step 11 rewrites it
+    repository_override = inventory.repository_override
+    plan_warnings: tuple[WarningInfo, ...] = ()
+    if repository_override is not None:
+        _check_isolation_path(root, settings.file, repository_override, recorded)
+        excluded = _excluded_override_warning(root, identity, repository_override)
+        plan_warnings = () if excluded is None else (excluded,)
     compose.check_environment(root, settings.file, os.environ)
-    model = compose.resolve_model(root / settings.file, config.ports)
+    model = compose.resolve_model(
+        root / settings.file,
+        config.ports,
+        repository_override=None if repository_override is None else root / repository_override,
+    )
     ports.check_port_variables(
         model.mappings,
         ports.configured_variable_names(config.ports, has_database=config.database is not None),
     )  # FR-012: before step 8, so a collision changes nothing
     return _ComposePlan(
         file=settings.file,
-        override=compose.override_path(settings.file),
+        override=(
+            compose.override_path(settings.file) if repository_override is None else ISOLATION_FILE
+        ),
         project=(
             recorded.project
             if recorded is not None
             else compose.project_name(Path(identity.path).name, identity.git_dir)
         ),
         model=model,
+        repository_override=repository_override,
+        warnings=plan_warnings,
     )
+
+
+def _excluded_override_warning(
+    root: Path, identity: WorktreeIdentity, repository_override: str
+) -> WarningInfo | None:
+    """Return `compose_override_excluded` when wtenv's exclude block hides the repository's override.
+
+    Only an untracked override can be hidden: git ignores exclude lines for a tracked file. The
+    warning needs the match to come from the repository's `info/exclude` and from a line inside
+    wtenv's block markers, that is, a line written for another worktree (FR-002, safety M3). A
+    line of the developer's own, above or below the block, or in a `.gitignore`, is theirs to
+    know about. Read only: no file and no exclude line changes.
+    """
+    if is_tracked(root, repository_override):
+        return None
+    match = ignore_match(root, repository_override)
+    if match is None:
+        return None
+    exclude_path = Path(identity.repository) / "info" / "exclude"
+    if os.path.realpath(root / match.source) != os.path.realpath(exclude_path):
+        return None
+    try:
+        located = envfile.locate_section(exclude_path.read_bytes().splitlines(keepends=True))
+    except (OSError, envfile.MarkersDamaged):
+        return None
+    if located is None or not located[0] < match.line - 1 < located[1]:
+        return None
+    path = root / repository_override
+    return WarningInfo(
+        code=WarningCode.COMPOSE_OVERRIDE_EXCLUDED,
+        message=(
+            f"git ignores {path} because of the line {match.pattern} in wtenv's exclude block, "
+            "written for another worktree; a checkout or `git clean -X` can overwrite or delete it"
+        ),
+        details={"file": str(path), "pattern": match.pattern},
+    )
+
+
+def _check_isolation_path(
+    root: Path, compose_file: str, repository_override: str, recorded: ComposeRecord | None
+) -> None:
+    """Step 5 of the exec-only arrangement: the checks on `.wtenv/compose.isolation.yaml`.
+
+    Nothing may be a symbolic link, from `.wtenv/` down (001:FR-086). A file at the isolation path
+    that the entry does not record as its override is not wtenv's, and is left alone
+    (`ownership_conflict`, 001:FR-067); a recorded one must start with wtenv's header line
+    (001:FR-087). A `:` in an absolute path that `COMPOSE_FILE` would carry is `unsupported`
+    (research R2). The repository's override is only named here, never written (FR-002).
+    """
+    from wtenv import compose
+
+    _refuse_symlink(root, ISOLATION_FILE)
+    path = root / ISOLATION_FILE
+    if recorded is not None and recorded.override == ISOLATION_FILE:
+        compose.check_recorded_override(root, ISOLATION_FILE)
+    elif os.path.lexists(path):
+        raise WtenvError(
+            ErrorCode.OWNERSHIP_CONFLICT,
+            f"{path} exists, but the registry does not record it as wtenv's isolation file, so "
+            "wtenv will not use or replace it",
+            hint="Move or remove the file, then run `wtenv up` again. Nothing was changed.",
+            details={"kind": ItemKind.COMPOSE_OVERRIDE.value, "name": str(path)},
+        )
+    compose.check_path_separator([root / compose_file, root / repository_override, path])
 
 
 def _check_block_size(config: Config, compose_plan: _ComposePlan | None) -> None:
@@ -524,6 +618,7 @@ def _warnings(
         )
     if compose_plan is not None:
         warnings += compose_plan.model.warnings
+        warnings += compose_plan.warnings
     return warnings
 
 
@@ -610,6 +705,7 @@ def _compose_is_as_recorded(
         record is None
         or record.file != compose_plan.file
         or record.override != compose_plan.override
+        or record.repository_override != compose_plan.repository_override
         or record.override_state is not ResourceState.CREATED
         or f"/{compose_plan.override}" not in known.exclude_patterns
     ):
@@ -701,9 +797,12 @@ def _compose_record(
 ) -> ComposeRecord | None:
     """Return the compose record to save before the compose step runs.
 
-    The project is recorded first and never changes. A new override is recorded as `creating`.
-    When the compose file moved, the old override stays recorded, as `removing`, until the
-    compose step has removed it. Without `[compose]`, the record stays until `down`.
+    The project is recorded first and never changes. A new override is recorded as `creating`,
+    with the repository's override in the exec-only arrangement, before the file is written
+    (001:FR-067). When the compose file moved, the old override stays recorded, as `removing`,
+    until the compose step has removed it. When the override path stays, the compose file and the
+    repository override are updated, so that the isolation file is verified against the files it
+    was computed from. Without `[compose]`, the record stays until `down`.
     """
     if compose_plan is None:
         return old
@@ -713,10 +812,16 @@ def _compose_record(
             file=compose_plan.file,
             override=compose_plan.override,
             override_state=ResourceState.CREATING,
+            repository_override=compose_plan.repository_override,
         )
     if old.override != compose_plan.override:
         return old.model_copy(update={"override_state": ResourceState.REMOVING})
-    return old
+    return old.model_copy(
+        update={
+            "file": compose_plan.file,
+            "repository_override": compose_plan.repository_override,
+        }
+    )
 
 
 def _env_record(
@@ -968,14 +1073,20 @@ def _compose_step(
             file=compose_plan.file,
             override=compose_plan.override,
             override_state=ResourceState.CREATING,
+            repository_override=compose_plan.repository_override,
         )
         _save_compose_record(entry.git_dir, record)
     # FR-087: the plan checked the header a while ago, and the database step ran since.
     compose.check_recorded_override(root, record.override)
     pairs = _override_pairs(compose_plan.model, entry.published)
     text = compose.override_text(record.project, pairs)
+    environment = None
+    if record.repository_override is not None:
+        # The verification loads the isolation file the way `exec` will (FR-009, FR-033).
+        (root / record.override).parent.mkdir(exist_ok=True)
+        environment = {**os.environ, **isolation.compose_environment(root, record)}
     action = compose.write_and_verify_override(
-        root, record.file, record.override, record.project, pairs, text
+        root, record.file, record.override, record.project, pairs, text, environ=environment
     )
     if record.override_state is not ResourceState.CREATED:
         _save_compose_record(

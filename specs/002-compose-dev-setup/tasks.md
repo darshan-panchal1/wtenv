@@ -503,7 +503,7 @@ byte-identical throughout.
     `.wtenv/`. No caller changes.
   - **Done when** `uv run pytest -m "not integration" -q` exits 0 and
     `grep -n '_OVERRIDE_HEADER = ' src/wtenv/compose.py` prints nothing.
-- [ ] T032 [US1] ⚠RELAX(001:FR-030) Add failing tests for the exec-only arrangement in `up`, in `tests/integration/test_us1_repository_override.py` (new), `tests/integration/test_us3_compose.py`, `tests/integration/test_recovery.py`, `tests/unit/test_compose_write.py`, and `tests/unit/test_isolation.py` (new)
+- [X] T032 [US1] ⚠RELAX(001:FR-030) Add failing tests for the exec-only arrangement in `up`, in `tests/integration/test_us1_repository_override.py` (new), `tests/integration/test_us3_compose.py`, `tests/integration/test_recovery.py`, `tests/unit/test_compose_write.py`, and `tests/unit/test_isolation.py` (new)
   - Rewrite the fifth test, `tests/integration/test_us3_compose.py::test_a_developers_override_is_an_ownership_conflict_and_is_not_modified`,
     in place → exit 0, the registry records the exec-only arrangement (`override` is
     `.wtenv/compose.isolation.yaml`, `repository_override` is the committed override's path), the
@@ -548,7 +548,7 @@ byte-identical throughout.
     4F, so the key set is not asserted to equal the first two), and never `COMPOSE_PROJECT_NAME`
     (data-model.md, Isolation environment).
   - **Done when** these files fail under the failing-test rule.
-- [ ] T033 [US1] ⚠RELAX(001:FR-030) Write and verify the isolation file in the exec-only arrangement, in `src/wtenv/isolation.py`, `src/wtenv/provision.py`, and `src/wtenv/compose.py`
+- [X] T033 [US1] ⚠RELAX(001:FR-030) Write and verify the isolation file in the exec-only arrangement, in `src/wtenv/isolation.py`, `src/wtenv/provision.py`, and `src/wtenv/compose.py`
   - FR-001, FR-002, FR-003, FR-009; cli.md, `wtenv up` steps 5, 8, 11; data-model.md,
     Transitions rows "none → `automatic`" and "none → `exec_only`".
   - `_compose_plan` uses `override_inventory` (remove `check_override_files` and its last caller).
@@ -565,7 +565,7 @@ byte-identical throughout.
   - The repository override's path is never passed to a write, unlink, chmod or exclude call
     (FR-002).
   - **Done when** `uv run pytest tests/integration/test_us1_repository_override.py tests/integration/test_us3_compose.py tests/integration/test_recovery.py tests/unit/test_compose_write.py tests/unit/test_isolation.py -q` exits 0.
-- [ ] T106 [US1] Accept a symbolic link at a repository override name in `_check_override_links`, test first, in `tests/integration/test_us1_ports_env.py`, `tests/integration/test_us1_repository_override.py`, and `src/wtenv/provision.py`
+- [X] T106 [US1] Accept a symbolic link at a repository override name in `_check_override_links`, test first, in `tests/integration/test_us1_ports_env.py`, `tests/integration/test_us1_repository_override.py`, and `src/wtenv/provision.py`
   - FR-001, FR-002, FR-009; spec, Edge cases, "The repository's override is a symbolic link";
     data-model.md, Override inventory; plan.md S1; analysis O2. Needs T033 (`up` uses the
     inventory). Two steps, in order.
@@ -604,34 +604,39 @@ byte-identical throughout.
     its form, link and header checks stay (T105 accepts the path). Update the docstring.
   - **Done when** the Step 1 failure is recorded under this task, and
     `uv run pytest tests/integration/test_us1_ports_env.py tests/integration/test_us1_repository_override.py -q` exits 0.
-- [ ] T034 [US1] Mutation check: record before create (001:FR-067), in `src/wtenv/provision.py` (restored afterwards)
+- [X] T034 [US1] Mutation check: record before create (001:FR-067), in `src/wtenv/provision.py` (restored afterwards)
   - Move the `_registry_step` save of the isolation record after the write; the exec-only case of
     `test_up_interrupted_at_any_point_leaves_only_recorded_resources_and_recovers` must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T035 [US1] Mutation check: an unrecorded file at the isolation path is refused, in `src/wtenv/provision.py` (restored afterwards)
+- [X] T035 [US1] Mutation check: an unrecorded file at the isolation path is refused, in `src/wtenv/provision.py` (restored afterwards)
   - Remove the check; `test_an_unrecorded_file_at_the_isolation_path_is_an_ownership_conflict_and_is_kept` must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T036 [US1] Mutation check: header recheck before rewriting the isolation file (001:FR-087), in `src/wtenv/provision.py` (restored afterwards)
+- [X] T036 [US1] Mutation check: header recheck before rewriting the isolation file (001:FR-087), in `src/wtenv/provision.py` (restored afterwards)
   - Remove the recheck immediately before the write; the exec-only case of
     `test_up_does_not_rewrite_an_override_that_lost_the_header_after_the_plan` must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T037 [US1] Mutation check: no symbolic link at `.wtenv/` or the isolation file (001:FR-086), in `src/wtenv/provision.py` (restored afterwards)
+- [X] T037 [US1] Mutation check: no symbolic link at `.wtenv/` or the isolation file (001:FR-086), in `src/wtenv/provision.py` (restored afterwards)
   - Remove `_refuse_symlink(root, ".wtenv/compose.isolation.yaml")`;
     `test_a_symlinked_wtenv_directory_is_refused_in_the_exec_only_arrangement` must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T038 [US1] Mutation check: the isolation file is excluded from `git status` (001:FR-018), in `src/wtenv/provision.py` (restored afterwards)
+- [X] T038 [US1] Mutation check: the isolation file is excluded from `git status` (001:FR-018), in `src/wtenv/provision.py` (restored afterwards)
   - Drop the exclude pattern; `test_git_status_is_clean_after_up_in_the_exec_only_arrangement` must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T039 [US1] Mutation check: verification removes only the file just written (001:FR-033), in `src/wtenv/compose.py` (restored afterwards)
+- [X] T039 [US1] Mutation check: verification removes only the file just written (001:FR-033), in `src/wtenv/compose.py` (restored afterwards)
   - Skip the removal on verification failure; the isolation-file case of
     `test_a_replaced_override_that_fails_verification_is_removed_too` must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T107 [US1] Mutation check: a link at a recorded override path is still refused (001:FR-086, FR-009), in `src/wtenv/provision.py` (restored afterwards)
-  - Guard: after T106, `_check_override_links` still refuses a link at every recorded path. Remove
-    `_refuse_symlink` on the recorded path; both cases of
+- [X] T107 [US1] Mutation check: a link at a recorded override path is still refused (001:FR-086, FR-009), in `src/wtenv/provision.py` and `src/wtenv/compose.py` (restored afterwards)
+  - Guard: after T106, a link at every recorded override path is still refused. **Defence in
+    depth: three layers refuse a link at a recorded path, and the mutation removes all three
+    together.** The layers are the two recorded-path `_refuse_symlink` calls in
+    `_check_override_links`, the link refusal in `override_inventory` (`compose.py`), and the
+    `_refuse_symlink(root, ISOLATION_FILE)` call in `_check_isolation_path`. Every layer stays in
+    the code. With one or two removed, the other layers still refuse (T107 found this: removing
+    the first alone fails no test). With all three removed, both cases of
     `test_a_link_at_a_recorded_override_path_is_refused_in_both_arrangements` must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T122 [US1] Add failing tests for the excluded-override warning to `tests/integration/test_us1_repository_override.py` and `tests/integration/test_gitutil_git.py`
+- [X] T122 [US1] Add failing tests for the excluded-override warning to `tests/integration/test_us1_repository_override.py` and `tests/integration/test_gitutil_git.py`
   - FR-002 (amended by safety finding M3); cli.md, `wtenv up` step 5; files.md,
     `.git/info/exclude` block; plan.md, Decisions to review 1.
   - New `test_an_untracked_repository_override_ignored_through_wtenvs_block_is_warned`: worktree
@@ -645,7 +650,7 @@ byte-identical throughout.
     outside wtenv's block (the developer's own exclude or `.gitignore` line); an untracked
     override that no line matches.
   - **Done when** the new cases fail under the failing-test rule.
-- [ ] T123 [US1] Warn `compose_override_excluded` in the exec-only `up`, in `src/wtenv/gitutil.py`, `src/wtenv/provision.py`, and `src/wtenv/output.py`
+- [X] T123 [US1] Warn `compose_override_excluded` in the exec-only `up`, in `src/wtenv/gitutil.py`, `src/wtenv/provision.py`, and `src/wtenv/output.py`
   - Needs T033. In step 5, after the inventory, when the repository override is untracked:
     `git check-ignore -v --no-index -- <path>`; the warning only when the reported source is
     the repository's `info/exclude` and the reported line lies inside wtenv's block markers.
@@ -653,11 +658,11 @@ byte-identical throughout.
     from `json_models.py`.
   - **Done when** `uv run pytest tests/integration/test_us1_repository_override.py tests/integration/test_gitutil_git.py -q`
     exits 0 and `grep -n 'COMPOSE_OVERRIDE_EXCLUDED' src/wtenv/output.py` prints a line.
-- [ ] T124 [US1] Mutation check: the excluded-override warning, in `src/wtenv/provision.py` (restored afterwards)
+- [X] T124 [US1] Mutation check: the excluded-override warning, in `src/wtenv/provision.py` (restored afterwards)
   - Guard: FR-002, safety finding M3. Skip the `check-ignore` call;
     `test_an_untracked_repository_override_ignored_through_wtenvs_block_is_warned` must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T040 [US1] Group check 4C: runs G5 from the repository root; edits no file
+- [X] T040 [US1] Group check 4C: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(up): write a recorded isolation file beside a repository-owned override`.
 
 ### 4D. Safety group — removing wtenv's own override on a change of arrangement (`provision.py`; plan.md S2)

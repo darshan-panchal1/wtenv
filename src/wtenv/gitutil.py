@@ -179,3 +179,47 @@ def is_tracked(worktree: str | Path, path: str) -> bool:
         ["--literal-pathspecs", "ls-files", "--cached", "--", path], cwd=worktree, check=True
     )
     return bool(result.stdout.strip())
+
+
+# `git check-ignore --verbose` prints `<source>:<line>:<pattern>`, then a tab and the path.
+_IGNORE_LINE = re.compile(r"(.*?):(\d+):(.*)", re.DOTALL)
+
+
+@dataclass(frozen=True)
+class IgnoreMatch:
+    """The line of an ignore file that makes git ignore a path (`git check-ignore -v`)."""
+
+    source: str  # the file that holds the line, as git prints it (absolute or relative)
+    line: int  # 1-based line number in `source`
+    pattern: str  # the pattern on that line
+
+
+def ignore_match(worktree: str | Path, path: str) -> IgnoreMatch | None:
+    """Return the ignore line that matches `path`, or None when no line matches.
+
+    `path` is relative to the root of `worktree`. The index is not consulted
+    (`--no-index`), so a path that git tracks is still matched against the patterns; callers ask
+    `is_tracked` first when that matters. `git check-ignore` does not take `--literal-pathspecs`, so
+    `path` must be a plain name (the callers pass one of the four override names). A line that negates
+    the path (`!pattern`) is not a match. Raises `subprocess.CalledProcessError` when git fails.
+    """
+    result = run_git(
+        ["check-ignore", "--verbose", "--no-index", "--", path],
+        cwd=worktree,
+    )
+    if result.returncode == 1:  # git's answer for "no line matches"
+        return None
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode, result.args, result.stdout, result.stderr
+        )
+    # The output is `source:line:pattern<TAB>path`; the path after the tab is not needed.
+    found = _IGNORE_LINE.match(result.stdout.split("\t", 1)[0])
+    if found is None:
+        raise subprocess.CalledProcessError(
+            result.returncode, result.args, result.stdout, result.stderr
+        )
+    source, line, pattern = found.groups()
+    if pattern.startswith("!"):
+        return None
+    return IgnoreMatch(source=source, line=int(line), pattern=pattern)

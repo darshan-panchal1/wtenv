@@ -874,18 +874,31 @@ def test_a_compose_override_that_is_a_link_is_refused_before_anything_changes(
     assert (worktree / ".env.local").read_bytes() == env_before
 
 
-def test_a_compose_override_that_is_a_link_is_refused_on_a_first_up_too(
+def test_a_dangling_link_at_an_unrecorded_override_name_is_never_followed_for_writing(
     run_wtenv: Run, repo: Path, add_worktree: AddWorktree, compose_docker: None, decoy: Path
 ) -> None:
+    """Was `test_a_compose_override_that_is_a_link_is_refused_on_a_first_up_too`.
+
+    v0.1.x refused an untracked link at the override name with `env_file_unusable`. Spec 002
+    (analysis O2) reads it as the repository's own override, which wtenv never writes: so `up`
+    gets as far as resolution, where Compose cannot read the dangling link (`config_invalid`),
+    and nothing is created through the link.
+    """
     worktree = compose_worktree(repo, add_worktree)
     override = worktree / "compose.override.yaml"
-    override.symlink_to(decoy / "new.override.yaml")  # dangling: a write would create it
+    target = decoy / "new.override.yaml"
+    override.symlink_to(target)  # dangling: a write through it would create the target
     decoy_before = snapshot_tree(decoy)
 
     process = run_wtenv(["up", "--json"], worktree)
 
-    assert_refused_as_symlink(process, override)
+    assert process.returncode == 3, process.stdout + process.stderr
+    result = parse_up(process)
+    assert result.error is not None
+    assert result.error.code.value == "config_invalid"
+    assert not target.exists()
     assert snapshot_tree(decoy) == decoy_before
+    assert override.is_symlink() and os.readlink(override) == str(target)
     assert not registry_path().exists()
 
 

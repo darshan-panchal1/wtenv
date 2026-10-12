@@ -8,6 +8,7 @@ worktrees, and remove exactly those projects at the end. They never look at othe
 networks, or volumes.
 """
 
+import hashlib
 import json
 import os
 import socket
@@ -477,21 +478,36 @@ def test_another_compose_file_name_is_config_invalid_naming_compose_file(
     nothing_for_compose(worktree)
 
 
-def test_a_developers_override_is_an_ownership_conflict_and_is_not_modified(
-    repo: Path, add_worktree: AddWorktree, run_wtenv: Run, compose_docker: None
+def test_a_developers_override_is_used_through_exec_and_is_not_modified(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
 ) -> None:
+    """Was `test_a_developers_override_is_an_ownership_conflict_and_is_not_modified`.
+
+    v0.1.x refused a committed override with `ownership_conflict`. Spec 002 (FR-001, FR-002)
+    uses it: `up` succeeds, wtenv writes `.wtenv/compose.isolation.yaml`, and the override is
+    byte-identical (SHA-256 before and after).
+    """
     worktree = make_worktree(repo, add_worktree, "mine")
     mine = worktree / "compose.override.yml"
     mine.write_text("services: {}\n", encoding="utf-8")
     commit_all(worktree)
+    before = hashlib.sha256(mine.read_bytes()).hexdigest()
 
-    status, error = failed_up(run_wtenv, worktree)
+    result = up(run_wtenv, worktree)
 
-    assert (status, error["code"]) == (11, "ownership_conflict")
-    assert error["details"] == {"kind": "compose_override", "name": str(mine)}
+    compose_projects.track(project_of(worktree))
+    assert result.ok
+    assert hashlib.sha256(mine.read_bytes()).hexdigest() == before
     assert mine.read_text(encoding="utf-8") == "services: {}\n"
+    record = entry_of(worktree).compose
+    assert record is not None
+    assert record.override == ".wtenv/compose.isolation.yaml"
+    assert record.repository_override == "compose.override.yml"
+    assert (worktree / ".wtenv" / "compose.isolation.yaml").is_file()
     assert not (worktree / "compose.override.yaml").exists()
-    assert not is_recorded(worktree)
 
 
 def test_compose_project_name_in_the_environment_is_unsupported(
@@ -987,21 +1003,35 @@ def edit_during_the_database_step(
     monkeypatch.setattr(provision, "_database_step", database_step)
 
 
+@pytest.mark.parametrize("arrangement", ["automatic", "exec_only"])
 @pytest.mark.parametrize("name", EDITED_OVERRIDES)
 def test_up_does_not_rewrite_an_override_that_lost_the_header_after_the_plan(
     name: str,
+    arrangement: str,
     compose_docker: None,
     run_wtenv: Run,
     repo: Path,
     add_worktree: AddWorktree,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """T216, FR-087: the header is checked again immediately before the rewrite."""
+    """T216, FR-087: the header is checked again immediately before the rewrite.
+
+    In the exec-only arrangement the file is the isolation file (FR-009), and the repository's own
+    override beside it is byte-identical throughout.
+    """
     worktree = make_worktree(repo, add_worktree, "one")
+    repository_override = worktree / "compose.override.yml"
+    if arrangement == "exec_only":
+        repository_override.write_text("services: {}\n", encoding="utf-8")
+        commit_all(worktree)
     up(run_wtenv, worktree)
-    override = worktree / "compose.override.yaml"
+    wtenvs = (
+        "compose.override.yaml" if arrangement == "automatic" else ".wtenv/compose.isolation.yaml"
+    )
+    override = worktree / wtenvs
     override.write_text(OWN_HEADER + 'name: "stale"\n', encoding="utf-8")  # so `up` rewrites it
     edit_during_the_database_step(monkeypatch, override, EDITED_OVERRIDES[name].encode())
+    repository_before = repository_override.read_bytes() if repository_override.exists() else None
 
     with pytest.raises(WtenvError) as caught:
         provision.up(worktree)
@@ -1009,6 +1039,8 @@ def test_up_does_not_rewrite_an_override_that_lost_the_header_after_the_plan(
     assert caught.value.code is ErrorCode.OWNERSHIP_CONFLICT
     assert caught.value.details == {"kind": "compose_override", "name": str(override)}
     assert override.read_bytes() == EDITED_OVERRIDES[name].encode()
+    if repository_before is not None:
+        assert repository_override.read_bytes() == repository_before
 
 
 def test_up_does_not_delete_an_override_that_lost_the_header_after_the_plan(

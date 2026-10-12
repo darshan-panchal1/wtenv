@@ -5,6 +5,10 @@ Shared by `compose`, `provision` and, later, `exec`, which must not import `wten
 `provision` or `database`.
 """
 
+from pathlib import Path
+
+from wtenv.registry import ComposeRecord
+
 # The first line of every file wtenv generates for Compose: the auto-loaded override and the
 # isolation file. A file that does not start with it is not wtenv's (001:FR-087).
 OVERRIDE_HEADER = (
@@ -14,3 +18,21 @@ OVERRIDE_HEADER = (
 # Where wtenv writes its isolation settings when the repository owns its override file
 # (FR-009), relative to the worktree root. Compose never loads it on its own.
 ISOLATION_FILE = ".wtenv/compose.isolation.yaml"
+
+
+def compose_environment(root: Path, record: ComposeRecord) -> dict[str, str]:
+    """Return the environment that makes Compose load the isolation file (data-model.md).
+
+    `COMPOSE_FILE` names, as absolute paths under `root`, the compose file, the repository's
+    override and the isolation file, in that order, and `COMPOSE_PATH_SEPARATOR` is `:`.
+    `COMPOSE_PROJECT_NAME` is never set: the project name comes from the isolation file (R2).
+    `record` is the entry's compose record in the exec-only arrangement; raises `ValueError`
+    for a record without a repository override, which has nothing to isolate this way.
+    """
+    if record.repository_override is None:
+        raise ValueError("the compose record has no repository override")
+    files = [record.file, record.repository_override, ISOLATION_FILE]
+    return {
+        "COMPOSE_FILE": ":".join(str(root / name) for name in files),
+        "COMPOSE_PATH_SEPARATOR": ":",
+    }

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from wtenv.gitutil import git_path, is_tracked
+from wtenv.gitutil import IgnoreMatch, git_path, ignore_match, is_tracked
 
 pytestmark = pytest.mark.integration
 
@@ -105,3 +105,84 @@ def test_a_path_is_matched_literally_not_as_a_pattern(make_repo: MakeRepo) -> No
     _git(repo, "commit", "-m", "add a.env")
 
     assert is_tracked(repo, "*.env") is False
+
+
+# --- ignore_match: which line of which ignore file ignores a path (T122, T123) -------------------
+
+
+def _write_exclude(repo: Path, text: str) -> Path:
+    path = repo / ".git" / "info" / "exclude"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(text)
+    return path
+
+
+def test_an_untracked_file_matched_by_the_exclude_file_gives_its_line_and_pattern(
+    make_repo: MakeRepo,
+) -> None:
+    repo = make_repo("app")
+    exclude = _write_exclude(repo, "# comment\n/other.yaml\n/compose.override.yaml\n")
+    (repo / "compose.override.yaml").write_text("services: {}\n")
+
+    match = ignore_match(repo, "compose.override.yaml")
+
+    assert match is not None
+    assert os.path.realpath(repo / match.source) == os.path.realpath(exclude)
+    assert (match.line, match.pattern) == (3, "/compose.override.yaml")
+
+
+def test_an_untracked_file_matched_by_gitignore_names_that_file(make_repo: MakeRepo) -> None:
+    repo = make_repo("app")
+    (repo / ".gitignore").write_text("*.log\ncompose.override.yml\n")
+    (repo / "compose.override.yml").write_text("services: {}\n")
+
+    match = ignore_match(repo, "compose.override.yml")
+
+    assert match == IgnoreMatch(source=".gitignore", line=2, pattern="compose.override.yml")
+
+
+def test_a_file_that_no_line_matches_gives_none(make_repo: MakeRepo) -> None:
+    repo = make_repo("app")
+    _write_exclude(repo, "/other.yaml\n")
+    (repo / "compose.override.yaml").write_text("services: {}\n")
+
+    assert ignore_match(repo, "compose.override.yaml") is None
+
+
+def test_a_tracked_file_is_still_matched_because_the_index_is_not_consulted(
+    make_repo: MakeRepo,
+) -> None:
+    repo = make_repo("app")
+    (repo / "compose.override.yaml").write_text("services: {}\n")
+    _git(repo, "add", "compose.override.yaml")
+    _git(repo, "commit", "-m", "track the override")
+    _write_exclude(repo, "/compose.override.yaml\n")
+
+    match = ignore_match(repo, "compose.override.yaml")
+
+    assert match is not None and match.pattern == "/compose.override.yaml"
+    assert is_tracked(repo, "compose.override.yaml") is True
+
+
+def test_a_linked_worktree_reports_the_shared_exclude_file(
+    make_repo: MakeRepo, add_worktree: AddWorktree
+) -> None:
+    repo = make_repo("app")
+    linked = add_worktree(repo, "feature", "feature")
+    exclude = _write_exclude(repo, "/compose.override.yaml\n")
+    (linked / "compose.override.yaml").write_text("services: {}\n")
+
+    match = ignore_match(linked, "compose.override.yaml")
+
+    assert match is not None
+    assert os.path.realpath(linked / match.source) == os.path.realpath(exclude)
+
+
+def test_a_name_with_a_space_is_matched_literally(make_repo: MakeRepo) -> None:
+    repo = make_repo("app")
+    _write_exclude(repo, "/*.yaml\n")
+    (repo / "my override.yaml").write_text("services: {}\n")
+
+    match = ignore_match(repo, "my override.yaml")
+
+    assert match is not None and match.pattern == "/*.yaml"

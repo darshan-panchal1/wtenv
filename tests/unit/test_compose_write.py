@@ -174,11 +174,21 @@ def test_a_command_that_fails_or_prints_no_json_fails(tmp_path: Path) -> None:
 # --- writing and verifying together ----------------------------------------------------------
 
 
-def write_and_verify(stub: Stub, tmp_path: Path, text: str = "new\n") -> str:
+# The auto-loaded override, and the isolation file of the exec-only arrangement (FR-009).
+OVERRIDE_FILES = ["compose.override.yaml", ".wtenv/compose.isolation.yaml"]
+
+
+def write_and_verify(
+    stub: Stub,
+    tmp_path: Path,
+    text: str = "new\n",
+    override_file: str = "compose.override.yaml",
+) -> str:
+    (tmp_path / override_file).parent.mkdir(exist_ok=True)
     return compose.write_and_verify_override(
         tmp_path,
         "compose.yaml",
-        "compose.override.yaml",
+        override_file,
         PROJECT,
         ASSIGNED,
         text,
@@ -193,20 +203,45 @@ def test_a_verified_override_stays_and_the_action_is_returned(tmp_path: Path) ->
     assert write_and_verify(Stub(GOOD), tmp_path) == "unchanged"
 
 
+@pytest.mark.parametrize("override_file", OVERRIDE_FILES)
 def test_an_override_that_fails_verification_is_removed_and_the_error_is_raised(
-    tmp_path: Path,
+    tmp_path: Path, override_file: str
 ) -> None:
     with pytest.raises(WtenvError) as caught:
-        write_and_verify(Stub(shown("other")), tmp_path)
+        write_and_verify(Stub(shown("other")), tmp_path, override_file=override_file)
 
     assert caught.value.details["reason"] == "compose_verification_failed"
-    assert not (tmp_path / "compose.override.yaml").exists()
+    assert not (tmp_path / override_file).exists()
 
 
-def test_a_replaced_override_that_fails_verification_is_removed_too(tmp_path: Path) -> None:
-    (tmp_path / "compose.override.yaml").write_text("old\n")
+@pytest.mark.parametrize("override_file", OVERRIDE_FILES)
+def test_a_replaced_override_that_fails_verification_is_removed_too(
+    tmp_path: Path, override_file: str
+) -> None:
+    (tmp_path / override_file).parent.mkdir(exist_ok=True)
+    (tmp_path / override_file).write_text("old\n")
 
     with pytest.raises(WtenvError):
-        write_and_verify(Stub(shown("other")), tmp_path)
+        write_and_verify(Stub(shown("other")), tmp_path, override_file=override_file)
 
-    assert not (tmp_path / "compose.override.yaml").exists()
+    assert not (tmp_path / override_file).exists()
+
+
+def test_removing_the_isolation_file_after_a_failed_verification_leaves_everything_else(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "compose.yaml").write_text("services: {}\n")
+    (tmp_path / "compose.override.yml").write_text("services: {}\n")
+    (tmp_path / ".wtenv").mkdir()
+    (tmp_path / ".wtenv" / "notes.txt").write_text("mine\n")
+
+    with pytest.raises(WtenvError):
+        write_and_verify(
+            Stub(shown("other")), tmp_path, override_file=".wtenv/compose.isolation.yaml"
+        )
+
+    assert sorted(p.name for p in tmp_path.rglob("*") if p.is_file()) == [
+        "compose.override.yml",
+        "compose.yaml",
+        "notes.txt",
+    ]
