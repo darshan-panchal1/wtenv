@@ -1100,7 +1100,10 @@ def _remove_override(root: Path, git_dir: str, record: ComposeRecord) -> list[Up
     """Remove wtenv's recorded override file, recording `removing` first; report it if it was there.
 
     The header is checked again here, immediately before the file is deleted (FR-087): the plan
-    checked it before the database step, which can take long.
+    checked it before the database step, which can take long. When the record was not marked
+    `removing` already (a change of arrangement does that in step 8), `[compose]` is gone: the
+    worktree no longer uses the repository's override either, so the same save clears
+    `repository_override` (data-model.md, Transitions; T041).
     """
     from wtenv import compose
 
@@ -1108,7 +1111,10 @@ def _remove_override(root: Path, git_dir: str, record: ComposeRecord) -> list[Up
     path = root / record.override
     if record.override_state is not ResourceState.REMOVING:
         _save_compose_record(
-            git_dir, record.model_copy(update={"override_state": ResourceState.REMOVING})
+            git_dir,
+            record.model_copy(
+                update={"override_state": ResourceState.REMOVING, "repository_override": None}
+            ),
         )
     if not os.path.lexists(path):
         return []

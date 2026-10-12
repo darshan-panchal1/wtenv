@@ -667,7 +667,7 @@ byte-identical throughout.
 
 ### 4D. Safety group — removing wtenv's own override on a change of arrangement (`provision.py`; plan.md S2)
 
-- [ ] T041 [US1] Add failing tests for arrangement transitions to `tests/integration/test_us1_repository_override.py` and `tests/integration/test_us3_compose.py`
+- [X] T041 [US1] Add failing tests for arrangement transitions to `tests/integration/test_us1_repository_override.py` and `tests/integration/test_us3_compose.py`
   - FR-002, FR-007, FR-008, FR-009; data-model.md, Transitions; spec, Edge cases.
   - New `test_a_repository_override_appearing_removes_only_wtenvs_own_override`: `automatic` →
     `exec_only` when a repository override appears under another name. wtenv's file is removed
@@ -684,20 +684,20 @@ byte-identical throughout.
   - An `up` interrupted in each transition leaves `creating`/`removing`, and the next `up`
     finishes it.
   - **Done when** the new cases fail under the failing-test rule.
-- [ ] T042 [US1] Carry out the transitions through the existing path-change branch and `_remove_override`, in `src/wtenv/provision.py`
+- [X] T042 [US1] Carry out the transitions through the existing path-change branch and `_remove_override`, in `src/wtenv/provision.py`
   - The old record is `removing` before the unlink; the header is rechecked immediately before
     it; the new file is `creating` before it is written. No new unlink call site.
   - Two saves, as data-model.md Transitions says: step 8 saves the old record, fields unchanged,
     as `removing`; step 11 unlinks under the header recheck, then saves the new record (`override`,
     `creating`, and `repository_override` set or cleared in that same save) before the write.
   - **Done when** `uv run pytest tests/integration/test_us1_repository_override.py tests/integration/test_us3_compose.py -q` exits 0.
-- [ ] T043 [US1] Mutation check: header recheck immediately before the unlink in `_remove_override` (001:FR-087), in `src/wtenv/provision.py` (restored afterwards)
+- [X] T043 [US1] Mutation check: header recheck immediately before the unlink in `_remove_override` (001:FR-087), in `src/wtenv/provision.py` (restored afterwards)
   - Remove it; the transition cases of `test_up_does_not_delete_an_override_that_lost_the_header_after_the_plan` must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T044 [US1] Mutation check: `removing` is recorded before the unlink, in `src/wtenv/provision.py` (restored afterwards)
+- [X] T044 [US1] Mutation check: `removing` is recorded before the unlink, in `src/wtenv/provision.py` (restored afterwards)
   - Record `removing` after the unlink; the interrupted-transition case of T041 must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T045 [US1] Group check 4D: runs G5 from the repository root; edits no file
+- [X] T045 [US1] Group check 4D: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(up): switch compose arrangement when a repository override appears or goes`.
 
 ### 4E. Safety group — adopting a tracked file at the recorded path in `up` (`compose.py`, `provision.py`; plan.md S3)

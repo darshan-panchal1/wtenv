@@ -21,6 +21,7 @@ import os
 import re
 import socket
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -725,3 +726,350 @@ def test_a_moved_compose_file_or_renamed_override_is_recorded_and_verified_on_th
     assert backend["command"] == COMMAND
     (published,) = entry_of(worktree).published
     assert [int(p["published"]) for p in backend["ports"]] == [published.port]
+
+
+# --- changes of arrangement (FR-002, FR-007, FR-008, FR-009; data-model.md, Transitions; T041) ---
+
+# The repository's override for the transitions: no ports of its own, so that the isolation file
+# and v0.1.1's override hold the same ports (the two stacks differ only in the file they use).
+COMMAND_OVERRIDE = (
+    'services:\n  cache:\n    command: ["valkey-server", "--save", "", "--appendonly", "no"]\n'
+)
+OLD_OVERRIDE = (
+    "compose.override.yaml"  # v0.1.1's override name: wtenv's file in the automatic arrangement
+)
+
+
+def golden_for(worktree: Path) -> str:
+    """The golden override of files.md with this worktree's project name and assigned ports."""
+    ports = {p.service: p.port for p in entry_of(worktree).published}
+    return (
+        GOLDEN.read_text(encoding="utf-8")
+        .replace("wtenv-feature-x-3f9a1c2b", project_of(worktree))
+        .replace('"20011"', f'"{ports["db"]}"')
+        .replace('"20012"', f'"{ports["cache"]}"')
+    )
+
+
+def kinds_and_actions(result: UpResult) -> list[tuple[str, str]]:
+    """`(item kind, action)` of every change of an `up` that concerns a compose override."""
+    return [
+        (c.item.kind.value, c.action) for c in result.changes if "override" in c.item.kind.value
+    ]
+
+
+def test_a_repository_override_appearing_removes_only_wtenvs_own_override(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "appears", stack=TWO_PORTS, override=None)
+    up(run_wtenv, worktree)
+    compose_projects.track(project_of(worktree))
+    own = worktree / OLD_OVERRIDE
+    assert own.read_text(encoding="utf-8") == golden_for(worktree)
+    repository_override = worktree / REPOSITORY_OVERRIDE
+    repository_override.write_text(COMMAND_OVERRIDE, encoding="utf-8")
+    commit_all(worktree)
+    before = sha256(repository_override)
+
+    result = up(run_wtenv, worktree)
+
+    assert not own.exists()  # wtenv's own file was removed, under the header check
+    isolation_text = (worktree / ISOLATION_FILE).read_text(encoding="utf-8")
+    assert isolation_text.startswith(isolation.OVERRIDE_HEADER)
+    assert f'name: "{project_of(worktree)}"' in isolation_text
+    record = entry_of(worktree).compose
+    assert record is not None
+    assert (record.override, record.repository_override) == (ISOLATION_FILE, REPOSITORY_OVERRIDE)
+    assert record.override_state is ResourceState.CREATED
+    assert sha256(repository_override) == before
+    assert ("compose_override", "released") in kinds_and_actions(result)
+    assert f"/{REPOSITORY_OVERRIDE}" not in entry_of(worktree).exclude_patterns
+    assert git(worktree, "status", "--short") == ""
+
+
+def test_the_repository_override_going_returns_to_v0_1_1s_override(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "goes", stack=TWO_PORTS, override=COMMAND_OVERRIDE)
+    up(run_wtenv, worktree)
+    compose_projects.track(project_of(worktree))
+    assert (worktree / ISOLATION_FILE).exists()
+    git(worktree, "rm", "-q", REPOSITORY_OVERRIDE)
+    git(worktree, "commit", "-m", "drop the override")
+
+    result = up(run_wtenv, worktree)
+
+    assert not (worktree / ISOLATION_FILE).exists()
+    assert (worktree / OLD_OVERRIDE).read_text(encoding="utf-8") == golden_for(worktree)
+    record = entry_of(worktree).compose
+    assert record is not None
+    assert (record.override, record.repository_override) == (OLD_OVERRIDE, None)
+    assert record.override_state is ResourceState.CREATED
+    assert ("compose_override", "released") in kinds_and_actions(result)
+    assert "/compose.override.yaml" in entry_of(worktree).exclude_patterns
+    assert git(worktree, "status", "--short") == ""
+
+
+@pytest.mark.parametrize("new_text", ["same text", "text changes"])
+def test_another_override_name_updates_the_record_and_rewrites_only_a_changed_isolation_file(
+    new_text: str,
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+) -> None:
+    worktree = make_worktree(
+        repo, add_worktree, "renamed", stack=TWO_PORTS, override=COMMAND_OVERRIDE
+    )
+    up(run_wtenv, worktree)
+    compose_projects.track(project_of(worktree))
+    isolation_file = worktree / ISOLATION_FILE
+    written = isolation_file.read_bytes()
+    stat_before = isolation_file.stat()
+    git(worktree, "mv", REPOSITORY_OVERRIDE, "docker-compose.override.yml")
+    renamed = worktree / "docker-compose.override.yml"
+    if new_text == "text changes":  # the new override publishes one more port
+        renamed.write_text(
+            COMMAND_OVERRIDE + '    ports:\n      - "16380:6380"\n', encoding="utf-8"
+        )
+    commit_all(worktree)
+    before = sha256(renamed)
+
+    result = up(run_wtenv, worktree)
+
+    record = entry_of(worktree).compose
+    assert record is not None
+    assert (record.override, record.repository_override) == (
+        ISOLATION_FILE,
+        "docker-compose.override.yml",
+    )
+    assert sha256(renamed) == before
+    action = dict(kinds_and_actions(result))["compose_override"]
+    if new_text == "same text":
+        assert (action, isolation_file.read_bytes()) == ("unchanged", written)
+        assert isolation_file.stat().st_mtime_ns == stat_before.st_mtime_ns
+    else:
+        assert action == "updated"
+        assert isolation_file.read_bytes() != written
+
+
+def test_compose_removed_in_exec_only_removes_the_isolation_file_and_clears_the_repository_override(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+) -> None:
+    worktree = make_worktree(
+        repo, add_worktree, "nocompose", stack=TWO_PORTS, override=COMMAND_OVERRIDE
+    )
+    up(run_wtenv, worktree)
+    compose_projects.track(project_of(worktree))
+    project = project_of(worktree)
+    repository_override = worktree / REPOSITORY_OVERRIDE
+    before = sha256(repository_override)
+    (worktree / "wtenv.toml").write_text('ports = ["PORT"]\n', encoding="utf-8")
+    commit_all(worktree)
+
+    result = up(run_wtenv, worktree)
+
+    assert not (worktree / ISOLATION_FILE).exists()
+    record = entry_of(worktree).compose
+    assert record is not None  # the project stays recorded until `down` (FR-065)
+    assert record.project == project
+    assert record.override == ISOLATION_FILE
+    assert record.override_state is ResourceState.REMOVING
+    assert record.repository_override is None
+    assert sha256(repository_override) == before
+    assert ("compose_override", "released") in kinds_and_actions(result)
+    assert (worktree / REPOSITORY_OVERRIDE).exists()
+
+
+# --- an `up` interrupted in each transition, then run again (FR-067, FR-069; T041) ---------------
+
+KILLED = 137
+# Runs `wtenv up` in a child that dies at one point: right after the registry is saved (step 8),
+# right after wtenv unlinks one of its override files, or right after a compose record is saved
+# as `creating` (step 11, before the new file is written).
+INTERRUPT_CHILD = """
+import os, sys, pathlib
+import wtenv.provision, wtenv.registry
+
+hook = "{hook}"
+if hook == "registry":
+    real_save = wtenv.registry.save
+
+    def save(*args, **kwargs):
+        real_save(*args, **kwargs)
+        os._exit({killed})
+
+    wtenv.registry.save = save
+elif hook == "unlink":
+    real_unlink = pathlib.Path.unlink
+
+    def unlink(self, *args, **kwargs):
+        real_unlink(self, *args, **kwargs)
+        if self.name in ("compose.override.yaml", "compose.isolation.yaml"):
+            os._exit({killed})
+
+    pathlib.Path.unlink = unlink
+elif hook == "creating":
+    real_record = wtenv.provision._save_compose_record
+
+    def record(git_dir, compose):
+        real_record(git_dir, compose)
+        if compose.override_state.value == "creating":
+            os._exit({killed})
+
+    wtenv.provision._save_compose_record = record
+from wtenv.cli import main
+sys.exit(main(["up"]))
+"""
+
+
+def interrupt_up(worktree: Path, hook: str) -> None:
+    """Run `wtenv up` in `worktree` in a child process that dies at `hook`."""
+    code = INTERRUPT_CHILD.format(hook=hook, killed=KILLED)
+    process = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=worktree,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert process.returncode == KILLED, process.stdout + process.stderr
+
+
+def setup_transition(
+    transition: str,
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    projects: ComposeProjects,
+) -> Path:
+    """Provision a worktree, change its files for `transition`, and return it (not yet `up`)."""
+    exec_only_first = transition != "repository override appears"
+    worktree = make_worktree(
+        repo,
+        add_worktree,
+        "interrupted",
+        stack=TWO_PORTS,
+        override=COMMAND_OVERRIDE if exec_only_first else None,
+    )
+    up(run_wtenv, worktree)
+    projects.track(project_of(worktree))
+    if transition == "repository override appears":
+        (worktree / REPOSITORY_OVERRIDE).write_text(COMMAND_OVERRIDE, encoding="utf-8")
+    elif transition == "repository override goes":
+        git(worktree, "rm", "-q", REPOSITORY_OVERRIDE)
+    elif transition == "another override name":
+        git(worktree, "mv", REPOSITORY_OVERRIDE, "docker-compose.override.yml")
+    else:  # compose removed
+        (worktree / "wtenv.toml").write_text('ports = ["PORT"]\n', encoding="utf-8")
+    commit_all(worktree) if transition != "repository override goes" else git(
+        worktree, "commit", "-m", "drop the override"
+    )
+    return worktree
+
+
+# Per transition: the points where a run can die, with what the record and the files then show.
+# `(hook, record state, repository_override, old file there, new file there)`.
+INTERRUPTIONS = {
+    "repository override appears": [
+        ("registry", "removing", None, True, False),
+        ("unlink", "removing", None, False, False),
+        ("creating", "creating", REPOSITORY_OVERRIDE, False, False),
+    ],
+    "repository override goes": [
+        ("registry", "removing", REPOSITORY_OVERRIDE, True, False),
+        ("unlink", "removing", REPOSITORY_OVERRIDE, False, False),
+        ("creating", "creating", None, False, False),
+    ],
+    "another override name": [
+        ("registry", "created", "docker-compose.override.yml", True, True),
+    ],
+    "compose removed": [
+        ("registry", "created", REPOSITORY_OVERRIDE, True, False),
+        ("unlink", "removing", None, False, False),
+    ],
+}
+INTERRUPTION_CASES = [
+    pytest.param(transition, *point, id=f"{transition}: after {point[0]}")
+    for transition, points in INTERRUPTIONS.items()
+    for point in points
+]
+OLD_FILE = {
+    "repository override appears": OLD_OVERRIDE,
+    "repository override goes": ISOLATION_FILE,
+    "another override name": ISOLATION_FILE,
+    "compose removed": ISOLATION_FILE,
+}
+NEW_FILE = {
+    "repository override appears": ISOLATION_FILE,
+    "repository override goes": OLD_OVERRIDE,
+    "another override name": ISOLATION_FILE,
+    "compose removed": None,
+}
+
+
+@pytest.mark.parametrize(
+    ("transition", "hook", "state", "repository_override", "old_there", "new_there"),
+    INTERRUPTION_CASES,
+)
+def test_an_up_interrupted_in_a_transition_leaves_a_recorded_state_and_the_next_up_finishes(
+    transition: str,
+    hook: str,
+    state: str,
+    repository_override: str | None,
+    old_there: bool,
+    new_there: bool,
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+) -> None:
+    worktree = setup_transition(transition, repo, add_worktree, run_wtenv, compose_projects)
+    repository_file = worktree / REPOSITORY_OVERRIDE
+    repository_before = sha256(repository_file) if repository_file.exists() else None
+    old, new = worktree / OLD_FILE[transition], NEW_FILE[transition]
+
+    interrupt_up(worktree, hook)
+
+    # What the dead run left: a record in `creating` or `removing`, and files that agree with it.
+    entry = entry_of(worktree)
+    assert entry.state == "incomplete"
+    assert entry.compose is not None
+    assert entry.compose.override_state.value == state
+    assert entry.compose.repository_override == repository_override
+    if hook != "registry" or transition != "another override name":
+        assert old.exists() == old_there
+    if new is not None and transition != "another override name":
+        assert (worktree / new).exists() == new_there
+    if repository_before is not None and repository_file.exists():
+        assert sha256(repository_file) == repository_before
+
+    result = up(run_wtenv, worktree)
+
+    entry = entry_of(worktree)
+    assert result.ok and entry.state == "provisioned"
+    assert entry.compose is not None
+    expected_state = "removing" if transition == "compose removed" else "created"
+    assert entry.compose.override_state.value == expected_state
+    if new is None:  # `[compose]` removed: wtenv's file is gone and stays gone
+        assert not old.exists()
+        assert entry.compose.repository_override is None
+    else:
+        assert (worktree / new).exists()
+        assert entry.compose.override == new
+    if transition in ("repository override appears", "repository override goes"):
+        assert not old.exists()
+    if transition == "another override name":
+        assert entry.compose.repository_override == "docker-compose.override.yml"
+    if repository_before is not None and repository_file.exists():
+        assert sha256(repository_file) == repository_before

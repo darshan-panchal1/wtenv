@@ -1043,19 +1043,49 @@ def test_up_does_not_rewrite_an_override_that_lost_the_header_after_the_plan(
         assert repository_override.read_bytes() == repository_before
 
 
+# The callers of `_remove_override` in `up`: `[compose]` removed, and a change of arrangement.
+REMOVAL_CALLERS = [
+    "compose removed",
+    "compose removed in exec-only",
+    "repository override appears",
+    "repository override goes",
+]
+
+
+@pytest.mark.parametrize("transition", REMOVAL_CALLERS)
 def test_up_does_not_delete_an_override_that_lost_the_header_after_the_plan(
+    transition: str,
     compose_docker: None,
     run_wtenv: Run,
     repo: Path,
     add_worktree: AddWorktree,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """T216, FR-087: the same before the unlink, when `[compose]` was removed from the config."""
+    """T216, FR-087: the same before the unlink, whichever transition removes wtenv's file.
+
+    `[compose]` removed (the original case), the same in the exec-only arrangement, and the two
+    changes of arrangement (T041). The repository's own override, where there is one, is
+    byte-identical throughout.
+    """
     worktree = make_worktree(repo, add_worktree, "one")
+    repository_override = worktree / "compose.override.yml"
+    exec_only_first = transition in ("compose removed in exec-only", "repository override goes")
+    if exec_only_first:
+        repository_override.write_text("services: {}\n", encoding="utf-8")
+        commit_all(worktree)
     up(run_wtenv, worktree)
-    override = worktree / "compose.override.yaml"
-    (worktree / "wtenv.toml").write_text('ports = ["PORT", "CACHE_PORT"]\n', encoding="utf-8")
+    wtenvs = ".wtenv/compose.isolation.yaml" if exec_only_first else "compose.override.yaml"
+    override = worktree / wtenvs
+    if transition == "repository override appears":
+        repository_override.write_text("services: {}\n", encoding="utf-8")
+        commit_all(worktree)
+    elif transition == "repository override goes":
+        git(worktree, "rm", "-q", "compose.override.yml")
+        git(worktree, "commit", "-m", "drop the override")
+    else:
+        (worktree / "wtenv.toml").write_text('ports = ["PORT", "CACHE_PORT"]\n', encoding="utf-8")
     edit_during_the_database_step(monkeypatch, override, b"services: {}\n")
+    repository_before = repository_override.read_bytes() if repository_override.exists() else None
 
     with pytest.raises(WtenvError) as caught:
         provision.up(worktree)
@@ -1063,6 +1093,8 @@ def test_up_does_not_delete_an_override_that_lost_the_header_after_the_plan(
     assert caught.value.code is ErrorCode.OWNERSHIP_CONFLICT
     assert caught.value.details == {"kind": "compose_override", "name": str(override)}
     assert override.read_bytes() == b"services: {}\n"
+    if repository_before is not None:
+        assert repository_override.read_bytes() == repository_before
 
 
 @pytest.mark.parametrize("name", ["outside by ..", "absolute", "a part that is `..`"])
