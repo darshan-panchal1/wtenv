@@ -26,8 +26,15 @@ here is unchanged.
   which no worktree uses the new arrangement.
 - Consistency rule, checked where the record is used (not by the model, so that a hand-edited
   registry is reported rather than unreadable): `repository_override` is set if and only if
-  `override` is `.wtenv/compose.isolation.yaml`. `exec` treats any other combination as
-  `isolation_unavailable` (`recorded_value_invalid`); `down` and `gc` look only at `override`.
+  `override` is `.wtenv/compose.isolation.yaml`, **except in state `removing`**: when `[compose]`
+  is removed in the exec-only arrangement, the `removing` save clears `repository_override` while
+  `override` still names the isolation file that is being removed (T041).
+  **The exec-only arrangement is decided by `repository_override` being set, never by the path
+  in `override`.** Every `exec` check (FR-033) runs when the entry records `repository_override`;
+  such an entry whose `override` is not the isolation path is `isolation_unavailable`
+  (`recorded_value_invalid`, check 2). An entry without `repository_override` is not exec-only,
+  whatever `override` holds; for it `exec` runs only checks A and B below. `down` and `gc` look
+  only at `override`.
 - Downgrade (spec, Assumptions): v0.1.x fails with `registry_unreadable` on a registry that holds
   `repository_override`, and changes nothing (001:FR-070).
 
@@ -87,7 +94,7 @@ changes `override`, or, when `override` stays the isolation path, in step 8.
 | `automatic` | `exec_only` by adoption (FR-006: the recorded path now holds a tracked file, header-less or with wtenv's header) | one save that replaces the record: `override = .wtenv/compose.isolation.yaml` (`creating`), `repository_override = <old override path>`; the old path's pattern leaves `exclude_patterns`; warning `compose_override_adopted`. The old record is **never** marked `removing` | the path-change branch is **not** taken (`override` already equals the plan's); write + verify the isolation file; save `created`. The adopted file is **not** touched |
 | `exec_only` | `automatic` (the repository override disappeared; FR-008, spec Edge cases) | the old record, fields unchanged (`repository_override` still set), as `removing` | `_remove_override` on the isolation file (header rechecked); save the new record: auto-loaded override (`creating`), no `repository_override`; write + verify; save `created` |
 | `exec_only` | `exec_only`, another repository override name | the record with `repository_override` updated; `override` unchanged | isolation file rewritten if its text changed |
-| any | no `[compose]` | unchanged from v0.1.x (`removing`) | wtenv's recorded file removed (header rechecked); `repository_override` goes with the record |
+| any | no `[compose]` | unchanged from v0.1.x (`removing`) | wtenv's recorded file removed (header rechecked); the `removing` save also clears `repository_override`, so the worktree is no longer exec-only; the record itself stays until `down` (FR-065) |
 
 An interrupted `up` leaves a record that is `creating` or `removing`. The next `up` finishes it
 through the same branches as in v0.1.x (001 data-model.md, Resource states).
