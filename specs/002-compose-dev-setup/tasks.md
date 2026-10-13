@@ -726,6 +726,12 @@ byte-identical throughout.
 - [X] T049 [US1] Mutation check: adoption never writes or deletes the file, in `src/wtenv/provision.py` (restored afterwards)
   - Make the adoption branch unlink the adopted file directly (`os.unlink`, bypassing
     `_remove_override` and its header check); the byte-identical assertion of T046 must fail.
+    The test fails, but at the `up` call: Compose cannot read the deleted file, so verification
+    fails (`up` exits 19) before the SHA-256 is compared.
+  - Second mutation (the append variant): make the adoption branch append a line to the adopted
+    file (`open(..., "a")`). Verification still passes, so `up` succeeds and the SHA-256
+    assertion of T046 must fail with a hash mismatch.
+  - Both mutations must fail a test and restore byte-identically.
   - **Done when** as in Working rules, "Mutation check".
 - [X] T050 [US1] Group check 4E: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(up): adopt a tracked override at the recorded path as the repository's`.
