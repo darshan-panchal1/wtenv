@@ -1,5 +1,9 @@
 """The text `wtenv up` prints for people: the database line (cli.md, `wtenv up`; T066; FR-019)."""
 
+from typing import Literal
+
+import pytest
+
 from wtenv.output import (
     BlockView,
     DatabaseView,
@@ -226,3 +230,56 @@ def test_up_json_carries_the_port_variable_of_each_published_port() -> None:
 
     shown = [port["port_variable"] for port in document["worktree"]["ports"]]
     assert shown == [None, "WTENV_PORT_DB_5432_TCP", "WTENV_PORT_CACHE_6379_TCP"]
+
+
+# --- the arrangement: how Compose commands get isolation (cli.md, `wtenv up`; T062; FR-004, FR-005) ---
+
+
+def arrangement_result(
+    isolation: Literal["automatic", "exec_only"] | None, repository_override: str | None
+) -> UpResult:
+    result = compose_result(TIED_AND_UNTIED)
+    assert result.worktree is not None
+    result.worktree.compose_isolation = isolation
+    result.worktree.compose_repository_override = repository_override
+    return result
+
+
+def test_the_exec_only_arrangement_says_a_plain_docker_compose_runs_without_isolation() -> None:
+    result = arrangement_result("exec_only", "compose.override.yml")
+
+    lines = render_up_text(result).splitlines()
+
+    start = lines.index(
+        "  isolation  exec only: the repository owns compose.override.yml. Run Compose through"
+    )
+    assert lines[start + 1] == (
+        "             `wtenv exec -- docker compose ...`; "
+        "a plain `docker compose` here runs WITHOUT isolation."
+    )
+
+
+def test_the_isolation_line_names_the_repository_override_it_was_given() -> None:
+    result = arrangement_result("exec_only", "deploy/docker-compose.override.yaml")
+
+    text = render_up_text(result)
+
+    assert "the repository owns deploy/docker-compose.override.yaml. Run" in text
+
+
+def test_the_isolation_lines_come_after_the_compose_line_and_before_the_env_file() -> None:
+    lines = render_up_text(arrangement_result("exec_only", "compose.override.yml")).splitlines()
+
+    kinds = [line.split()[0] for line in lines]
+    assert kinds.index("compose") < kinds.index("isolation") < kinds.index("env")
+    assert lines[kinds.index("isolation") + 2].startswith("  env file")
+
+
+@pytest.mark.parametrize("isolation", ["automatic", None])
+def test_without_a_repository_override_the_text_has_no_isolation_line(
+    isolation: Literal["automatic", "exec_only"] | None,
+) -> None:
+    text = render_up_text(arrangement_result(isolation, None))
+
+    assert "isolation" not in text
+    assert "WITHOUT" not in text

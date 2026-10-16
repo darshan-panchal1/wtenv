@@ -1,8 +1,23 @@
 """The text `wtenv ls` prints for people: the published ports (cli.md, `wtenv ls`; T231; FR-031)."""
 
-from wtenv.listing import port_views
-from wtenv.output import BlockView, LsResult, PortView, Status, WorktreeView, render_ls_text
-from wtenv.registry import PortBlock, PublishedPort, VariablePort, WorktreeEntry
+from wtenv.listing import port_views, worktree_view
+from wtenv.orphans import Classification
+from wtenv.output import (
+    BlockView,
+    LsResult,
+    PortView,
+    ResourceState,
+    Status,
+    WorktreeView,
+    render_ls_text,
+)
+from wtenv.registry import (
+    ComposeRecord,
+    PortBlock,
+    PublishedPort,
+    VariablePort,
+    WorktreeEntry,
+)
 
 SIX_COLUMNS = ["STATUS", "PORTS", "VARIABLES", "DATABASE", "COMPOSE", "PATH"]
 
@@ -226,3 +241,57 @@ def test_port_views_name_every_published_port_and_no_ports_variable() -> None:
         (20002, None, "WTENV_PORT_DNS_53_UDP"),
         (20003, None, "WTENV_PORT_WEB_80_TCP"),
     ]
+
+
+# --- the arrangement of each row (cli.md, `wtenv ls`; T062; FR-005) -----------------------------
+
+CLASSIFICATION = Classification(status=Status.PROVISIONED)
+
+
+def entry_with_compose(repository_override: str | None) -> WorktreeEntry:
+    entry = entry_with_published()
+    isolation_file = ".wtenv/compose.isolation.yaml"
+    entry.compose = ComposeRecord(
+        project="wtenv-one-3f9a1c2b",
+        file="compose.yaml",
+        override="compose.override.yaml" if repository_override is None else isolation_file,
+        override_state=ResourceState.CREATED,
+        repository_override=repository_override,
+    )
+    return entry
+
+
+def test_a_row_with_a_repository_override_is_exec_only_and_names_it() -> None:
+    view = worktree_view(entry_with_compose("compose.override.yml"), CLASSIFICATION)
+
+    assert view.compose_isolation == "exec_only"
+    assert view.compose_repository_override == "compose.override.yml"
+
+
+def test_a_row_without_a_repository_override_is_automatic() -> None:
+    view = worktree_view(entry_with_compose(None), CLASSIFICATION)
+
+    assert view.compose_isolation == "automatic"
+    assert view.compose_repository_override is None
+
+
+def test_a_row_without_compose_has_neither() -> None:
+    view = worktree_view(entry_with_published(), CLASSIFICATION)
+
+    assert view.compose_isolation is None
+    assert view.compose_repository_override is None
+
+
+def test_the_ls_json_carries_both_fields_and_the_ls_text_table_is_unchanged() -> None:
+    exec_only = worktree_view(entry_with_compose("compose.override.yml"), CLASSIFICATION)
+    automatic = worktree_view(entry_with_compose(None), CLASSIFICATION)
+    result = LsResult(ok=True, worktrees=[exec_only, automatic])
+
+    dumped = result.model_dump(mode="json")["worktrees"]
+    text = render_ls_text(result)
+
+    assert [(w["compose_isolation"], w["compose_repository_override"]) for w in dumped] == [
+        ("exec_only", "compose.override.yml"),
+        ("automatic", None),
+    ]
+    assert "isolation" not in text and "exec_only" not in text

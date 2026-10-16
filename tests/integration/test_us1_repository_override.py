@@ -35,6 +35,7 @@ from helpers import (
     commit_all,
     exclude_file,
     git,
+    parse_ls,
     parse_up,
     snapshot_tree,
 )
@@ -1182,3 +1183,180 @@ def test_an_adopted_file_and_another_repository_override_are_ambiguous(
     assert error["details"]["files"] == sorted([str(recorded), str(other)])
     assert snapshot_tree(worktree) == tree_before
     assert registry_path().read_bytes() == registry_before
+
+
+# --- scenario 9: `up` and `ls` report the arrangement (T062; FR-004, FR-005) -------------------
+
+EXEC_ONLY_WARNING = "compose_isolation_exec_only"
+NO_COMPOSE_TOML = 'ports = ["PORT"]\nblock_size = 10\n'
+
+
+def arrangement_warnings(result: UpResult) -> list[dict[str, Any]]:
+    return [w.details for w in result.warnings if w.code.value == EXEC_ONLY_WARNING]
+
+
+def listed(run_wtenv: Run, worktree: Path) -> Any:
+    """The `ls --json` row of `worktree`; the listing must succeed."""
+    process = run_wtenv(["ls", "--json"], worktree)
+    assert process.returncode == 0, process.stdout + process.stderr
+    (row,) = [view for view in parse_ls(process).worktrees if view.path == str(worktree)]
+    return row
+
+
+def test_up_json_reports_the_exec_only_arrangement_and_warns_on_every_up(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "report")
+    override = worktree / REPOSITORY_OVERRIDE
+    before = sha256(override)
+
+    first = up(run_wtenv, worktree)
+    compose_projects.track(project_of(worktree))
+    again = up(run_wtenv, worktree)
+
+    for result in (first, again):
+        assert result.worktree is not None
+        assert result.worktree.compose_isolation == "exec_only"
+        assert result.worktree.compose_repository_override == REPOSITORY_OVERRIDE
+        (details,) = arrangement_warnings(result)
+        assert details == {
+            "repository_override": REPOSITORY_OVERRIDE,
+            "isolation_file": ISOLATION_FILE,
+        }
+        (warning,) = [w for w in result.warnings if w.code.value == EXEC_ONLY_WARNING]
+        assert "without isolation" in warning.message
+        assert "wtenv exec" in warning.message
+    assert sha256(override) == before
+
+
+def test_up_text_says_a_plain_docker_compose_runs_without_isolation(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "text")
+
+    process = run_wtenv(["up"], worktree)
+
+    compose_projects.track(project_of(worktree))
+    assert process.returncode == 0, process.stdout + process.stderr
+    lines = process.stdout.splitlines()
+    start = lines.index(
+        f"  isolation  exec only: the repository owns {REPOSITORY_OVERRIDE}. Run Compose through"
+    )
+    assert lines[start + 1] == (
+        "             `wtenv exec -- docker compose ...`; "
+        "a plain `docker compose` here runs WITHOUT isolation."
+    )
+    assert any(line.startswith("  compose    ") and ISOLATION_FILE in line for line in lines)
+    assert f"{EXEC_ONLY_WARNING}" in process.stdout + process.stderr
+
+
+def test_ls_json_reports_the_arrangement_of_each_worktree(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+) -> None:
+    owned = make_worktree(repo, add_worktree, "owned")
+    plain = make_worktree(repo, add_worktree, "plain", override=None)
+    bare = make_worktree(repo, add_worktree, "bare", override=None, toml=NO_COMPOSE_TOML)
+    for worktree in (owned, plain, bare):
+        up(run_wtenv, worktree)
+    compose_projects.track(project_of(owned))
+    compose_projects.track(project_of(plain))
+
+    rows = {
+        name: listed(run_wtenv, worktree)
+        for name, worktree in (("owned", owned), ("plain", plain), ("bare", bare))
+    }
+
+    assert (rows["owned"].compose_isolation, rows["owned"].compose_repository_override) == (
+        "exec_only",
+        REPOSITORY_OVERRIDE,
+    )
+    assert (rows["plain"].compose_isolation, rows["plain"].compose_repository_override) == (
+        "automatic",
+        None,
+    )
+    assert (rows["bare"].compose_isolation, rows["bare"].compose_repository_override) == (
+        None,
+        None,
+    )
+
+
+def test_the_ls_text_table_has_no_isolation_column(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "table")
+    up(run_wtenv, worktree)
+    compose_projects.track(project_of(worktree))
+
+    process = run_wtenv(["ls"], worktree)
+
+    assert process.returncode == 0, process.stdout + process.stderr
+    header = process.stdout.splitlines()[0].split()
+    assert header[-2:] == ["COMPOSE", "PATH"]
+    assert "ISOLATION" not in header and "exec_only" not in process.stdout
+
+
+def test_without_a_repository_override_up_reports_automatic_and_says_nothing_more(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "auto", override=None)
+
+    result = up(run_wtenv, worktree)
+    compose_projects.track(project_of(worktree))
+    text = run_wtenv(["up"], worktree)
+
+    assert result.worktree is not None
+    assert result.worktree.compose_isolation == "automatic"
+    assert result.worktree.compose_repository_override is None
+    assert arrangement_warnings(result) == []
+    assert "isolation" not in text.stdout and EXEC_ONLY_WARNING not in text.stdout + text.stderr
+
+
+def test_without_compose_up_reports_neither_field(
+    repo: Path, add_worktree: AddWorktree, run_wtenv: Run
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "nocompose", override=None, toml=NO_COMPOSE_TOML)
+
+    result = up(run_wtenv, worktree)
+
+    assert result.worktree is not None
+    assert result.worktree.compose_isolation is None
+    assert result.worktree.compose_repository_override is None
+    assert arrangement_warnings(result) == []
+
+
+def test_the_report_follows_the_repository_override_when_it_goes_away(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+) -> None:
+    worktree = make_worktree(
+        repo, add_worktree, "follows", stack=TWO_PORTS, override=COMMAND_OVERRIDE
+    )
+    assert up(run_wtenv, worktree).worktree is not None
+    compose_projects.track(project_of(worktree))
+    git(worktree, "rm", "-q", REPOSITORY_OVERRIDE)
+    git(worktree, "commit", "-m", "drop the override")
+
+    result = up(run_wtenv, worktree)
+
+    assert result.worktree is not None
+    assert result.worktree.compose_isolation == "automatic"
+    assert result.worktree.compose_repository_override is None
+    assert arrangement_warnings(result) == []
+    assert listed(run_wtenv, worktree).compose_isolation == "automatic"

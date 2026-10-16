@@ -33,7 +33,7 @@ from wtenv.identity import (
     symlinked_part,
 )
 from wtenv.isolation import ISOLATION_FILE
-from wtenv.listing import database_view, port_views
+from wtenv.listing import compose_arrangement, database_view, port_views
 from wtenv.locks import WORKTREE_LOCK_TIMEOUT, registry_lock, worktree_lock
 from wtenv.output import (
     BlockView,
@@ -436,6 +436,19 @@ def _compose_plan(
     )
 
 
+def _exec_only_warning(repository_override: str) -> WarningInfo:
+    """Return `compose_isolation_exec_only`, reported on every `up` in this arrangement (FR-004)."""
+    return WarningInfo(
+        code=WarningCode.COMPOSE_ISOLATION_EXEC_ONLY,
+        message=(
+            f"the repository owns {repository_override}, so Compose commands are isolated only "
+            "through `wtenv exec -- docker compose ...`; a plain `docker compose` here runs "
+            "without isolation"
+        ),
+        details={"repository_override": repository_override, "isolation_file": ISOLATION_FILE},
+    )
+
+
 def _adopted_warning(root: Path, adopted: str) -> WarningInfo:
     """Return `compose_override_adopted`: git tracks the file wtenv recorded as its own (FR-006)."""
     path = root / adopted
@@ -644,6 +657,8 @@ def _warnings(
     if compose_plan is not None:
         warnings += compose_plan.model.warnings
         warnings += compose_plan.warnings
+        if compose_plan.repository_override is not None:
+            warnings.append(_exec_only_warning(compose_plan.repository_override))
     return warnings
 
 
@@ -1267,6 +1282,7 @@ def _result(
 ) -> UpResult:
     """Build the `UpResult` of a provisioned worktree."""
     block = entry.block
+    arrangement, repository_override = compose_arrangement(entry)
     view = WorktreeView(
         repository=identity.repository,
         git_dir=identity.git_dir,
@@ -1277,5 +1293,7 @@ def _result(
         databases=[database_view(identity.path, record) for record in entry.databases],
         compose_project=None if entry.compose is None else entry.compose.project,
         env_file=env_rel,
+        compose_isolation=arrangement,
+        compose_repository_override=repository_override,
     )
     return UpResult(ok=True, worktree=view, changes=changes, warnings=warnings, post_up=post_up)

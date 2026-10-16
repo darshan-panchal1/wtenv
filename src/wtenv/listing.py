@@ -9,6 +9,7 @@ views, so the two commands show a worktree the same way.
 import os
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Literal
 
 from wtenv import registry
 from wtenv.errors import ErrorCode, WtenvError
@@ -81,9 +82,26 @@ def database_view(worktree_path: str, record: DatabaseRecord) -> DatabaseView:
     )
 
 
+def compose_arrangement(
+    entry: WorktreeEntry,
+) -> tuple[Literal["automatic", "exec_only"] | None, str | None]:
+    """Return how Compose commands get the worktree's isolation, and the override it owns (FR-005).
+
+    No compose record: neither. A record with a `repository_override`: `exec_only` and that path,
+    relative to the worktree root. Any other record: `automatic` (v0.1.1's arrangement).
+    """
+    record = entry.compose
+    if record is None:
+        return None, None
+    if record.repository_override is None:
+        return "automatic", None
+    return "exec_only", record.repository_override
+
+
 def worktree_view(entry: WorktreeEntry, classification: Classification) -> WorktreeView:
     """Return the row of `ls` for a registry entry, with the status `classify` gave it."""
     block = entry.block
+    arrangement, repository_override = compose_arrangement(entry)
     return WorktreeView(
         repository=entry.repository,
         git_dir=entry.git_dir,
@@ -96,6 +114,8 @@ def worktree_view(entry: WorktreeEntry, classification: Classification) -> Workt
         databases=[database_view(entry.path, record) for record in entry.databases],
         compose_project=None if entry.compose is None else entry.compose.project,
         env_file=None if entry.env_file is None else entry.env_file.path,
+        compose_isolation=arrangement,
+        compose_repository_override=repository_override,
     )
 
 

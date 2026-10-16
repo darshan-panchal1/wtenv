@@ -454,6 +454,8 @@ def render_up_text(result: UpResult) -> str:
         lines.append(_database_line(database, result.changes))
     if worktree.compose_project is not None:
         lines.append(_compose_line(worktree.compose_project, worktree.path, result.changes))
+    if worktree.compose_isolation == "exec_only":
+        lines += _isolation_lines(worktree.compose_repository_override)
     if worktree.env_file is not None:
         # The section of the env file that is in use, not one that was released.
         action = next(
@@ -658,6 +660,16 @@ def _compose_line(project: str, root: str, changes: Sequence[UpChange]) -> str:
     name = override.item.name
     shown = os.path.relpath(name, root) if name.startswith(root.rstrip("/") + "/") else name
     return f"  {'compose':<11}{project}  {shown} ({override.action})"
+
+
+def _isolation_lines(repository_override: str | None) -> list[str]:
+    """Return the `isolation` lines: Compose is isolated only through `wtenv exec` here (FR-004)."""
+    first = f"  {'isolation':<11}exec only: the repository owns {repository_override}. Run Compose through"
+    second = (
+        f"  {'':<11}`wtenv exec -- docker compose ...`; "
+        "a plain `docker compose` here runs WITHOUT isolation."
+    )
+    return [first, second]
 
 
 def _database_line(database: DatabaseView, changes: Sequence[UpChange]) -> str:

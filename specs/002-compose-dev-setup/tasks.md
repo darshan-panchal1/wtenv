@@ -975,7 +975,7 @@ byte-identical throughout.
 
 ### 4G. Reporting the arrangement (`output.py`, `listing.py`, `provision.py`)
 
-- [ ] T062 [P] [US1] ⚠RELAX(001:FR-030) Add failing tests for FR-005 to `tests/unit/test_render_up.py`, `tests/unit/test_render_ls.py`, and `tests/integration/test_us1_repository_override.py`
+- [X] T062 [P] [US1] ⚠RELAX(001:FR-030) Add failing tests for FR-005 to `tests/unit/test_render_up.py`, `tests/unit/test_render_ls.py`, and `tests/integration/test_us1_repository_override.py`
   - FR-004, FR-005, FR-032; User Story 1 scenario 9; cli.md, `wtenv up` text and `wtenv ls`.
   - JSON: `worktree.compose_isolation` (`automatic`, `exec_only`, or null without compose) and
     `compose_repository_override`, in `up` and `ls`. Warning `compose_isolation_exec_only` with
@@ -983,9 +983,9 @@ byte-identical throughout.
   - Text: the `isolation` line of cli.md, which says Compose is isolated only through
     `wtenv exec -- docker compose ...` and that a plain `docker compose` runs WITHOUT isolation.
   - **Done when** the new cases fail under the failing-test rule.
-- [ ] T063 [US1] Report the arrangement in `src/wtenv/output.py`, `src/wtenv/listing.py`, and `src/wtenv/provision.py`
+- [X] T063 [US1] Report the arrangement in `src/wtenv/output.py`, `src/wtenv/listing.py`, and `src/wtenv/provision.py`
   - **Done when** `uv run pytest tests/unit/test_render_up.py tests/unit/test_render_ls.py tests/integration/test_us1_repository_override.py -q` exits 0.
-- [ ] T064 [US1] Group check 4G: runs G5 from the repository root; edits no file
+- [X] T064 [US1] Group check 4G: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(output): report the compose arrangement in up and ls`.
 
 ### 4H. Safety group — deleting the isolation file in `down` and `gc`, and keeping adopted files (`compose.py`, `teardown.py`; plan.md S3, S4)
