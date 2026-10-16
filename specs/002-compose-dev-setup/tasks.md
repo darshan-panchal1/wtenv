@@ -1027,7 +1027,11 @@ byte-identical throughout.
   - Widen it to any `.wtenv/*.yaml`; the `.wtenv/notes.yaml` cases of T104 and T065 must fail.
   - **Done when** as in Working rules, "Mutation check".
 - [ ] T068 [US1] Mutation check: `is_tracked` in the teardown outcome, in `src/wtenv/teardown.py` (restored afterwards)
-  - Drop it; the untracked case of `test_a_recorded_override_that_is_not_wtenvs_is_never_deleted_by_down_or_gc` must fail (it would be kept, not failed).
+  - Make the tracked question answer "tracked" for every file at the recorded path; the untracked
+    case of `test_a_recorded_override_that_is_not_wtenvs_is_never_deleted_by_down_or_gc` must
+    fail (it would be kept, not failed). This is the reading that never removes or fails the
+    repository's file. The opposite mutation (the question never asked, so a tracked file is
+    failed) must fail the tracked cases of T065 (`test_a_tracked_headerless_file_at_the_recorded_path_is_kept_by_down_and_reported_in_kept_items`).
   - **Done when** as in Working rules, "Mutation check".
 - [ ] T069 [US1] Mutation check: header check before deleting the isolation file, in `src/wtenv/teardown.py` (restored afterwards)
   - Remove it in `_override_step`; a case of T065 with a header-less file at the isolation path must fail.
