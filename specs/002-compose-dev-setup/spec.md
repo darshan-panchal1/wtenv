@@ -326,9 +326,13 @@ container and data volume are gone and the other two are untouched.
 - **FR-006**: When a recorded override path now holds a file that git tracks, whether or not it
   starts with wtenv's header, wtenv MUST never write or delete it. At an auto-loaded override
   name, `up` MUST treat it as a repository-owned override and stop recording it as wtenv's; at
-  the isolation file's path, `up` MUST fail with `ownership_conflict`. `down` and `gc` MUST
-  report it as kept, not failed, and drop its record without touching the file. In every other
-  case 001:FR-087 applies unchanged.
+  the isolation file's path, `up` MUST fail with `ownership_conflict`. `down` (also with
+  `--dry-run`) MUST report it as kept, not failed, and drop its record without touching the
+  file. `gc` and `gc --release` act on a path that is no longer a git worktree: `gc` finds the
+  directory already removed, so nothing is failed or kept and the record is dropped; in
+  `gc --release` git cannot say whether a file is tracked, so a header-less file at the recorded
+  path is left alone and reported under `failed` (001:FR-087), and a file that still carries
+  wtenv's header is removed as in v0.1.1. In every other case 001:FR-087 applies unchanged.
 - **FR-007**: When more than one override file with a name Compose loads automatically exists
   beside the compose file: if exactly one of them is repository-owned and every other one is
   wtenv's own recorded file, `up` MUST remove wtenv's files under the 001:FR-087 header check and

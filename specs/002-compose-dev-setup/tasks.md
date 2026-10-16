@@ -995,19 +995,24 @@ byte-identical throughout.
   - New `test_down_removes_the_isolation_file_and_never_the_repository_override`: `down --dry-run`
     and `down` list and remove `.wtenv/compose.isolation.yaml`. The repository override is in none
     of `removed`, `would_remove`, `already_absent`, `failed`, `kept_items`, and is byte-identical.
-    The same for `gc` and `gc --release`.
+    The same for `gc --release`; for `gc` the directory is already removed, and the override is in
+    none of the lists.
   - Extend `test_a_recorded_path_of_a_form_wtenv_never_records_is_left_alone` with
     `.wtenv/notes.yaml`, `.wtenv/sub/compose.isolation.yaml` and `../.wtenv/compose.isolation.yaml`:
     each is under `failed`, left alone, record kept.
   - New `test_a_tracked_headerless_file_at_the_recorded_path_is_kept_by_down_and_reported_in_kept_items`:
-    `kept_items` with `kind` `compose_override`, `name` the path, `reason` `repository_owned`; not
-    under `failed`; record dropped only when the project step did not fail; the same with
-    `--dry-run`, `gc`, `gc --release`. Kept: `test_a_recorded_override_that_is_not_wtenvs_is_never_deleted_by_down_or_gc`
+    `down --dry-run` and `down`: `kept_items` with `kind` `compose_override`, `name` the path,
+    `reason` `repository_owned`; not under `failed`; the file untouched; the record dropped only
+    when the project step did not fail. `gc`: `git worktree remove` has already removed the
+    directory, so nothing is `failed` or kept and the record is dropped. `gc --release` (git
+    cannot say whether the file is tracked): the file is preserved and reported under `failed`,
+    exit 13, record kept. Kept: `test_a_recorded_override_that_is_not_wtenvs_is_never_deleted_by_down_or_gc`
     (untracked case: still `failed`).
   - Symbolic links (001:FR-086): `.wtenv/` a link to a directory in `decoy`, and, separately,
     `.wtenv/compose.isolation.yaml` a link to a file with wtenv's header in `decoy`.
-    `down --dry-run`, `down`, `gc` and `gc --release` report the isolation file under `failed`
-    and keep its record; `snapshot_tree(decoy)` is unchanged.
+    `down --dry-run`, `down` and `gc --release` report the isolation file under `failed` and keep
+    its record; `gc` finds the directory already removed. In all four, `snapshot_tree(decoy)` is
+    unchanged.
   - New decoy test `test_a_hand_edited_repository_override_record_is_never_deleted`:
     `repository_override` hand-edited to a developer file in the worktree, to `../outside.yml`,
     and to an absolute path; `down --dry-run`, `down`, `gc`, `gc --release` never list or touch the
@@ -1056,13 +1061,16 @@ byte-identical throughout.
     "recorded, header present, tracked"; cli.md, `wtenv up` step 5 and `wtenv down`; plan.md,
     Decisions to review 8.
   - After an automatic `up`, `git add -f compose.override.yaml` (wtenv's file, header intact):
-    a second `up` → exit 0 and adoption as in T046 (`exec_only`, `repository_override` the
+    either a second `up` → exit 0 and adoption as in T046 (`exec_only`, `repository_override` the
     path, warning `compose_override_adopted`), the file byte-identical, mode and mtime
-    unchanged. `down --dry-run`, `down`, `gc`, `gc --release` → `kept_items`
-    (`repository_owned`), never `removed`; the file byte-identical.
+    unchanged (afterwards the record names the isolation file, and `down` never lists the adopted
+    file anywhere); or, without a second `up`, `down --dry-run` and `down` → `kept_items`
+    (`repository_owned`), never `removed`; the file byte-identical. `gc`: the directory is already removed; nothing is
+    failed or kept. `gc --release` cannot ask git: the file, which keeps wtenv's header, is
+    removed as in v0.1.1 (the known limit of "Deferred").
   - After an exec-only `up`, `git add -f .wtenv/compose.isolation.yaml`: `up` →
-    `ownership_conflict` (exit 11), nothing changed; `down` and `gc` → `kept_items`, the file
-    byte-identical.
+    `ownership_conflict` (exit 11), nothing changed; `down --dry-run` and `down` → `kept_items`,
+    the file byte-identical; `gc` and `gc --release` as above.
   - The race of T134 with a tracked file that keeps the header: the file survives.
   - Inventory unit: recorded path, header present, tracked → `adopt`; untracked → `wtenv_own`.
   - **Done when** the new cases fail under the failing-test rule.
@@ -1710,6 +1718,12 @@ these fixes.
   exec-only record (an optional field, as FR-029 allows) and fail with a new reason,
   `repository_override_changed`. v0.1.1 has the same gap for the compose file in the automatic
   arrangement.
+- **`gc --release` cannot see that a file is tracked** (found in group 4H). The path is no longer
+  a git worktree, so `is_tracked` cannot run. A header-less file at the recorded path is left
+  alone and reported under `failed` (exit 13), but a git-tracked file that still carries wtenv's
+  header is removed, as in v0.1.1. Failing closed for every override file when git cannot be
+  asked would also stop `gc --release` cleaning up wtenv's own override of a worktree whose
+  repository is gone; decide before building it.
 - **`compose_fixed_volume_name` judged under the wtenv project** (found while fixing safety H1).
   The v0.1.x warning still compares a volume's `name` with the repository's own model name, so
   `name: app_pgdata` in a repository named `app` is not warned about for services other than a

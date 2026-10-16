@@ -145,7 +145,7 @@ Changes:
   `kind` `compose_override`, `name` its path, and `reason` `repository_owned`, **not** under
   `failed`. The compose record is dropped as for a removed override (only when the project step
   did not fail). With `--dry-run` it is listed in `kept_items` the same way. A header-less file
-  that git does not track is still `failed`, as in 001.
+  that git does not track is still `failed`, as in 001. This holds for `down` only: see `gc`.
 - A compose-hosted database adds nothing: its container and its `<project>_` data volume are
   removed with the project, and an anonymous volume is in `kept_volumes` (001, unchanged;
   FR-023).
@@ -154,8 +154,18 @@ Changes:
 
 ## `wtenv gc`
 
-The same changes as `down`, through the same release code path: the isolation file, the
-repository's override never touched, `kept_items` in `GcResult`. **Exit statuses**: unchanged.
+The same changes as `down`, through the same release code path: the isolation file, and the
+repository's override never touched. `kept_items` stays in `GcResult`, but `gc` and
+`gc --release` run on a path that is no longer a git worktree, so they cannot report a tracked
+file as kept:
+
+- `gc`: `git worktree remove` has already removed the directory. Nothing is `failed` or kept, and
+  the record is dropped.
+- `gc --release`: git cannot say whether a file at the recorded path is tracked. A header-less
+  file there is left alone and reported under `failed` (exit 13), as in 001. A tracked file that
+  still carries wtenv's header is removed, as in v0.1.1 (known limit; tasks.md, "Deferred").
+
+**Exit statuses**: unchanged.
 
 ## `wtenv ls`
 
