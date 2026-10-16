@@ -743,11 +743,12 @@ byte-identical throughout.
   - New `test_exec_does_not_run_the_command_when_isolation_cannot_apply`, parametrised by the seven
     reasons in table order: `compose_env_override` (`COMPOSE_PROJECT_NAME`, then `COMPOSE_FILE`,
     non-empty; `details.variable`; each also set only in `.env` beside the compose file, after
-    `up`, with `details.path` that file); `recorded_value_invalid` (`override` not the isolation path,
+    `up`, with `details.path` that file; set in the environment, `path` is absent); `recorded_value_invalid` (`override` not the isolation path,
     or `repository_override`/`file` failing `recorded_path_problem`); `symlink` (`path` the link);
     `isolation_file_missing`; `isolation_file_not_wtenvs`; `repository_override_missing`;
     `override_appeared` (`path`). Each: exit 125, `error.code` `isolation_unavailable`,
-    `details.path` absolute, and a sentinel command (`touch <file>`) did **not** run. When two
+    `details.path` absolute whenever the reason has a file (`path` is present for
+    `compose_env_override` only when the value comes from `.env`), and a sentinel command (`touch <file>`) did **not** run. When two
     conditions hold, the first in table order is reported.
   - New `test_exec_never_sets_compose_project_name`; new
     `test_exec_in_an_automatic_worktree_sets_exactly_the_section` (the v0.1.1 environment plus only
@@ -778,7 +779,8 @@ byte-identical throughout.
   - **Done when** `uv run pytest tests/integration/test_us1_exec_isolation.py -q -k repeat_up` exits 0.
 - [X] T052 [US1] ⚠RELAX(001:FR-030) ⚠RELAX(001:FR-056, FR-057) Apply the FR-033 checks and the isolation environment in `src/wtenv/isolation.py`, `src/wtenv/execcmd.py`, and `src/wtenv/provision.py`
   - The checks run only when the entry records `repository_override`, after the `provisioned`
-    check, and before `os.execvpe`. On failure: `isolation_unavailable`, exit 125, nothing run.
+    check, and before `os.execvpe`. Check B runs only for a record without `repository_override`
+    whose `override` is an auto-loaded name and whose state is `created` (T129). On failure: `isolation_unavailable`, exit 125, nothing run.
   - `_run_post_up` takes its environment from the same `isolation.compose_environment`.
     `COMPOSE_PROJECT_NAME` is never set.
   - Check 1 reads `.env` beside the compose file with the rule of `compose.check_environment`.
@@ -922,10 +924,17 @@ byte-identical throughout.
     `compose.override.yaml` replaced by a header-less file (`override_appeared`, `path` it);
     `compose.override.yaml` replaced by a symbolic link to a file in `decoy` that starts with
     wtenv's header (`symlink`; nothing read through the link).
+  - New `test_exec_ignores_the_developers_own_overrides_once_compose_was_removed`; unit test
+    `test_check_b_a_record_that_is_being_removed_is_not_checked` (check B applies only in state
+    `created`).
   - As in v0.1.1 (the command runs): nothing changed since `up`; `compose.override.yaml` deleted;
     a worktree without `[compose]`.
   - **Done when** the new cases fail under the failing-test rule.
 - [X] T129 [US1] ⚠RELAX(001:FR-056, FR-057) Apply check B in the automatic arrangement, in `src/wtenv/isolation.py` and `src/wtenv/execcmd.py`
+  - Check B applies only to a record without `repository_override` whose `override` is an
+    auto-loaded name and whose state is `created`. Once `[compose]` is removed the record is
+    `removing`, wtenv's file is gone, and the developer's own override files are theirs: refusing
+    them would make `exec` fail for no isolation reason.
   - Needs T052 (the four override names and the header line, as check 7 uses them). `lstat` on
     the four names and one read of the recorded file's first line; the link check comes before
     the read. `exec` still does not import `wtenv.compose`.

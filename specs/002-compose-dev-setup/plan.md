@@ -519,6 +519,9 @@ what changes for someone who uses v0.1.1 today.
    worktree now fails before its post-up commands, where v0.1.1 ran them with that
    `COMPOSE_FILE` inherited. Tasks T148, T149, T150.
 5. **M5, what "no longer matches the record" means in the automatic arrangement.** Check B
+   applies only to a record without `repository_override` whose `override` is an auto-loaded
+   name and whose state is `created`: once `[compose]` is removed the record is `removing`, and
+   the developer's own override files, which are theirs, must not make `exec` refuse. It
    refuses when another override name exists beside the compose file, or when the recorded
    override is a symbolic link or lacks wtenv's header (a repository file now at wtenv's path).
    A **missing** recorded override is not refused: v0.1.1 runs the command then, and the

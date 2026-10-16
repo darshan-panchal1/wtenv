@@ -193,7 +193,7 @@ record or remove (spec, Edge cases; research R2).
 
 In every other worktree, the command's environment is exactly v0.1.1's, apart from the new
 variables in the section. `exec` runs only checks A (every such worktree: an inherited
-`COMPOSE_FILE` that names another worktree's isolation file) and B (the automatic arrangement:
+`COMPOSE_FILE` that names another worktree's isolation file) and B (the automatic arrangement, a record without `repository_override` in state `created`:
 no override name appeared beside the compose file, and the recorded override is not a link and
 keeps wtenv's header) of data-model.md, with `isolation_unavailable` and exit status 125, the
 command not run (FR-033). `up` applies check A alone before its post-up commands, with exit
