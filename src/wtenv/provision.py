@@ -159,9 +159,7 @@ def _provision(identity: WorktreeIdentity) -> UpResult:
         if compose_plan is not None:
             changes.append(_compose_change(root, compose_plan, "unchanged"))
         changes.append(_env_change(env_path, "unchanged"))
-        runs = _run_post_up(
-            root, config.post_up, _variables(known.ports, known.published, plan), known.git_dir
-        )
+        runs = _run_post_up(root, config.post_up, known, plan)
         return _result(identity, known, config.env_file, changes, warnings, runs)
 
     # Step 8: the registry first.
@@ -184,8 +182,11 @@ def _provision(identity: WorktreeIdentity) -> UpResult:
     variables = _variables(after.ports, after.published, plan)
     changes += _env_file_step(root, config, before, after, variables)
 
-    # Step 13: the post-up commands.
-    runs = _run_post_up(root, config.post_up, variables, after.git_dir)
+    # Step 13: the post-up commands. The entry is read again: step 11 may have changed its compose
+    # record, and the commands must get the environment of the arrangement that is now in force.
+    with registry_lock():
+        current = registry.load().worktrees[after.git_dir]
+    runs = _run_post_up(root, config.post_up, current, plan)
 
     # Step 14: the entry is `provisioned` only now.
     with registry.transaction() as reg:
@@ -1175,15 +1176,35 @@ def _compose_change(root: Path, compose_plan: _ComposePlan, action: Action) -> U
 
 
 def _run_post_up(
-    root: Path, commands: list[str], variables: list[tuple[str, str]], git_dir: str
+    root: Path, commands: list[str], entry: WorktreeEntry, plan: _DatabasePlan | None
 ) -> list[PostUpRun]:
     """Run each command through `sh -c`, in order, and stop at the first that fails (FR-036).
 
     They run in the worktree root with its variables added to the environment, with standard
     input closed and standard output sent to wtenv's standard error, so `--json` output stays one
     document. A failure makes the entry `incomplete` and raises `post_up_failed` (FR-037).
+
+    The environment is built here from `entry`, so that the repeat-`up` branch and step 13, which
+    both call this, cannot differ (safety finding M6): the section's variables, and in the
+    exec-only arrangement the same `COMPOSE_FILE` and `COMPOSE_PATH_SEPARATOR` that `exec` sets
+    (FR-033), from `isolation.compose_environment`. `plan` supplies `DATABASE_URL`. Raises
+    `isolation_unavailable` (check A) before the first command, and `post_up_failed`.
     """
-    environment = {**os.environ, **dict(variables)}
+    git_dir = entry.git_dir
+    if commands:
+        # Check A, before the first command, in every worktree (FR-033, safety finding M1): a
+        # `COMPOSE_FILE` that names another worktree's isolation file would give the commands
+        # that worktree's settings. Like a failing command, it leaves the entry `incomplete` and
+        # the provisioned resources in place (001:FR-037), and no command runs.
+        try:
+            isolation.check_inherited_compose_file(root, os.environ)
+        except WtenvError:
+            with registry.transaction() as reg:
+                reg.worktrees[git_dir].state = "incomplete"
+            raise
+    environment = {**os.environ, **dict(_variables(entry.ports, entry.published, plan))}
+    if entry.compose is not None and entry.compose.repository_override is not None:
+        environment.update(isolation.compose_environment(root, entry.compose))
     runs = []
     for command in commands:
         sys.stderr.flush()

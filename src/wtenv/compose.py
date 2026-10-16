@@ -23,12 +23,16 @@ from wtenv.envfile import unusable, write_atomic
 from wtenv.errors import ErrorCode, JsonValue, WtenvError
 from wtenv.gitutil import is_tracked
 from wtenv.identity import short_id, slug, symlinked_part
-from wtenv.isolation import ISOLATION_FILE, OVERRIDE_HEADER
+from wtenv.isolation import (
+    COMPOSE_OVERRIDE_VARIABLES,
+    ENV_ASSIGNMENT,
+    ISOLATION_FILE,
+    OVERRIDE_FILE_NAMES,
+    OVERRIDE_HEADER,
+)
 from wtenv.output import FailedItem, Item, ItemKind, KeptVolume, WarningCode, WarningInfo
 
 _FILE_SETTING = "compose.file"
-# Compose loads one of these beside the compose file; the pairs follow COMPOSE_FILE_NAMES.
-OVERRIDE_FILE_NAMES = tuple(name.replace(".y", ".override.y") for name in COMPOSE_FILE_NAMES)
 
 
 class Runner(Protocol):
@@ -318,8 +322,6 @@ def _mapping_line(mapping: PortMapping, port: int) -> str:
 
 MINIMUM_COMPOSE_VERSION = (2, 24, 4)  # `!override` needs it (research.md §4)
 _LOCAL_DOCKER_HOSTS = ("localhost", "127.0.0.1", "::1")  # `urlsplit` gives IPv6 without brackets
-_ENV_OVERRIDES = ("COMPOSE_PROJECT_NAME", "COMPOSE_FILE")  # both outrank the override file
-_ENV_ASSIGNMENT = re.compile(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)")
 _VERSION = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
 
 
@@ -639,7 +641,7 @@ def check_environment(root: Path, compose_file: str, environ: Mapping[str, str])
     Both are looked for in `environ` and in `.env` beside the compose file (`details.file` names
     it). An empty value does not count: Compose ignores it. The values are never printed.
     """
-    for variable in _ENV_OVERRIDES:
+    for variable in COMPOSE_OVERRIDE_VARIABLES:
         if environ.get(variable):
             raise _env_override(variable, "the environment", None)
     dot_env = root / posixpath.join(posixpath.dirname(compose_file), ".env")
@@ -648,8 +650,12 @@ def check_environment(root: Path, compose_file: str, environ: Mapping[str, str])
     except OSError:
         return
     for line in text.splitlines():
-        match = _ENV_ASSIGNMENT.fullmatch(line)
-        if match is not None and match.group(1) in _ENV_OVERRIDES and match.group(2).strip():
+        match = ENV_ASSIGNMENT.fullmatch(line)
+        if (
+            match is not None
+            and match.group(1) in COMPOSE_OVERRIDE_VARIABLES
+            and match.group(2).strip()
+        ):
             raise _env_override(match.group(1), str(dot_env), str(dot_env))
 
 

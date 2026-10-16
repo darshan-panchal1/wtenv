@@ -738,7 +738,7 @@ byte-identical throughout.
 
 ### 4F. Safety group — environment injection by `exec` and post-up commands (`isolation.py`, `execcmd.py`, `provision.py`; plan.md S5)
 
-- [ ] T051 [US1] ⚠RELAX(001:FR-030) ⚠RELAX(001:FR-056, FR-057) Add failing tests for FR-033 to `tests/unit/test_isolation.py`, `tests/integration/test_us1_exec_isolation.py` (new), and `tests/unit/test_lazy_imports.py`
+- [X] T051 [US1] ⚠RELAX(001:FR-030) ⚠RELAX(001:FR-056, FR-057) Add failing tests for FR-033 to `tests/unit/test_isolation.py`, `tests/integration/test_us1_exec_isolation.py` (new), and `tests/unit/test_lazy_imports.py`
   - FR-004, FR-033; data-model.md, "`exec` checks (FR-033), in order"; cli.md, `wtenv exec`.
   - New `test_exec_does_not_run_the_command_when_isolation_cannot_apply`, parametrised by the seven
     reasons in table order: `compose_env_override` (`COMPOSE_PROJECT_NAME`, then `COMPOSE_FILE`,
@@ -759,7 +759,7 @@ byte-identical throughout.
   - User Story 1 scenario 10.
   - `tests/unit/test_lazy_imports.py`: new `test_exec_does_not_load_the_compose_module` (NFR-001).
   - **Done when** these files fail under the failing-test rule.
-- [ ] T131 [US1] Add a failing test for post-up commands on a repeat `up` with nothing changed, in `tests/integration/test_us1_exec_isolation.py`
+- [X] T131 [US1] Add a failing test for post-up commands on a repeat `up` with nothing changed, in `tests/integration/test_us1_exec_isolation.py`
   - FR-033 ("Post-up commands MUST get the same"), FR-010, 001:FR-036; safety finding M6; plan.md
     S5; cli.md, `wtenv up` step 13.
   - New `test_post_up_commands_get_the_isolation_environment_on_a_repeat_up`: an exec-only
@@ -770,13 +770,13 @@ byte-identical throughout.
     ("Isolation environment"), `COMPOSE_PATH_SEPARATOR=:`, and one `WTENV_PORT_…` line per
     published port, and these lines equal the first run's.
   - **Done when** the new test fails under the failing-test rule.
-- [ ] T132 [US1] Build the post-up environment inside `_run_post_up` from the entry, at both call sites, in `src/wtenv/provision.py`
+- [X] T132 [US1] Build the post-up environment inside `_run_post_up` from the entry, at both call sites, in `src/wtenv/provision.py`
   - Needs T033 (`isolation.compose_environment`). `_run_post_up` takes the entry (and the plan
     for `DATABASE_URL`) and builds its environment itself: the section's variables, plus, in the
     exec-only arrangement, `isolation.compose_environment`. Both call sites, the repeat-`up`
     branch and step 13, pass the entry instead of a variable list, so they cannot differ.
   - **Done when** `uv run pytest tests/integration/test_us1_exec_isolation.py -q -k repeat_up` exits 0.
-- [ ] T052 [US1] ⚠RELAX(001:FR-030) ⚠RELAX(001:FR-056, FR-057) Apply the FR-033 checks and the isolation environment in `src/wtenv/isolation.py`, `src/wtenv/execcmd.py`, and `src/wtenv/provision.py`
+- [X] T052 [US1] ⚠RELAX(001:FR-030) ⚠RELAX(001:FR-056, FR-057) Apply the FR-033 checks and the isolation environment in `src/wtenv/isolation.py`, `src/wtenv/execcmd.py`, and `src/wtenv/provision.py`
   - The checks run only when the entry records `repository_override`, after the `provisioned`
     check, and before `os.execvpe`. On failure: `isolation_unavailable`, exit 125, nothing run.
   - `_run_post_up` takes its environment from the same `isolation.compose_environment`.
@@ -785,35 +785,35 @@ byte-identical throughout.
     That assignment pattern and the two variable names move to `isolation.py`, and `compose.py`
     imports them, so the two checks cannot drift. Check 5 uses the header line T105 moved there.
   - **Done when** `uv run pytest tests/unit/test_isolation.py tests/integration/test_us1_exec_isolation.py tests/unit/test_lazy_imports.py -q` exits 0.
-- [ ] T053 [US1] Mutation check: FR-033 check 1, `COMPOSE_PROJECT_NAME`/`COMPOSE_FILE` in the calling environment, in `src/wtenv/isolation.py` (restored afterwards)
+- [X] T053 [US1] Mutation check: FR-033 check 1, `COMPOSE_PROJECT_NAME`/`COMPOSE_FILE` in the calling environment, in `src/wtenv/isolation.py` (restored afterwards)
   - Remove it; the `compose_env_override` case must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T109 [US1] Mutation check: FR-033 check 1 also reads `.env` beside the compose file, in `src/wtenv/isolation.py` (restored afterwards)
+- [X] T109 [US1] Mutation check: FR-033 check 1 also reads `.env` beside the compose file, in `src/wtenv/isolation.py` (restored afterwards)
   - Guard: analysis U1. Remove the `.env` read from check 1; the `.env` cases of
     `compose_env_override` (T051) must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T054 [US1] Mutation check: FR-033 check 2, recorded values, in `src/wtenv/isolation.py` (restored afterwards)
+- [X] T054 [US1] Mutation check: FR-033 check 2, recorded values, in `src/wtenv/isolation.py` (restored afterwards)
   - Remove it; the `recorded_value_invalid` case must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T055 [US1] Mutation check: FR-033 check 3, symbolic links, in `src/wtenv/isolation.py` (restored afterwards)
+- [X] T055 [US1] Mutation check: FR-033 check 3, symbolic links, in `src/wtenv/isolation.py` (restored afterwards)
   - Remove it; the `symlink` case must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T056 [US1] Mutation check: FR-033 check 4, the isolation file exists, in `src/wtenv/isolation.py` (restored afterwards)
+- [X] T056 [US1] Mutation check: FR-033 check 4, the isolation file exists, in `src/wtenv/isolation.py` (restored afterwards)
   - Remove it; the `isolation_file_missing` case must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T057 [US1] Mutation check: FR-033 check 5, the isolation file's header, in `src/wtenv/isolation.py` (restored afterwards)
+- [X] T057 [US1] Mutation check: FR-033 check 5, the isolation file's header, in `src/wtenv/isolation.py` (restored afterwards)
   - Remove it; the `isolation_file_not_wtenvs` case must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T058 [US1] Mutation check: FR-033 check 6, the repository override exists, in `src/wtenv/isolation.py` (restored afterwards)
+- [X] T058 [US1] Mutation check: FR-033 check 6, the repository override exists, in `src/wtenv/isolation.py` (restored afterwards)
   - Remove it; the `repository_override_missing` case must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T059 [US1] Mutation check: FR-033 check 7, no other override name appeared, in `src/wtenv/isolation.py` (restored afterwards)
+- [X] T059 [US1] Mutation check: FR-033 check 7, no other override name appeared, in `src/wtenv/isolation.py` (restored afterwards)
   - Remove it; the `override_appeared` case must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T060 [US1] Mutation check: `COMPOSE_PROJECT_NAME` is not injected, in `src/wtenv/isolation.py` (restored afterwards)
+- [X] T060 [US1] Mutation check: `COMPOSE_PROJECT_NAME` is not injected, in `src/wtenv/isolation.py` (restored afterwards)
   - Add it to `compose_environment`; `test_exec_never_sets_compose_project_name` must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T114 [US1] ⚠RELAX(001:FR-056, FR-057) Add failing tests for check A, an inherited `COMPOSE_FILE` that names another worktree's isolation file, to `tests/integration/test_us1_exec_isolation.py` and `tests/unit/test_isolation.py`
+- [X] T114 [US1] ⚠RELAX(001:FR-056, FR-057) Add failing tests for check A, an inherited `COMPOSE_FILE` that names another worktree's isolation file, to `tests/integration/test_us1_exec_isolation.py` and `tests/unit/test_isolation.py`
   - FR-033 (amended by safety finding M1); data-model.md, "`exec` checks in every other
     worktree", row A; spec, Edge cases.
   - New `test_exec_refuses_another_worktrees_isolation_file_in_compose_file`: worktree A
@@ -827,16 +827,16 @@ byte-identical throughout.
     `COMPOSE_FILE` naming B's own compose file; naming a `compose.isolation.yaml` that is not
     in a `.wtenv/` directory; naming `<B root>/.wtenv/compose.isolation.yaml`.
   - **Done when** the new cases fail under the failing-test rule.
-- [ ] T115 [US1] ⚠RELAX(001:FR-056, FR-057) Apply check A in every worktree that is not exec-only, in `src/wtenv/isolation.py` and `src/wtenv/execcmd.py`
+- [X] T115 [US1] ⚠RELAX(001:FR-056, FR-057) Apply check A in every worktree that is not exec-only, in `src/wtenv/isolation.py` and `src/wtenv/execcmd.py`
   - Needs T052. After the `provisioned` check and before `os.execvpe`; on failure
     `isolation_unavailable`, exit 125, nothing run. The command's environment is unchanged
     (v0.1.1's plus the section). `exec` still does not import `wtenv.compose`.
   - **Done when** `uv run pytest tests/unit/test_isolation.py tests/integration/test_us1_exec_isolation.py tests/unit/test_lazy_imports.py -q` exits 0.
-- [ ] T116 [US1] Mutation check: check A, in `src/wtenv/isolation.py` (restored afterwards)
+- [X] T116 [US1] Mutation check: check A, in `src/wtenv/isolation.py` (restored afterwards)
   - Guard: FR-033, safety finding M1. Remove it; the refusal cases of
     `test_exec_refuses_another_worktrees_isolation_file_in_compose_file` must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T148 [US1] Add failing tests for check A before post-up commands to `tests/integration/test_us1_exec_isolation.py`
+- [X] T148 [US1] Add failing tests for check A before post-up commands to `tests/integration/test_us1_exec_isolation.py`
   - FR-033 (extended by the maintainer's decision on safety finding M1, plan.md, Decisions to
     review 4); 001:FR-036, FR-037; data-model.md, row A; cli.md, `wtenv up` step 13.
   - New `test_up_runs_no_post_up_command_when_compose_file_names_another_worktrees_isolation_file`:
@@ -858,7 +858,7 @@ byte-identical throughout.
     created.
   - Needs T115 and T132 (the check function and the single place that runs post-up commands).
   - **Done when** the new cases fail under the failing-test rule.
-- [ ] T149 [US1] Apply check A in `_run_post_up`, in every worktree, in `src/wtenv/provision.py`
+- [X] T149 [US1] Apply check A in `_run_post_up`, in every worktree, in `src/wtenv/provision.py`
   - FR-033. Needs T115 (the check A function in `src/wtenv/isolation.py`, reused as it is) and
     T132 (`_run_post_up` is the one place both call sites go through). Before the first command,
     when the worktree has at least one post-up command, `_run_post_up` runs check A with the
@@ -866,13 +866,13 @@ byte-identical throughout.
     `isolation_unavailable` with the details of check A; no command runs. No other check of
     `exec` moves into `up`, and the environment of post-up commands does not change.
   - **Done when** `uv run pytest tests/integration/test_us1_exec_isolation.py tests/unit/test_isolation.py tests/unit/test_lazy_imports.py -q` exits 0.
-- [ ] T150 [US1] Mutation check: check A before post-up commands, in `src/wtenv/provision.py` (restored afterwards)
+- [X] T150 [US1] Mutation check: check A before post-up commands, in `src/wtenv/provision.py` (restored afterwards)
   - Guard: FR-033, the decision on safety finding M1. Remove the check A call from
     `_run_post_up`; the refusal cases of
     `test_up_runs_no_post_up_command_when_compose_file_names_another_worktrees_isolation_file`
     (first `up` and repeat `up`) must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T117 [US1] Add failing tests for the `.env` line forms and `COMPOSE_ENV_FILES` to `tests/unit/test_isolation.py`, `tests/unit/test_compose_checks.py`, and `tests/integration/test_us1_exec_isolation.py`
+- [X] T117 [US1] Add failing tests for the `.env` line forms and `COMPOSE_ENV_FILES` to `tests/unit/test_isolation.py`, `tests/unit/test_compose_checks.py`, and `tests/integration/test_us1_exec_isolation.py`
   - FR-033 (amended by safety finding M2); research R7 (E6.1, E6.3); data-model.md, check 1 and
     "Isolation environment"; spec, Known limits.
   - Check 1 and `up`'s `check_environment`, one case per E6.1 form, for `COMPOSE_PROJECT_NAME`
@@ -893,26 +893,26 @@ byte-identical throughout.
     `COMPOSE_PROJECT_NAME=wtenv-test-<random>`; `wtenv exec -- sh -c 'cd sub && docker compose config --format json'`
     reports the recorded project, and a value of the project's `.env` is interpolated (E6.3b).
   - **Done when** the new cases fail under the failing-test rule.
-- [ ] T118 [US1] Widen the `.env` pattern, refuse an inherited `COMPOSE_ENV_FILES`, and set `COMPOSE_ENV_FILES`, in `src/wtenv/isolation.py`, `src/wtenv/compose.py`, `src/wtenv/execcmd.py`, and `src/wtenv/provision.py`
+- [X] T118 [US1] Widen the `.env` pattern, refuse an inherited `COMPOSE_ENV_FILES`, and set `COMPOSE_ENV_FILES`, in `src/wtenv/isolation.py`, `src/wtenv/compose.py`, `src/wtenv/execcmd.py`, and `src/wtenv/provision.py`
   - Needs T052 (the pattern lives in `isolation.py` and `compose.check_environment` imports it).
     The pattern is data-model.md's (`[=:]` and an optional byte-order mark).
     `compose_environment` adds `COMPOSE_ENV_FILES`; `exec`, post-up commands and `up`'s
     verification take it from there. The automatic arrangement's environment does not change.
   - **Done when** `uv run pytest tests/unit/test_isolation.py tests/unit/test_compose_checks.py tests/integration/test_us1_exec_isolation.py tests/integration/test_us3_compose.py -q` exits 0.
-- [ ] T119 [US1] Mutation check: the `.env` pattern accepts `:` and a byte-order mark, in `src/wtenv/isolation.py` (restored afterwards)
+- [X] T119 [US1] Mutation check: the `.env` pattern accepts `:` and a byte-order mark, in `src/wtenv/isolation.py` (restored afterwards)
   - Guard: research R7, E6.1. First put back v0.1.1's `=`-only pattern: the `KEY: value` cases
     of T117 must fail. Then, separately, drop only the byte-order-mark part: the byte-order-mark
     case must fail.
   - **Done when** as in Working rules, "Mutation check", for both mutations.
-- [ ] T120 [US1] Mutation check: `exec` sets `COMPOSE_ENV_FILES`, in `src/wtenv/isolation.py` (restored afterwards)
+- [X] T120 [US1] Mutation check: `exec` sets `COMPOSE_ENV_FILES`, in `src/wtenv/isolation.py` (restored afterwards)
   - Guard: research R7, E6.3. Remove `COMPOSE_ENV_FILES` from `compose_environment`; the
     subdirectory case of T117 must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T121 [US1] Mutation check: an inherited `COMPOSE_ENV_FILES` is refused, in `src/wtenv/isolation.py` (restored afterwards)
+- [X] T121 [US1] Mutation check: an inherited `COMPOSE_ENV_FILES` is refused, in `src/wtenv/isolation.py` (restored afterwards)
   - Guard: research R7, E6.3d. Drop `COMPOSE_ENV_FILES` from the variables check 1 reads; its
     case of T117 must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T128 [US1] ⚠RELAX(001:FR-056, FR-057) Add failing tests for check B, an override that appeared in the automatic arrangement, to `tests/integration/test_us1_exec_isolation.py`
+- [X] T128 [US1] ⚠RELAX(001:FR-056, FR-057) Add failing tests for check B, an override that appeared in the automatic arrangement, to `tests/integration/test_us1_exec_isolation.py`
   - FR-033 (amended by safety finding M5), FR-008; research R7, E6.2; data-model.md, "`exec`
     checks in every other worktree", row B; spec, Edge cases ("appears after provisioning").
   - New `test_exec_refuses_an_override_that_appeared_in_an_automatic_worktree`: after `up` in the
@@ -925,21 +925,21 @@ byte-identical throughout.
   - As in v0.1.1 (the command runs): nothing changed since `up`; `compose.override.yaml` deleted;
     a worktree without `[compose]`.
   - **Done when** the new cases fail under the failing-test rule.
-- [ ] T129 [US1] ⚠RELAX(001:FR-056, FR-057) Apply check B in the automatic arrangement, in `src/wtenv/isolation.py` and `src/wtenv/execcmd.py`
+- [X] T129 [US1] ⚠RELAX(001:FR-056, FR-057) Apply check B in the automatic arrangement, in `src/wtenv/isolation.py` and `src/wtenv/execcmd.py`
   - Needs T052 (the four override names and the header line, as check 7 uses them). `lstat` on
     the four names and one read of the recorded file's first line; the link check comes before
     the read. `exec` still does not import `wtenv.compose`.
   - **Done when** `uv run pytest tests/integration/test_us1_exec_isolation.py tests/unit/test_lazy_imports.py -q` exits 0.
-- [ ] T130 [US1] Mutation check: check B, in `src/wtenv/isolation.py` (restored afterwards)
+- [X] T130 [US1] Mutation check: check B, in `src/wtenv/isolation.py` (restored afterwards)
   - Guard: FR-033, safety finding M5. Remove it; the refusal cases of
     `test_exec_refuses_an_override_that_appeared_in_an_automatic_worktree` must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T133 [US1] Mutation check: post-up commands of a repeat `up` get the isolation environment, in `src/wtenv/provision.py` (restored afterwards)
+- [X] T133 [US1] Mutation check: post-up commands of a repeat `up` get the isolation environment, in `src/wtenv/provision.py` (restored afterwards)
   - Guard: FR-033, safety finding M6. Make the repeat-`up` branch run the post-up commands with
     v0.1.1's `{**os.environ, **variables}`; `test_post_up_commands_get_the_isolation_environment_on_a_repeat_up`
     (T131) must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T140 [US1] Add failing tests for check 2's override-name rule to `tests/integration/test_us1_exec_isolation.py`
+- [X] T140 [US1] Add failing tests for check 2's override-name rule to `tests/integration/test_us1_exec_isolation.py`
   - FR-033 check 2; safety finding L4; data-model.md, `exec` checks, row 2.
   - Hand-edited registry, `repository_override` set to each of: `deploy/compose.prod.yml`;
     `compose.prod.yml`; `compose.override.yml` when the compose file is `deploy/compose.yaml`;
@@ -948,20 +948,20 @@ byte-identical throughout.
     beside a root `compose.yaml`; `deploy/docker-compose.override.yaml` beside
     `deploy/compose.yaml`.
   - **Done when** the new cases fail under the failing-test rule.
-- [ ] T141 [US1] Require `repository_override` to be one of the four override names beside the compose file, in check 2 of `src/wtenv/isolation.py`
+- [X] T141 [US1] Require `repository_override` to be one of the four override names beside the compose file, in check 2 of `src/wtenv/isolation.py`
   - Needs T052. `posixpath.dirname(repository_override) == posixpath.dirname(file)` and the base
     name is one of the four names, after `recorded_path_problem`.
   - **Done when** `uv run pytest tests/integration/test_us1_exec_isolation.py -q` exits 0.
-- [ ] T142 [US1] Mutation check: check 2's override-name rule, in `src/wtenv/isolation.py` (restored afterwards)
+- [X] T142 [US1] Mutation check: check 2's override-name rule, in `src/wtenv/isolation.py` (restored afterwards)
   - Guard: safety finding L4. Accept any plain path (only `recorded_path_problem`); the
     `deploy/compose.prod.yml` case of T140 must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T143 [US1] Mutation check: post-up commands get the isolation environment at all (FR-033), in `src/wtenv/provision.py` (restored afterwards)
+- [X] T143 [US1] Mutation check: post-up commands get the isolation environment at all (FR-033), in `src/wtenv/provision.py` (restored afterwards)
   - Guard: safety review, item 8. Make `_run_post_up` use v0.1.1's `{**os.environ, **variables}`
     at both call sites; `test_post_up_commands_get_the_same_compose_environment_as_exec` (T051)
     and `test_post_up_commands_get_the_isolation_environment_on_a_repeat_up` (T131) must both fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T061 [US1] Group check 4F: runs G5 from the repository root; edits no file
+- [X] T061 [US1] Group check 4F: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(exec): apply the isolation file in worktrees with a repository-owned override`.
 
 ### 4G. Reporting the arrangement (`output.py`, `listing.py`, `provision.py`)

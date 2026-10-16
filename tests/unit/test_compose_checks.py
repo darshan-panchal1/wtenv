@@ -589,6 +589,42 @@ def test_a_listing_that_fails_is_dependency_unavailable_and_not_a_free_name() ->
     assert raised.value.details["dependency"] == "docker"
 
 
+# --- `up` refuses every `.env` form that Compose honours (safety finding M2; research R7, E6.1) --
+
+DOT_ENV_FORMS = {
+    "colon": "{k}: elsewhere\n",
+    "colon, no space": "{k}:elsewhere\n",
+    "export, colon": "export {k}: elsewhere\n",
+    "spaces around a colon": "   {k} : elsewhere\n",
+    "CRLF line end": "{k}=elsewhere\r\n",
+    "byte-order mark": "\ufeff{k}=elsewhere\n",
+}
+
+
+@pytest.mark.parametrize("variable", ["COMPOSE_PROJECT_NAME", "COMPOSE_FILE"])
+@pytest.mark.parametrize("form", list(DOT_ENV_FORMS))
+def test_every_dot_env_form_that_compose_honours_is_unsupported(
+    tmp_path: Path, variable: str, form: str
+) -> None:
+    (tmp_path / ".env").write_bytes(DOT_ENV_FORMS[form].format(k=variable).encode("utf-8"))
+
+    error = env_override(tmp_path, {})
+
+    assert error.details["variable"] == variable
+    assert error.details["file"] == str(tmp_path / ".env")
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["# COMPOSE_PROJECT_NAME: x\n", "COMPOSE_PROJECT_NAME=\n", "COMPOSE_PROJECT_NAME:\n"],
+    ids=["comment", "empty with =", "empty with :"],
+)
+def test_a_comment_and_an_empty_value_still_pass_in_every_form(tmp_path: Path, text: str) -> None:
+    (tmp_path / ".env").write_text(text)
+
+    compose.check_environment(tmp_path, "compose.yaml", {})
+
+
 # --- a ':' in a path COMPOSE_FILE would have to carry (research R2; FR-003) ---------------------
 
 COMPOSE = Path("/w/app/compose.yaml")
