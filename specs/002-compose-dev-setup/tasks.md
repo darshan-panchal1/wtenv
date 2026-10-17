@@ -1504,6 +1504,17 @@ fail.
   - **Done when** G5 prints `G5 PASSED`, every coverage row exits 0,
     `git diff --quiet main -- specs/001-worktree-runtime-isolation` exits 0, and
     `grep -c '^- \[ \] T' specs/002-compose-dev-setup/tasks.md` prints `0`.
+  - **Partial result (2026-10-17, not checked):** G5 printed `G5 PASSED` on commit `494ea2f`
+    (1823 unit and 795 integration tests, none skipped). The full suite with coverage
+    (`uv run pytest --cov=wtenv -rs`) ended `2618 passed`, no `SKIPPED` line, total 98%. Every
+    `coverage report --fail-under=80` row exited 0: registry and locks 99%, ports 100%, identity
+    100%, config 99%, database 96%, compose 99%, orphans 98%, envfile 99%, `isolation.py` 98%.
+    `git diff --quiet main -- specs/001-worktree-runtime-isolation` exits 0. `CLAUDE.md` matches the
+    constitution (Python 3.12 with 3.11 as the minimum, uv, `src/`, type hints, docstrings, no
+    metaprogramming, Conventional Commits, no `Co-Authored-By`, no force-push, no `.env*`, real
+    `git worktree add` in the integration tests, Docker tests skip when Docker is missing). What
+    stays open: `grep -c '^- \[ \] T'` prints 2, because T111 (push, and green CI on the final
+    commit) is the maintainer's, and this task closes after it.
 
 ---
 
