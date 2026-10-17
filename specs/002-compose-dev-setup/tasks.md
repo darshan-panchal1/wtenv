@@ -1247,7 +1247,7 @@ in CI) and a named project volume.
 
 ### 5C. `up` with a compose-hosted database (`provision.py`, `output.py`)
 
-- [ ] T085 [US3] Add failing integration tests to `tests/integration/test_us3_compose_database.py` (new; Docker; `postgres:17`)
+- [X] T085 [US3] Add failing integration tests to `tests/integration/test_us3_compose_database.py` (new; Docker; `postgres:17`)
   - FR-012, FR-019, FR-020, FR-021, FR-022, FR-024, FR-026, FR-027; User Story 3 scenarios 1–4,
     6, 7; config.md, "Changes after provisioning: new rows".
   - 1: the section and `exec` carry `DATABASE_URL` with `localhost:<the db port variable's
@@ -1273,7 +1273,7 @@ in CI) and a named project volume.
   - Config changes: `postgres` → `compose` (URL rebuilt, old database stays recorded until
     `down`); `compose` → `sqlite` (created as in v0.1.x); `service` changed (URL and port follow).
   - **Done when** the new file fails under the failing-test rule.
-- [ ] T086 [US3] Plan and write the compose-hosted database in `src/wtenv/provision.py` and `src/wtenv/output.py`
+- [X] T086 [US3] Plan and write the compose-hosted database in `src/wtenv/provision.py` and `src/wtenv/output.py`
   - Step 5: `database_port` and `database_storage`. Step 7: stand-in URL check. Step 10:
     nothing. Step 12: `DATABASE_URL` last in the section (FR-013). `_has_nothing_to_change`
     covers the URL. Text line `database   compose service db on localhost:<port>  (DATABASE_URL)`.
@@ -1283,7 +1283,7 @@ in CI) and a named project volume.
     `tests/unit/test_compose_database_guard.py`.
   - **Done when** `uv run pytest tests/integration/test_us3_compose_database.py tests/integration/test_us3_compose.py -q` exits 0,
     and `grep -rn "compose_database_not_provisioned" src/ tests/` prints nothing.
-- [ ] T087 [US3] Group check 5C: runs G5 from the repository root; edits no file
+- [X] T087 [US3] Group check 5C: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(up): provision a compose-hosted database`.
 
 ### 5D. Safety group — teardown of the compose-hosted database (no new code by design; plan.md S6)

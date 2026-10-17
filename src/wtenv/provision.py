@@ -16,6 +16,7 @@ tests can stop `up` right after any one of them. The compose module is imported 
 import os
 import subprocess
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -37,6 +38,7 @@ from wtenv.listing import compose_arrangement, database_view, port_views
 from wtenv.locks import WORKTREE_LOCK_TIMEOUT, registry_lock, worktree_lock
 from wtenv.output import (
     BlockView,
+    ComposeDatabaseView,
     Item,
     ItemKind,
     PostUpRun,
@@ -64,7 +66,7 @@ if TYPE_CHECKING:
     from wtenv.compose import ComposeModel, PortMapping
 
 Action = Literal["created", "updated", "unchanged", "released"]
-DatabaseKind = Literal["postgres", "sqlite"]
+DatabaseKind = Literal["postgres", "sqlite", "compose"]
 
 DATABASE_URL = "DATABASE_URL"  # the variable the database step writes (config.md)
 SQLITE_EXCLUDE_PATTERN = f"/{database.SQLITE_DIR}/"
@@ -87,6 +89,12 @@ class _DatabasePlan:
     name: str | None = None  # Postgres: the recorded name, or the name to create
     path: str | None = None  # SQLite: the copy, relative to the worktree root
     target: PostgresTarget | None = None  # Postgres: wtenv's own connection
+    # Compose: the URL depends on the host port, which the registry step assigns, so the plan
+    # keeps what `database_url` needs. `url` above is built with a port of the stand-in block and
+    # only proves that the pattern resolves (step 7).
+    pattern: str | None = field(default=None, repr=False)
+    port_key: tuple[str, int, str] | None = None  # (service, container port, protocol)
+    service_environment: Mapping[str, str] = field(default_factory=dict, repr=False)
 
 
 @dataclass(frozen=True)
@@ -106,6 +114,8 @@ class _ComposePlan:
     # The recorded override that git tracks and that this `up` adopts as the repository's (FR-006):
     # only the registry changes, and the file is never written, renamed or deleted.
     adopted_override: str | None = None
+    # The published port of the compose-hosted database service (FR-021); none without one.
+    database_mapping: "PortMapping | None" = None
     # Warnings that step 5 found and `up` reports: `compose_override_excluded` and
     # `compose_override_adopted`.
     warnings: tuple[WarningInfo, ...] = ()
@@ -140,7 +150,7 @@ def _provision(identity: WorktreeIdentity) -> UpResult:
     _check_override_links(root, config, known)  # step 5, before the ownership check
     compose_plan = _compose_plan(root, identity, config, known)  # step 5
     _check_block_size(config, compose_plan)  # step 6
-    plan = _database_plan(root, identity, config, known)  # step 7
+    plan = _database_plan(root, identity, config, known, compose_plan)  # step 7
     _check_sqlite_links(root, plan)  # step 7
     warnings = _warnings(identity, known, config, env_path, compose_plan)
 
@@ -154,13 +164,13 @@ def _provision(identity: WorktreeIdentity) -> UpResult:
             _block_change(known.block, "unchanged"),
             _exclude_change(exclude_path, changed=changed, first_run=False),
         ]
-        if plan is not None:
+        if plan is not None and plan.kind != "compose":
             changes.append(_database_change(root, plan, "unchanged"))
         if compose_plan is not None:
             changes.append(_compose_change(root, compose_plan, "unchanged"))
         changes.append(_env_change(env_path, "unchanged"))
         runs = _run_post_up(root, config.post_up, known, plan)
-        return _result(identity, known, config.env_file, changes, warnings, runs)
+        return _result(identity, known, config.env_file, changes, warnings, runs, plan)
 
     # Step 8: the registry first.
     with registry.transaction() as reg:
@@ -192,7 +202,7 @@ def _provision(identity: WorktreeIdentity) -> UpResult:
     with registry.transaction() as reg:
         final = reg.worktrees[identity.git_dir]
         final.state = "provisioned"
-    return _result(identity, final, config.env_file, changes, warnings, runs)
+    return _result(identity, final, config.env_file, changes, warnings, runs, plan)
 
 
 def _variables(
@@ -209,8 +219,26 @@ def _variables(
         for port in sorted(published, key=lambda port: (port.service, port.target, port.protocol))
     ]
     if plan is not None:
-        variables.append((DATABASE_URL, plan.url))
+        variables.append((DATABASE_URL, _database_url(plan, published)))
     return variables
+
+
+def _database_url(plan: _DatabasePlan, published: list[PublishedPort]) -> str:
+    """Return the value of `DATABASE_URL`: the plan's, or for a compose service its real port.
+
+    A compose-hosted database has the port the registry step assigned to its published port. When
+    `published` does not hold it yet (a plan made before step 8), the stand-in URL is returned,
+    which never equals what the section holds.
+    """
+    if plan.kind != "compose":
+        return plan.url
+    assert plan.pattern is not None and plan.port_key is not None
+    found = next((p for p in published if (p.service, p.target, p.protocol) == plan.port_key), None)
+    if found is None:
+        return plan.url
+    return database.resolve_url(
+        plan.pattern, port=found.port, compose_environment=plan.service_environment
+    )
 
 
 # --- checks that change nothing (steps 4 and 6) -----------------------------------------------
@@ -428,6 +456,17 @@ def _compose_plan(
         model.mappings,
         ports.configured_variable_names(config.ports, has_database=config.database is not None),
     )  # FR-012: before step 8, so a collision changes nothing
+    database_mapping = None
+    if config.database is not None and config.database.type == "compose":
+        # FR-021, FR-026, FR-027: the service's port and its data storage, before anything changes.
+        assert config.database.service is not None
+        config_file = str(root / CONFIG_FILE_NAME)
+        database_mapping = compose.database_port(
+            model, config.database.service, config_file=config_file
+        )
+        plan_warnings += tuple(
+            compose.database_storage(model, config.database.service, root=root, project=project)
+        )
     return _ComposePlan(
         file=settings.file,
         override=(
@@ -437,6 +476,7 @@ def _compose_plan(
         model=model,
         repository_override=repository_override,
         adopted_override=inventory.adopted,
+        database_mapping=database_mapping,
         warnings=plan_warnings,
     )
 
@@ -546,26 +586,42 @@ def _check_block_size(config: Config, compose_plan: _ComposePlan | None) -> None
 
 
 def _database_plan(
-    root: Path, identity: WorktreeIdentity, config: Config, known: WorktreeEntry | None
+    root: Path,
+    identity: WorktreeIdentity,
+    config: Config,
+    known: WorktreeEntry | None,
+    compose_plan: _ComposePlan | None = None,
 ) -> _DatabasePlan | None:
     """Step 7: resolve the URL pattern and check that it names a local host.
 
     Returns None without `[database]`. Raises `config_invalid` for an unset `{env:NAME}`
-    variable, a URL the env file cannot carry, or a Postgres host that is not local (FR-025).
-    A database that is recorded keeps its name or path, so the URL follows the database.
+    variable, a name the compose service's environment lacks, a URL the env file cannot carry,
+    or a Postgres host that is not local (FR-025). A database that is recorded keeps its name or
+    path, so the URL follows the database. A compose-hosted database is checked with a port of
+    the stand-in block: its real port is not known before step 8 (FR-018, FR-020).
     """
     settings = config.database
     if settings is None:
         return None
     config_file = str(root / CONFIG_FILE_NAME)
-    if settings.type == "compose" or settings.template is None:
-        # Interim guard: `type = "compose"` is accepted by config.py (T013), and T086 removes this.
-        raise WtenvError(
-            ErrorCode.UNSUPPORTED,
-            "a compose-hosted database is not provisioned by this version of wtenv yet",
-            hint='Remove `type = "compose"` from [database], or wait for the release that adds it.',
-            details={"reason": "compose_database_not_provisioned", "service": settings.service},
+    if settings.type == "compose":
+        assert compose_plan is not None and compose_plan.database_mapping is not None
+        mapping = compose_plan.database_mapping
+        environment = _service_environment(compose_plan.model, mapping.service)
+        stand_in = database.resolve_url(
+            settings.url,
+            port=PORT_RANGE_START,
+            compose_environment=environment,
+            config_file=config_file,
         )
+        return _DatabasePlan(
+            kind="compose",
+            url=stand_in,
+            pattern=settings.url,
+            port_key=(mapping.service, mapping.target, mapping.protocol),
+            service_environment=environment,
+        )
+    assert settings.template is not None
     record = _record_of(known, settings.type)
     if settings.type == "sqlite":
         relative = (
@@ -587,6 +643,13 @@ def _database_plan(
     url = database.resolve_url(settings.url, name=name, config_file=config_file)
     target = database.postgres_target(url, config_file=config_file)
     return _DatabasePlan(kind="postgres", url=url, name=name, target=target)
+
+
+def _service_environment(model: "ComposeModel", service: str) -> dict[str, str]:
+    """Return the `environment` of `service` as Compose resolved it; names without a value are left out."""
+    services = model.document.get("services") or {}
+    environment = (services.get(service) or {}).get("environment") or {}
+    return {name: str(value) for name, value in environment.items() if value is not None}
 
 
 def _check_recorded_sqlite(root: Path, record: DatabaseRecord) -> None:
@@ -717,8 +780,8 @@ def _database_is_as_recorded(known: WorktreeEntry, plan: _DatabasePlan | None) -
     A Postgres database is not looked for: a repeat `up` does not need the server, and a
     database that has gone missing is `wtenv doctor`'s to report.
     """
-    if plan is None:
-        return True
+    if plan is None or plan.kind == "compose":
+        return True  # nothing is recorded for a compose-hosted database
     record = _record_of(known, plan.kind)
     if record is None or record.state is not ResourceState.CREATED:
         return False
@@ -1287,6 +1350,7 @@ def _result(
     changes: list[UpChange],
     warnings: list[WarningInfo],
     post_up: list[PostUpRun],
+    plan: _DatabasePlan | None,
 ) -> UpResult:
     """Build the `UpResult` of a provisioned worktree."""
     block = entry.block
@@ -1304,4 +1368,31 @@ def _result(
         compose_isolation=arrangement,
         compose_repository_override=repository_override,
     )
-    return UpResult(ok=True, worktree=view, changes=changes, warnings=warnings, post_up=post_up)
+    return UpResult(
+        ok=True,
+        worktree=view,
+        changes=changes,
+        warnings=warnings,
+        post_up=post_up,
+        compose_database=_compose_database_view(plan, entry),
+    )
+
+
+def _compose_database_view(
+    plan: _DatabasePlan | None, entry: WorktreeEntry
+) -> ComposeDatabaseView | None:
+    """Describe the compose-hosted database by port and variable names; never by its URL (FR-020)."""
+    if plan is None or plan.kind != "compose":
+        return None
+    assert plan.port_key is not None
+    service, target, protocol = plan.port_key
+    port = next(
+        p.port for p in entry.published if (p.service, p.target, p.protocol) == plan.port_key
+    )
+    return ComposeDatabaseView(
+        service=service,
+        target=target,
+        protocol=protocol,
+        port=port,
+        port_variable=ports.port_variable_name(service, target, protocol),
+    )

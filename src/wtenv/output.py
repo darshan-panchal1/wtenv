@@ -452,6 +452,12 @@ def render_up_text(result: UpResult) -> str:
             lines.append(f"  {'released':<11}{change.item.kind.value} {change.item.name}")
     for database in worktree.databases:
         lines.append(_database_line(database, result.changes))
+    if result.compose_database is not None:
+        view = result.compose_database
+        lines.append(
+            f"  {'database':<11}compose service {view.service} on localhost:{view.port}"
+            f"  ({view.url_variable})"
+        )
     if worktree.compose_project is not None:
         lines.append(_compose_line(worktree.compose_project, worktree.path, result.changes))
     if worktree.compose_isolation == "exec_only":
