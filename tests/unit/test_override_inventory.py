@@ -81,6 +81,24 @@ def test_the_recorded_file_with_the_header_that_git_does_not_track_is_wtenvs_own
     assert inventory.remove == ()
 
 
+def test_the_recorded_file_with_the_header_that_git_tracks_is_adopted(
+    make_repo: Callable[[str], Path],
+) -> None:
+    """T137, FR-006 (safety finding L2): `is_tracked` decides, not the header."""
+    repo = make_repo("adopt-header")
+    (repo / RECORDED).write_text(WTENVS)
+    track(repo, RECORDED)
+
+    inventory = compose.override_inventory(repo, "compose.yaml", RECORDED)
+
+    assert kinds(inventory) == {RECORDED: "adopt"}
+    assert inventory.arrangement == "exec_only"
+    assert inventory.repository_override == RECORDED
+    assert inventory.adopted == RECORDED
+    assert inventory.remove == ()
+    assert (repo / RECORDED).read_text() == WTENVS
+
+
 def test_the_recorded_file_without_the_header_that_git_tracks_is_adopted(
     make_repo: Callable[[str], Path],
 ) -> None:

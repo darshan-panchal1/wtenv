@@ -323,7 +323,7 @@ def _check_override_links(root: Path, config: Config, known: WorktreeEntry | Non
 
     _refuse_recorded_form(root, recorded, ItemKind.COMPOSE_OVERRIDE)
     _refuse_symlink(root, recorded)
-    not_wtenvs = compose.override_problem(root, recorded)
+    not_wtenvs = compose.recorded_override_problem(root, recorded)
     if not_wtenvs is not None:
         raise _recorded_value_conflict(
             ItemKind.COMPOSE_OVERRIDE, root / recorded, f"is not wtenv's: {not_wtenvs}"
@@ -1153,7 +1153,8 @@ def _remove_override(root: Path, git_dir: str, record: ComposeRecord) -> list[Up
     """Remove wtenv's recorded override file, recording `removing` first; report it if it was there.
 
     The header is checked again here, immediately before the file is deleted (FR-087): the plan
-    checked it before the database step, which can take long. When the record was not marked
+    checked it before the database step, which can take long, and it is read once more after the
+    `removing` save, which waits for the registry lock (safety finding L1). When the record was not marked
     `removing` already (a change of arrangement does that in step 8), `[compose]` is gone: the
     worktree no longer uses the repository's override either, so the same save clears
     `repository_override` (data-model.md, Transitions; T041).
@@ -1169,6 +1170,8 @@ def _remove_override(root: Path, git_dir: str, record: ComposeRecord) -> list[Up
                 update={"override_state": ResourceState.REMOVING, "repository_override": None}
             ),
         )
+    # The save above waited for the registry lock, long enough for a checkout to replace the file.
+    compose.check_recorded_override(root, record.override)
     if not os.path.lexists(path):
         return []
     path.unlink()

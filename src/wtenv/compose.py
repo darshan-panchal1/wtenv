@@ -432,6 +432,20 @@ def check_project_is_unused(
         )
 
 
+def override_name_problem(relative: str) -> str | None:
+    """Return why `relative` is not a name wtenv records for an override, or None.
+
+    The file name is one of the four in files.md, Names, or the path is exactly the isolation file
+    `.wtenv/compose.isolation.yaml` (FR-009); nothing else under `.wtenv/` is accepted.
+    """
+    name = posixpath.basename(relative)
+    if name in OVERRIDE_FILE_NAMES or relative == ISOLATION_FILE:
+        return None
+    return (
+        f"the file name {name!r} is not one of {', '.join(OVERRIDE_FILE_NAMES)}; it was left alone"
+    )
+
+
 def override_problem(root: Path, relative: str) -> str | None:
     """Return why the recorded override is not a file wtenv wrote, or None when it may be deleted.
 
@@ -442,12 +456,9 @@ def override_problem(root: Path, relative: str) -> str | None:
     that does not exist has no problem: it is already gone. The path form and symbolic links are
     checked before this.
     """
-    name = posixpath.basename(relative)
-    if name not in OVERRIDE_FILE_NAMES and relative != ISOLATION_FILE:
-        return (
-            f"the file name {name!r} is not one of {', '.join(OVERRIDE_FILE_NAMES)}; "
-            "it was left alone"
-        )
+    name_problem = override_name_problem(relative)
+    if name_problem is not None:
+        return name_problem
     try:
         with open(root / relative, "rb") as file:
             first_line = file.readline(len(OVERRIDE_HEADER) + 1)
@@ -543,10 +554,10 @@ def _override_class(root: Path, relative: str, recorded: bool) -> OverrideClass:
     link = symlinked_part(root, relative)
     if link is not None:
         raise unusable(link, "symlink")
+    if _git_tracks(root, relative):
+        return "adopt"  # git tracks it, with or without the header: the repository's (FR-006, L2)
     if _starts_with_header(path):
         return "wtenv_own"
-    if is_tracked(root, relative):
-        return "adopt"  # git tracks it, so it is the repository's (FR-006)
     raise _recorded_header_conflict(path)
 
 
@@ -615,15 +626,43 @@ def check_path_separator(files: Sequence[Path]) -> None:
             )
 
 
-def check_recorded_override(root: Path, relative: str) -> None:
-    """Raise `ownership_conflict` when the recorded override exists and does not start with the header.
+def recorded_override_problem(root: Path, relative: str) -> str | None:
+    """Return why `up` must not rewrite or delete the recorded override, or None.
 
-    `up` rewrites the recorded override, so a file there that is not wtenv's is the developer's
-    and is left as it is (FR-087). A file that keeps the header line is only stale and passes; a
-    file that does not exist passes, and `up` creates it again. The path form and symbolic links
-    are checked before this.
+    That is `override_problem`, and a file that git tracks, whether or not it keeps wtenv's header:
+    it is the repository's, and writing or deleting it would show up in git (FR-006, safety L2).
     """
     problem = override_problem(root, relative)
+    if problem is not None:
+        return problem
+    if _git_tracks(root, relative):
+        return f"{relative} is tracked by git, so it is the repository's file; it was left alone"
+    return None
+
+
+def _git_tracks(root: Path, relative: str) -> bool:
+    """Return whether the existing file `relative` is tracked; False when git cannot be asked.
+
+    `up` runs inside a git worktree, so git can be asked; a directory that is not a repository
+    has no tracked files, and the header check still applies there.
+    """
+    if not os.path.lexists(root / relative):
+        return False
+    try:
+        return is_tracked(root, relative)
+    except subprocess.CalledProcessError:
+        return False
+
+
+def check_recorded_override(root: Path, relative: str) -> None:
+    """Raise `ownership_conflict` when the recorded override is not a file `up` may rewrite or delete.
+
+    `up` rewrites the recorded override, so a file there that is not wtenv's is the developer's
+    and is left as it is (FR-087), and so is one that git tracks (FR-006). A file that keeps the
+    header line and is untracked is only stale and passes; a file that does not exist passes, and
+    `up` creates it again. The path form and symbolic links are checked before this.
+    """
+    problem = recorded_override_problem(root, relative)
     if problem is not None:
         path = root / relative
         raise WtenvError(

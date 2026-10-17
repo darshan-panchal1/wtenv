@@ -19,12 +19,14 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
+import uuid
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import pytest
 from helpers import (
@@ -35,14 +37,17 @@ from helpers import (
     commit_all,
     exclude_file,
     git,
+    parse_down,
+    parse_gc,
     parse_ls,
     parse_up,
+    project_resources,
     snapshot_tree,
 )
 
 from wtenv import isolation
 from wtenv.identity import current_worktree
-from wtenv.output import ResourceState, UpResult
+from wtenv.output import FailedItem, Item, KeptItem, ResourceState, UpResult
 from wtenv.registry import WorktreeEntry, load, registry_path
 
 pytestmark = pytest.mark.integration
@@ -1360,3 +1365,552 @@ def test_the_report_follows_the_repository_override_when_it_goes_away(
     assert result.worktree.compose_repository_override is None
     assert arrangement_warnings(result) == []
     assert listed(run_wtenv, worktree).compose_isolation == "automatic"
+
+
+# --- scenario 5: `down` and `gc` remove the isolation file and keep the repository's override ----
+# (T065, T110, T137; FR-002, FR-006, FR-009, SC-007; plan.md S3, S4)
+
+TEARDOWN_MODES = ("dry-run", "down", "gc", "gc-release")
+COMPOSE_OVERRIDE = "compose_override"
+
+
+class Outcome(NamedTuple):
+    """What one teardown command reported: `listed` is `would_remove` for a dry run."""
+
+    status: int
+    listed: list[Item]
+    already_absent: list[Item]
+    failed: list[FailedItem]
+    kept_items: list[KeptItem]
+
+    def names(self) -> set[str]:
+        """Every path any list of the result names."""
+        everything = [*self.listed, *self.already_absent, *self.failed, *self.kept_items]
+        return {item.name for item in everything}
+
+
+def release(mode: str, repo: Path, worktree: Path, tmp_path: Path, run_wtenv: Run) -> Outcome:
+    """Run `down --dry-run`, `down`, `gc` (after `git worktree remove`) or `gc --release`.
+
+    For `gc --release` the repository is deleted first, so the worktree is no longer one.
+    """
+    outside = tmp_path / "outside"
+    outside.mkdir(exist_ok=True)
+    if mode in ("dry-run", "down"):
+        arguments = ["down", "--json"] + (["--dry-run"] if mode == "dry-run" else [])
+        process = run_wtenv(arguments, worktree)
+        down = parse_down(process)
+        listed = down.would_remove if mode == "dry-run" else down.removed
+        return Outcome(
+            process.returncode, listed, down.already_absent, down.failed, down.kept_items
+        )
+    if mode == "gc":
+        git(repo, "worktree", "remove", "--force", str(worktree))
+        process = run_wtenv(["gc", "--json"], outside)
+    else:
+        shutil.rmtree(repo)
+        process = run_wtenv(["gc", "--release", str(worktree), "--json"], outside)
+    gc = parse_gc(process)
+    return Outcome(process.returncode, gc.removed, gc.already_absent, gc.failed, gc.kept_items)
+
+
+def file_state(path: Path) -> tuple[str, int, int]:
+    """The SHA-256, mode and modification time of a file, to compare before and after."""
+    assert path.exists(), f"{path} is gone"
+    status = path.stat()
+    return sha256(path), status.st_mode, status.st_mtime_ns
+
+
+def git_dir_of(worktree: Path) -> str:
+    return current_worktree(worktree).git_dir
+
+
+@pytest.mark.parametrize("mode", TEARDOWN_MODES)
+def test_down_removes_the_isolation_file_and_never_the_repository_override(
+    mode: str,
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+    tmp_path: Path,
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "teardown")
+    up(run_wtenv, worktree)
+    compose_projects.track(project_of(worktree))
+    git_dir = git_dir_of(worktree)
+    override = worktree / REPOSITORY_OVERRIDE
+    override_before = file_state(override)
+    isolated = worktree / ISOLATION_FILE
+
+    outcome = release(mode, repo, worktree, tmp_path, run_wtenv)
+
+    assert outcome.status == 0
+    assert outcome.failed == [] and outcome.kept_items == []
+    assert str(override) not in outcome.names()  # in no list: removed, absent, failed or kept
+    if mode == "gc":  # `git worktree remove` removed the directory, and the file with it
+        assert (COMPOSE_OVERRIDE, str(isolated)) in [
+            (item.kind.value, item.name) for item in outcome.already_absent
+        ]
+    else:
+        assert (COMPOSE_OVERRIDE, str(isolated)) in [
+            (item.kind.value, item.name) for item in outcome.listed
+        ]
+        assert file_state(override) == override_before  # bytes, mode and modification time
+    assert isolated.exists() is (mode == "dry-run")
+    assert (git_dir in load().worktrees) is (mode == "dry-run")
+
+
+@pytest.mark.parametrize("mode", TEARDOWN_MODES)
+def test_a_tracked_headerless_file_at_the_recorded_path_is_kept_by_down_and_reported_in_kept_items(
+    mode: str,
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+    tmp_path: Path,
+) -> None:
+    worktree = provisioned_automatic(repo, add_worktree, run_wtenv, compose_projects, "kept")
+    recorded = worktree / OLD_OVERRIDE
+    recorded.write_text(OVERRIDE, encoding="utf-8")  # a checkout brought the repository's file
+    git(worktree, "add", "--force", OLD_OVERRIDE)
+    git(worktree, "commit", "-m", "track the override")
+    git_dir = git_dir_of(worktree)
+    before = file_state(recorded)
+
+    outcome = release(mode, repo, worktree, tmp_path, run_wtenv)
+
+    if mode in ("dry-run", "down"):
+        assert outcome.status == 0
+        assert [(k.kind.value, k.name, k.reason) for k in outcome.kept_items] == [
+            (COMPOSE_OVERRIDE, str(recorded), "repository_owned")
+        ]
+        assert outcome.failed == []
+        assert str(recorded) not in {item.name for item in outcome.listed}
+        assert file_state(recorded) == before
+        assert (git_dir in load().worktrees) is (mode == "dry-run")
+    elif mode == "gc":  # `git worktree remove` removed the directory: nothing to fail or keep
+        assert outcome.status == 0
+        assert outcome.failed == [] and outcome.kept_items == []
+        assert git_dir not in load().worktrees
+    else:  # `gc --release`: git cannot say the file is tracked, so it is preserved and failed
+        assert outcome.status == 13
+        assert [(f.kind.value, f.name) for f in outcome.failed] == [
+            (COMPOSE_OVERRIDE, str(recorded))
+        ]
+        assert "header" in outcome.failed[0].reason
+        assert outcome.kept_items == []
+        assert file_state(recorded) == before
+        assert git_dir in load().worktrees
+
+
+def link_case(
+    what: str, repo: Path, worktree: Path, decoy: Path, run_wtenv: Run
+) -> tuple[Path, Path | None]:
+    """Replace a path wtenv recorded by a link into `decoy`; return the link and the override.
+
+    The header at the target is wtenv's, so a header read through the link would pass.
+    """
+    target = planted_header_target(decoy)
+    if what == "wtenv directory":
+        shutil.rmtree(worktree / ".wtenv")
+        (decoy / "sub" / "compose.isolation.yaml").write_text(
+            target.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        (worktree / ".wtenv").symlink_to(decoy / "sub")
+        return worktree / ISOLATION_FILE, worktree / REPOSITORY_OVERRIDE
+    if what == "isolation file":
+        (worktree / ISOLATION_FILE).unlink()
+        (worktree / ISOLATION_FILE).symlink_to(target)
+        return worktree / ISOLATION_FILE, worktree / REPOSITORY_OVERRIDE
+    (worktree / OLD_OVERRIDE).unlink()  # the recorded wtenv path of the automatic arrangement
+    (worktree / OLD_OVERRIDE).symlink_to(target)
+    return worktree / OLD_OVERRIDE, None
+
+
+@pytest.mark.parametrize("mode", TEARDOWN_MODES)
+@pytest.mark.parametrize("what", ["wtenv directory", "isolation file", "automatic recorded file"])
+def test_a_link_at_a_recorded_wtenv_path_is_failed_by_teardown_and_its_target_untouched(
+    what: str,
+    mode: str,
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+    decoy: Path,
+    tmp_path: Path,
+) -> None:
+    if what == "automatic recorded file":
+        worktree = provisioned_automatic(repo, add_worktree, run_wtenv, compose_projects, "ln")
+    else:
+        worktree = make_worktree(repo, add_worktree, "ln")
+        up(run_wtenv, worktree)
+        compose_projects.track(project_of(worktree))
+    git_dir = git_dir_of(worktree)
+    link, override = link_case(what, repo, worktree, decoy, run_wtenv)
+    override_before = None if override is None else file_state(override)
+    decoy_before = snapshot_tree(decoy)
+
+    outcome = release(mode, repo, worktree, tmp_path, run_wtenv)
+
+    assert snapshot_tree(decoy) == decoy_before  # nothing written, read or removed through it
+    if mode == "gc":  # the directory, and the link with it, is gone; the target is not
+        assert outcome.failed == [] and git_dir not in load().worktrees
+        return
+    assert outcome.status == (0 if mode == "dry-run" else 13)
+    assert [(f.kind.value, f.name, f.reason) for f in outcome.failed] == [
+        (COMPOSE_OVERRIDE, str(link), "symlink")
+    ]
+    assert link.is_symlink() or what == "wtenv directory"
+    assert str(link) not in {item.name for item in outcome.listed}
+    assert git_dir in load().worktrees  # the record stays
+    if override is not None:
+        assert file_state(override) == override_before
+
+
+@pytest.mark.parametrize("mode", TEARDOWN_MODES)
+def test_an_untracked_link_at_a_repository_override_name_is_the_repositorys_and_survives_teardown(
+    mode: str,
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+    decoy: Path,
+    tmp_path: Path,
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "repo-link", override=None)
+    target = decoy / "repository-override.yml"
+    target.write_text(OVERRIDE, encoding="utf-8")
+    link = worktree / "compose.override.yml"  # untracked, a name Compose loads
+    link.symlink_to(target)
+    up(run_wtenv, worktree)
+    compose_projects.track(project_of(worktree))
+    assert entry_of(worktree).compose is not None
+    assert entry_of(worktree).compose.repository_override == "compose.override.yml"  # type: ignore[union-attr]
+    decoy_before = snapshot_tree(decoy)
+
+    outcome = release(mode, repo, worktree, tmp_path, run_wtenv)
+
+    assert outcome.status == 0 and outcome.failed == []
+    assert str(link) not in outcome.names()
+    assert snapshot_tree(decoy) == decoy_before
+    if mode != "gc":
+        assert link.is_symlink() and os.readlink(link) == str(target)
+
+
+@pytest.mark.parametrize("mode", TEARDOWN_MODES)
+def test_an_untracked_headerless_file_at_the_isolation_path_is_failed_and_kept_by_teardown(
+    mode: str,
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+    tmp_path: Path,
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "headerless")
+    up(run_wtenv, worktree)
+    compose_projects.track(project_of(worktree))
+    git_dir = git_dir_of(worktree)
+    isolated = worktree / ISOLATION_FILE
+    isolated.write_text(OVERRIDE, encoding="utf-8")  # replaced by a file that is not wtenv's
+    override_before = file_state(worktree / REPOSITORY_OVERRIDE)
+    before = file_state(isolated)
+
+    outcome = release(mode, repo, worktree, tmp_path, run_wtenv)
+
+    if mode == "gc":  # the directory is gone
+        assert outcome.failed == [] and git_dir not in load().worktrees
+        return
+    assert outcome.status == (0 if mode == "dry-run" else 13)
+    assert [(f.kind.value, f.name) for f in outcome.failed] == [(COMPOSE_OVERRIDE, str(isolated))]
+    assert "header" in outcome.failed[0].reason
+    assert outcome.kept_items == []
+    assert file_state(isolated) == before
+    assert file_state(worktree / REPOSITORY_OVERRIDE) == override_before
+    assert git_dir in load().worktrees
+
+
+# --- a git-tracked file that keeps wtenv's header (T137; FR-006, safety finding L2, SC-007) -------
+
+
+def track_wtenvs_file(worktree: Path, relative: str) -> None:
+    """Force-add wtenv's own file (header intact); its exclude line hides it from `add -A`."""
+    git(worktree, "add", "--force", relative)
+    git(worktree, "commit", "-m", "track wtenv's file")
+
+
+def test_a_tracked_automatic_override_that_keeps_the_header_is_adopted_by_the_next_up(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+) -> None:
+    worktree = provisioned_automatic(repo, add_worktree, run_wtenv, compose_projects, "keeps")
+    recorded = worktree / OLD_OVERRIDE
+    track_wtenvs_file(worktree, OLD_OVERRIDE)
+    before = file_state(recorded)
+
+    result = up(run_wtenv, worktree)
+
+    record = entry_of(worktree).compose
+    assert record is not None
+    assert (record.override, record.repository_override) == (ISOLATION_FILE, OLD_OVERRIDE)
+    (warning,) = [w for w in result.warnings if w.code.value == "compose_override_adopted"]
+    assert warning.details == {"file": str(recorded)}
+    assert result.worktree is not None and result.worktree.compose_isolation == "exec_only"
+    assert file_state(recorded) == before  # bytes, mode and modification time
+    assert ("compose_override", "released") not in kinds_and_actions(result)
+
+
+@pytest.mark.parametrize("mode", TEARDOWN_MODES)
+def test_a_tracked_file_that_keeps_wtenvs_header_is_kept_by_down_and_not_by_gc_release(
+    mode: str,
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+    tmp_path: Path,
+) -> None:
+    worktree = provisioned_automatic(repo, add_worktree, run_wtenv, compose_projects, "kept2")
+    recorded = worktree / OLD_OVERRIDE
+    track_wtenvs_file(worktree, OLD_OVERRIDE)
+    git_dir = git_dir_of(worktree)
+    before = file_state(recorded)
+
+    outcome = release(mode, repo, worktree, tmp_path, run_wtenv)
+
+    assert outcome.status == 0 and outcome.failed == []
+    if mode in ("dry-run", "down"):
+        assert [(k.kind.value, k.name, k.reason) for k in outcome.kept_items] == [
+            (COMPOSE_OVERRIDE, str(recorded), "repository_owned")
+        ]
+        assert str(recorded) not in {item.name for item in outcome.listed}
+        assert file_state(recorded) == before
+        assert (git_dir in load().worktrees) is (mode == "dry-run")
+    elif mode == "gc":  # the directory is gone: nothing to fail or keep
+        assert outcome.kept_items == [] and git_dir not in load().worktrees
+    else:  # `gc --release` cannot see that the file is tracked: it keeps the header, so it goes
+        assert outcome.kept_items == []
+        assert not recorded.exists()  # known limit, as in v0.1.1 (tasks.md, "Deferred")
+        assert git_dir not in load().worktrees
+
+
+def test_a_tracked_isolation_file_is_an_ownership_conflict_for_up(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "tracked-isolation")
+    up(run_wtenv, worktree)
+    compose_projects.track(project_of(worktree))
+    track_wtenvs_file(worktree, ISOLATION_FILE)
+    tree_before = snapshot_tree(worktree)
+    registry_before = registry_path().read_bytes()
+
+    status, error = failed_up(run_wtenv, worktree)
+
+    assert (status, error["code"]) == (11, "ownership_conflict")
+    assert error["details"] == {"kind": "compose_override", "name": str(worktree / ISOLATION_FILE)}
+    assert snapshot_tree(worktree) == tree_before
+    assert registry_path().read_bytes() == registry_before
+
+
+@pytest.mark.parametrize("mode", TEARDOWN_MODES)
+def test_a_tracked_isolation_file_is_kept_by_down_and_never_removed_there(
+    mode: str,
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+    tmp_path: Path,
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "tracked-isolation-down")
+    up(run_wtenv, worktree)
+    compose_projects.track(project_of(worktree))
+    track_wtenvs_file(worktree, ISOLATION_FILE)
+    isolated = worktree / ISOLATION_FILE
+    override_before = file_state(worktree / REPOSITORY_OVERRIDE)
+    before = file_state(isolated)
+
+    outcome = release(mode, repo, worktree, tmp_path, run_wtenv)
+
+    assert outcome.status == 0 and outcome.failed == []
+    if mode in ("dry-run", "down"):
+        assert [(k.kind.value, k.name) for k in outcome.kept_items] == [
+            (COMPOSE_OVERRIDE, str(isolated))
+        ]
+        assert file_state(isolated) == before
+        assert file_state(worktree / REPOSITORY_OVERRIDE) == override_before
+    else:
+        assert outcome.kept_items == []
+
+
+# --- teardown of a record that is `removing` or `incomplete`, and of a rerun (T065; plan.md S4) ---
+
+
+def hand_edit_registry(worktree: Path, change: Callable[[dict[str, Any]], None]) -> None:
+    """Edit the entry of `worktree` in `registry.json` as a person with a text editor would."""
+    path = registry_path()
+    document = json.loads(path.read_text(encoding="utf-8"))
+    change(document["worktrees"][git_dir_of(worktree)])
+    path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+
+
+@pytest.mark.parametrize("file_there", [True, False], ids=["file there", "file already gone"])
+@pytest.mark.parametrize(
+    ("entry_state", "override_state"),
+    [("incomplete", "creating"), ("incomplete", "removing"), ("provisioned", "removing")],
+)
+def test_a_record_left_in_a_transient_state_is_torn_down_safely(
+    entry_state: str,
+    override_state: str,
+    file_there: bool,
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+    tmp_path: Path,
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "transient")
+    up(run_wtenv, worktree)
+    compose_projects.track(project_of(worktree))
+    git_dir = git_dir_of(worktree)
+    isolated = worktree / ISOLATION_FILE
+    if not file_there:
+        isolated.unlink()
+    hand_edit_registry(
+        worktree,
+        lambda entry: (
+            entry.update(state=entry_state)
+            or entry["compose"].update(override_state=override_state)
+        ),
+    )
+    override_before = file_state(worktree / REPOSITORY_OVERRIDE)
+
+    outcome = release("down", repo, worktree, tmp_path, run_wtenv)
+
+    assert outcome.status == 0 and outcome.failed == [] and outcome.kept_items == []
+    assert (COMPOSE_OVERRIDE, str(isolated)) in [
+        (item.kind.value, item.name)
+        for item in (outcome.listed if file_there else outcome.already_absent)
+    ]
+    assert not isolated.exists() and git_dir not in load().worktrees
+    assert file_state(worktree / REPOSITORY_OVERRIDE) == override_before
+
+
+def test_a_rerun_after_a_partial_failure_converges_and_touches_nothing_else(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+    decoy: Path,
+    tmp_path: Path,
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "converge")
+    up(run_wtenv, worktree)
+    compose_projects.track(project_of(worktree))
+    git_dir = git_dir_of(worktree)
+    isolated = worktree / ISOLATION_FILE
+    wtenvs = isolated.read_bytes()
+    isolated.write_text("services: {}\n", encoding="utf-8")  # a checkout replaced it: not wtenv's
+    (worktree / "notes.txt").write_text("mine\n", encoding="utf-8")  # theirs, not recorded
+    override_before = file_state(worktree / REPOSITORY_OVERRIDE)
+    notes_before = file_state(worktree / "notes.txt")
+    decoy_before = snapshot_tree(decoy)
+
+    first = release("down", repo, worktree, tmp_path, run_wtenv)
+
+    assert first.status == 13
+    assert [(f.kind.value, f.name) for f in first.failed] == [(COMPOSE_OVERRIDE, str(isolated))]
+    assert git_dir in load().worktrees  # the entry stays, so that the rerun can finish
+    assert isolated.read_text(encoding="utf-8") == "services: {}\n"
+
+    isolated.write_bytes(wtenvs)  # the cause is fixed
+    second = release("down", repo, worktree, tmp_path, run_wtenv)
+
+    assert second.status == 0 and second.failed == []
+    assert not isolated.exists() and git_dir not in load().worktrees
+    assert file_state(worktree / REPOSITORY_OVERRIDE) == override_before
+    assert file_state(worktree / "notes.txt") == notes_before
+    assert snapshot_tree(decoy) == decoy_before
+
+    third = run_wtenv(["down", "--json"], worktree)  # nothing is recorded any more
+
+    assert third.returncode != 0 or parse_down(third).removed == []
+
+
+def test_down_removes_nothing_the_repositorys_compose_files_name(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+) -> None:
+    """A volume and a network the override declares `external`, and one it gives a fixed name,
+    are the repository's: `down` removes the project's containers and nothing they name."""
+    token = uuid.uuid4().hex[:10]
+    external_volume, external_network = f"wtenv-test-{token}-ext", f"wtenv-test-{token}-net"
+    fixed_volume = f"wtenv-test-{token}-fixed"
+    override = f"""\
+services:
+  backend:
+    ports:
+      - "8000:6379"
+    command: {json.dumps(COMMAND)}
+    volumes:
+      - ext:/ext
+      - fixed:/fixed
+    networks:
+      - default
+      - outer
+volumes:
+  ext:
+    external: true
+    name: {external_volume}
+  fixed:
+    name: {fixed_volume}
+networks:
+  outer:
+    external: true
+    name: {external_network}
+"""
+    docker = ["docker"]
+    subprocess.run([*docker, "volume", "create", external_volume], check=True, capture_output=True)
+    subprocess.run(
+        [*docker, "network", "create", external_network], check=True, capture_output=True
+    )
+    try:
+        worktree = make_worktree(repo, add_worktree, "names", override=override)
+        up(run_wtenv, worktree)
+        project = compose_projects.track(project_of(worktree))
+        started = isolated_compose(worktree, "up", "-d")
+        assert started.returncode == 0, started.stderr
+        assert project_resources(project)["containers"]
+        override_before = file_state(worktree / REPOSITORY_OVERRIDE)
+
+        process = run_wtenv(["down", "--json"], worktree)
+
+        result = parse_down(process)
+        assert process.returncode == 0, process.stdout + process.stderr
+        assert project_resources(project)["containers"] == []
+        for kind, name in (("volume", external_volume), ("network", external_network)):
+            found = subprocess.run(
+                [*docker, kind, "inspect", name], capture_output=True, check=False
+            )
+            assert found.returncode == 0, f"{kind} {name} was removed"
+        found = subprocess.run(
+            [*docker, "volume", "inspect", fixed_volume], capture_output=True, check=False
+        )
+        assert found.returncode == 0, "the volume with a fixed name was removed"
+        assert (fixed_volume, "fixed_name") in [(v.name, v.reason) for v in result.kept_volumes]
+        removed_names = {item.name for item in result.removed}
+        assert not {external_volume, external_network, fixed_volume} & removed_names
+        assert file_state(worktree / REPOSITORY_OVERRIDE) == override_before
+    finally:
+        subprocess.run(
+            [*docker, "volume", "rm", "-f", external_volume, fixed_volume],
+            capture_output=True,
+            check=False,
+        )
+        subprocess.run(
+            [*docker, "network", "rm", external_network], capture_output=True, check=False
+        )

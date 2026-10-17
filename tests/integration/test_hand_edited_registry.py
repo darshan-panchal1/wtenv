@@ -482,6 +482,27 @@ OVERRIDE_CASES = {
 }
 
 
+# The recorded override of the exec-only arrangement is exactly `.wtenv/compose.isolation.yaml`
+# (T065, FR-009); nothing else under `.wtenv/`, and no climbing out of the worktree, is accepted.
+ISOLATION_PATH_CASES = {
+    "override is another file under .wtenv": OverrideCase(
+        _set_override(lambda case: ".wtenv/notes.yaml"),
+        lambda case: case.worktree / ".wtenv" / "notes.yaml",
+        MODES_WITH_A_WORKTREE,
+    ),
+    "override is the isolation file name one level deeper": OverrideCase(
+        _set_override(lambda case: ".wtenv/sub/compose.isolation.yaml"),
+        lambda case: case.worktree / ".wtenv" / "sub" / "compose.isolation.yaml",
+        MODES_WITH_A_WORKTREE,
+    ),
+    "override is the isolation path outside the worktree, by `..`": OverrideCase(
+        _set_override(lambda case: "../.wtenv/compose.isolation.yaml"),
+        lambda case: case.worktree.parent / ".wtenv" / "compose.isolation.yaml",
+    ),
+}
+RECORDED_OVERRIDE_CASES = {**OVERRIDE_CASES, **ISOLATION_PATH_CASES}
+
+
 def _plant_override(case: Case, definition: OverrideCase) -> Path:
     decoy = definition.decoy(case)
     if decoy.name != "compose.override.yaml" or decoy.parent != case.worktree:
@@ -493,8 +514,8 @@ def _plant_override(case: Case, definition: OverrideCase) -> Path:
 
 @pytest.mark.parametrize(
     ("name", "mode"),
-    [(name, mode) for name, case in OVERRIDE_CASES.items() for mode in case.modes],
-    ids=[f"{name}-{mode}" for name, case in OVERRIDE_CASES.items() for mode in case.modes],
+    [(name, mode) for name, case in RECORDED_OVERRIDE_CASES.items() for mode in case.modes],
+    ids=[f"{name}-{mode}" for name, case in RECORDED_OVERRIDE_CASES.items() for mode in case.modes],
 )
 def test_a_recorded_override_that_is_not_wtenvs_is_never_deleted_by_down_or_gc(
     name: str,
@@ -505,7 +526,7 @@ def test_a_recorded_override_that_is_not_wtenvs_is_never_deleted_by_down_or_gc(
     add_worktree: AddWorktree,
     tmp_path: Path,
 ) -> None:
-    definition = OVERRIDE_CASES[name]
+    definition = RECORDED_OVERRIDE_CASES[name]
     case = provision(
         run_wtenv,
         make_repo,
@@ -524,6 +545,73 @@ def test_a_recorded_override_that_is_not_wtenvs_is_never_deleted_by_down_or_gc(
     assert status == expected_status(mode, failed=True)
     assert "compose_override" in [item.kind.value for item in failed]
     assert is_recorded(case)
+
+
+REPOSITORY_OVERRIDE = "services:\n  cache:\n    environment:\n      A: '1'\n"
+
+REPOSITORY_OVERRIDE_EDITS = {
+    "a developer file in the worktree": (
+        lambda case: "src/main.py",
+        lambda case: case.worktree / "src" / "main.py",
+        MODES_WITH_A_WORKTREE,
+    ),
+    "outside the worktree, by `..`": (
+        lambda case: "../outside.yml",
+        lambda case: case.worktree.parent / "outside.yml",
+        MODES,
+    ),
+    "an absolute path": (
+        lambda case: str(case.worktree.parent.parent / "absolute.yml"),
+        lambda case: case.worktree.parent.parent / "absolute.yml",
+        MODES,
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("name", "mode"),
+    [(name, mode) for name, edit in REPOSITORY_OVERRIDE_EDITS.items() for mode in edit[2]],
+    ids=[f"{name}-{mode}" for name, edit in REPOSITORY_OVERRIDE_EDITS.items() for mode in edit[2]],
+)
+def test_a_hand_edited_repository_override_record_is_never_deleted(
+    name: str,
+    mode: str,
+    compose_image: str,
+    run_wtenv: Run,
+    make_repo: MakeRepo,
+    add_worktree: AddWorktree,
+    tmp_path: Path,
+) -> None:
+    value, decoy_of, _ = REPOSITORY_OVERRIDE_EDITS[name]
+    case = provision(
+        run_wtenv,
+        make_repo,
+        add_worktree,
+        tmp_path,
+        toml=COMPOSE_TOML,
+        files={
+            "compose.yaml": stack_file(compose_image),
+            "compose.override.yml": REPOSITORY_OVERRIDE,
+        },
+    )
+    hand_edit(
+        case,
+        lambda entry: entry["compose"].update(repository_override=value(case)),  # type: ignore[attr-defined]
+    )
+    decoy = decoy_of(case)
+    decoy.parent.mkdir(parents=True, exist_ok=True)
+    decoy.write_text(
+        OVERRIDE_HEADER + 'name: "x"\n', encoding="utf-8"
+    )  # even one that looks like wtenv's
+    before = files_of(decoy)
+
+    status, failed, already_absent, removed = execute(mode, case, run_wtenv)
+
+    assert files_of(decoy) == before
+    assert status == 0 and failed == []
+    names = {item.name for item in [*already_absent, *removed]}
+    assert str(decoy) not in names
+    assert not is_recorded(case) or mode == "dry-run"
 
 
 @pytest.mark.parametrize("name", OVERRIDE_CASES)

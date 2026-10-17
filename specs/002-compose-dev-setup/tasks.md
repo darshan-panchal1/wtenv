@@ -990,7 +990,7 @@ byte-identical throughout.
 
 ### 4H. Safety group — deleting the isolation file in `down` and `gc`, and keeping adopted files (`compose.py`, `teardown.py`; plan.md S3, S4)
 
-- [ ] T065 [US1] ⚠RELAX(001:FR-087 outcome) Add failing tests for teardown to `tests/integration/test_us1_repository_override.py`, `tests/integration/test_hand_edited_registry.py`, and `tests/unit/test_teardown_paths.py`
+- [X] T065 [US1] ⚠RELAX(001:FR-087 outcome) Add failing tests for teardown to `tests/integration/test_us1_repository_override.py`, `tests/integration/test_hand_edited_registry.py`, and `tests/unit/test_teardown_paths.py`
   - FR-002, FR-006, FR-009, SC-007; User Story 1 scenario 5; cli.md, `wtenv down` and `wtenv gc`.
   - New `test_down_removes_the_isolation_file_and_never_the_repository_override`: `down --dry-run`
     and `down` list and remove `.wtenv/compose.isolation.yaml`. The repository override is in none
@@ -1018,32 +1018,32 @@ byte-identical throughout.
     and to an absolute path; `down --dry-run`, `down`, `gc`, `gc --release` never list or touch the
     decoy.
   - **Done when** these cases fail under the failing-test rule.
-- [ ] T066 [US1] ⚠RELAX(001:FR-087 outcome) Report adopted files in `kept_items`, in `src/wtenv/teardown.py`
+- [X] T066 [US1] ⚠RELAX(001:FR-087 outcome) Report adopted files in `kept_items`, in `src/wtenv/teardown.py`
   - `override_problem` already accepts exactly `.wtenv/compose.isolation.yaml` (T105). `_override_step`: a header-less file that `gitutil.is_tracked`
     reports is a `KeptItem`, not a `FailedItem`, and is never unlinked. `down` and `gc` look only
     at `ComposeRecord.override`, never at `repository_override`.
   - **Done when** `uv run pytest tests/integration/test_us1_repository_override.py tests/integration/test_hand_edited_registry.py tests/unit/test_teardown_paths.py -q` exits 0.
-- [ ] T067 [US1] Mutation check: exact-path acceptance in `override_problem`, in `src/wtenv/compose.py` (restored afterwards)
+- [X] T067 [US1] Mutation check: exact-path acceptance in `override_problem`, in `src/wtenv/compose.py` (restored afterwards)
   - Widen it to any `.wtenv/*.yaml`; the `.wtenv/notes.yaml` cases of T104 and T065 must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T068 [US1] Mutation check: `is_tracked` in the teardown outcome, in `src/wtenv/teardown.py` (restored afterwards)
+- [X] T068 [US1] Mutation check: `is_tracked` in the teardown outcome, in `src/wtenv/teardown.py` (restored afterwards)
   - Make the tracked question answer "tracked" for every file at the recorded path; the untracked
     case of `test_a_recorded_override_that_is_not_wtenvs_is_never_deleted_by_down_or_gc` must
     fail (it would be kept, not failed). This is the reading that never removes or fails the
     repository's file. The opposite mutation (the question never asked, so a tracked file is
     failed) must fail the tracked cases of T065 (`test_a_tracked_headerless_file_at_the_recorded_path_is_kept_by_down_and_reported_in_kept_items`).
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T069 [US1] Mutation check: header check before deleting the isolation file, in `src/wtenv/teardown.py` (restored afterwards)
+- [X] T069 [US1] Mutation check: header check before deleting the isolation file, in `src/wtenv/teardown.py` (restored afterwards)
   - Remove it in `_override_step`; a case of T065 with a header-less file at the isolation path must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T070 [US1] Mutation check: only `ComposeRecord.override` is ever deleted, in `src/wtenv/teardown.py` (restored afterwards)
+- [X] T070 [US1] Mutation check: only `ComposeRecord.override` is ever deleted, in `src/wtenv/teardown.py` (restored afterwards)
   - Make teardown also unlink `repository_override`; `test_a_hand_edited_repository_override_record_is_never_deleted` must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T110 [US1] Mutation check: no symbolic link when teardown deletes the isolation file (001:FR-086), in `src/wtenv/teardown.py` (restored afterwards)
+- [X] T110 [US1] Mutation check: no symbolic link when teardown deletes the isolation file (001:FR-086), in `src/wtenv/teardown.py` (restored afterwards)
   - Guard: analysis G1. Remove the `symlinked_part` check in `_override_step`; the symbolic-link
     cases of T065 (`.wtenv/` and the isolation file) must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T134 [US1] Add failing tests for the header recheck after the `removing` save to `tests/integration/test_us3_compose.py` and `tests/unit/test_teardown_paths.py`
+- [X] T134 [US1] Add failing tests for the header recheck after the `removing` save to `tests/integration/test_us3_compose.py` and `tests/unit/test_teardown_paths.py`
   - FR-007, FR-009, 001:FR-087 ("immediately before"); safety finding L1; plan.md S2.
   - In `up` (the `[compose]`-removed transition of T041) and in `down` and `gc`: monkeypatch the
     `removing` save (`provision._save_compose_record`, `teardown._set_override_state`) so that,
@@ -1052,15 +1052,15 @@ byte-identical throughout.
     fails with `ownership_conflict`; `down` and `gc` report it under `failed` and keep the
     record. Kept: `test_up_does_not_delete_an_override_that_lost_the_header_after_the_plan`.
   - **Done when** the new cases fail under the failing-test rule.
-- [ ] T135 [US1] Recheck the header after the `removing` save, immediately before the unlink, in `_remove_override` (`src/wtenv/provision.py`) and `_override_step` (`src/wtenv/teardown.py`)
+- [X] T135 [US1] Recheck the header after the `removing` save, immediately before the unlink, in `_remove_override` (`src/wtenv/provision.py`) and `_override_step` (`src/wtenv/teardown.py`)
   - Needs T066. The check before the save stays (a header-less file is never marked
     `removing`); the new one runs after the save, right before `unlink`. No new unlink call site.
   - **Done when** `uv run pytest tests/integration/test_us3_compose.py tests/unit/test_teardown_paths.py -q` exits 0.
-- [ ] T136 [US1] Mutation check: the header recheck after the `removing` save, in `src/wtenv/provision.py` and `src/wtenv/teardown.py` (restored afterwards)
+- [X] T136 [US1] Mutation check: the header recheck after the `removing` save, in `src/wtenv/provision.py` and `src/wtenv/teardown.py` (restored afterwards)
   - Guard: 001:FR-087, safety finding L1. Remove the check after the save, one file at a time;
     the `up` cases of T134 must fail with the first, the `down`/`gc` cases with the second.
   - **Done when** as in Working rules, "Mutation check", for both mutations.
-- [ ] T137 [US1] ⚠RELAX(001:FR-087 outcome) Add failing tests for a git-tracked file that keeps wtenv's header to `tests/unit/test_override_inventory.py`, `tests/integration/test_us1_repository_override.py`, and `tests/unit/test_teardown_paths.py`
+- [X] T137 [US1] ⚠RELAX(001:FR-087 outcome) Add failing tests for a git-tracked file that keeps wtenv's header to `tests/unit/test_override_inventory.py`, `tests/integration/test_us1_repository_override.py`, and `tests/unit/test_teardown_paths.py`
   - FR-006 (amended by safety finding L2), SC-007; data-model.md, Override inventory, row
     "recorded, header present, tracked"; cli.md, `wtenv up` step 5 and `wtenv down`; plan.md,
     Decisions to review 8.
@@ -1078,17 +1078,17 @@ byte-identical throughout.
   - The race of T134 with a tracked file that keeps the header: the file survives.
   - Inventory unit: recorded path, header present, tracked → `adopt`; untracked → `wtenv_own`.
   - **Done when** the new cases fail under the failing-test rule.
-- [ ] T138 [US1] ⚠RELAX(001:FR-087 outcome) Never rewrite or delete a git-tracked file at a recorded path, in `src/wtenv/compose.py`, `src/wtenv/provision.py`, and `src/wtenv/teardown.py`
+- [X] T138 [US1] ⚠RELAX(001:FR-087 outcome) Never rewrite or delete a git-tracked file at a recorded path, in `src/wtenv/compose.py`, `src/wtenv/provision.py`, and `src/wtenv/teardown.py`
   - Needs T135. `gitutil.is_tracked` is asked whenever a file exists at the recorded path, not
     only when the header is missing: in the inventory, in the step-5 isolation-path check, in
     the recheck before every rewrite (`_compose_step`) and unlink (`_remove_override`, before
     and after the `removing` save), and in `_override_step`.
   - **Done when** `uv run pytest tests/unit/test_override_inventory.py tests/integration/test_us1_repository_override.py tests/integration/test_us3_compose.py tests/unit/test_teardown_paths.py -q` exits 0.
-- [ ] T139 [US1] Mutation check: `is_tracked` for a file that keeps wtenv's header, in `src/wtenv/compose.py` (restored afterwards)
+- [X] T139 [US1] Mutation check: `is_tracked` for a file that keeps wtenv's header, in `src/wtenv/compose.py` (restored afterwards)
   - Guard: FR-006, safety finding L2. Ask `is_tracked` only when the header is missing (the
     order before L2); the header-carrying tracked cases of T137 must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T071 [US1] Group check 4H: runs G5 from the repository root; edits no file
+- [X] T071 [US1] Group check 4H: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(down): remove the isolation file and keep repository-owned overrides`.
 
 ### 4I. User Story 1 end to end

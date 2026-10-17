@@ -40,7 +40,7 @@ from wtenv.envfile import read_section
 from wtenv.errors import ErrorCode, WtenvError
 from wtenv.identity import current_worktree
 from wtenv.output import ItemKind, ResourceState, UpResult
-from wtenv.registry import WorktreeEntry, load, registry_path, transaction
+from wtenv.registry import ComposeRecord, WorktreeEntry, load, registry_path, transaction
 
 pytestmark = pytest.mark.integration
 
@@ -1095,6 +1095,92 @@ def test_up_does_not_delete_an_override_that_lost_the_header_after_the_plan(
     assert override.read_bytes() == b"services: {}\n"
     if repository_before is not None:
         assert repository_override.read_bytes() == repository_before
+
+
+@pytest.mark.parametrize("arrangement", ["automatic", "exec_only"])
+def test_up_does_not_delete_an_override_that_lost_the_header_after_the_removing_save(
+    arrangement: str,
+    compose_docker: None,
+    run_wtenv: Run,
+    repo: Path,
+    add_worktree: AddWorktree,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T134, FR-087 ("immediately before"), safety finding L1: `[compose]` is removed, and a
+    checkout replaces wtenv's file while `up` waits for the registry lock to save `removing`.
+
+    The header is read again after that save, right before the unlink. The replacement is an
+    untracked file without the header; it survives byte for byte, and the repository's own
+    override beside it too.
+    """
+    worktree = make_worktree(repo, add_worktree, "one")
+    repository_override = worktree / "compose.override.yml"
+    if arrangement == "exec_only":
+        repository_override.write_text("services: {}\n", encoding="utf-8")
+        commit_all(worktree)
+    up(run_wtenv, worktree)
+    wtenvs = (
+        "compose.override.yaml" if arrangement == "automatic" else ".wtenv/compose.isolation.yaml"
+    )
+    override = worktree / wtenvs
+    (worktree / "wtenv.toml").write_text('ports = ["PORT", "CACHE_PORT"]\n', encoding="utf-8")
+    saved = provision._save_compose_record
+
+    def save_then_replace(git_dir: str, record: ComposeRecord) -> None:
+        saved(git_dir, record)
+        if record.override_state is ResourceState.REMOVING:
+            override.write_bytes(b"services: {}\n")
+
+    monkeypatch.setattr(provision, "_save_compose_record", save_then_replace)
+    repository_before = repository_override.read_bytes() if repository_override.exists() else None
+
+    with pytest.raises(WtenvError) as caught:
+        provision.up(worktree)
+
+    assert caught.value.code is ErrorCode.OWNERSHIP_CONFLICT
+    assert caught.value.details == {"kind": "compose_override", "name": str(override)}
+    assert override.read_bytes() == b"services: {}\n"
+    if repository_before is not None:
+        assert repository_override.read_bytes() == repository_before
+
+
+@pytest.mark.parametrize("arrangement", ["automatic", "exec_only"])
+def test_up_does_not_delete_a_file_that_became_tracked_after_the_removing_save(
+    arrangement: str,
+    compose_docker: None,
+    run_wtenv: Run,
+    repo: Path,
+    add_worktree: AddWorktree,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T137 with the race of T134: wtenv's file keeps its header, and git tracks it by the unlink."""
+    worktree = make_worktree(repo, add_worktree, "one")
+    repository_override = worktree / "compose.override.yml"
+    if arrangement == "exec_only":
+        repository_override.write_text("services: {}\n", encoding="utf-8")
+        commit_all(worktree)
+    up(run_wtenv, worktree)
+    wtenvs = (
+        "compose.override.yaml" if arrangement == "automatic" else ".wtenv/compose.isolation.yaml"
+    )
+    override = worktree / wtenvs
+    (worktree / "wtenv.toml").write_text('ports = ["PORT", "CACHE_PORT"]\n', encoding="utf-8")
+    saved = provision._save_compose_record
+
+    def save_then_track(git_dir: str, record: ComposeRecord) -> None:
+        saved(git_dir, record)
+        if record.override_state is ResourceState.REMOVING:
+            git(worktree, "add", "--force", wtenvs)
+
+    monkeypatch.setattr(provision, "_save_compose_record", save_then_track)
+    before = override.read_bytes()
+
+    with pytest.raises(WtenvError) as caught:
+        provision.up(worktree)
+
+    assert caught.value.code is ErrorCode.OWNERSHIP_CONFLICT
+    assert caught.value.details == {"kind": "compose_override", "name": str(override)}
+    assert override.read_bytes() == before
 
 
 @pytest.mark.parametrize("name", ["outside by ..", "absolute", "a part that is `..`"])

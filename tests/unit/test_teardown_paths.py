@@ -9,6 +9,7 @@ is of the right form, and the removal of its resources is replaced by a function
 """
 
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -338,3 +339,259 @@ def test_an_override_that_is_already_gone_is_absent_whatever_its_header_would_ha
     assert (ItemKind.COMPOSE_OVERRIDE, str(root / "compose.override.yaml")) in [
         (i.kind, i.name) for i in release.already_absent
     ]
+
+
+# --- the isolation file of the exec-only arrangement (T065, T137; FR-002, FR-006, FR-009) -------
+
+ISOLATION = ".wtenv/compose.isolation.yaml"
+REPOSITORY_OVERRIDE = "compose.override.yml"
+THEIRS = b"services:\n  web:\n    ports:\n      - '8000:80'\n"  # the repository's, no header
+
+
+def exec_only(
+    root: Path, *, repository_override: str | None = REPOSITORY_OVERRIDE
+) -> ComposeRecord:
+    return ComposeRecord(
+        project=compose.project_name("app", GIT_DIR),
+        file="compose.yaml",
+        override=ISOLATION,
+        override_state=ResourceState.CREATED,
+        repository_override=repository_override,
+    )
+
+
+def state_of(path: Path) -> tuple[bytes, int, int]:
+    status = path.stat()
+    return path.read_bytes(), status.st_mode, status.st_mtime_ns
+
+
+def release_of(entry: WorktreeEntry, *, dry_run: bool) -> teardown.Release:
+    return teardown.plan_release(entry) if dry_run else teardown.release_entry(entry)
+
+
+def git_track(root: Path, *relative: str) -> None:
+    """Make git track the files `relative` under `root`, a repository made for the test."""
+    if not (root / ".git").exists():
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+    if relative:
+        subprocess.run(
+            ["git", "add", "--force", "--", *relative], cwd=root, check=True, capture_output=True
+        )
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_the_isolation_file_is_removed_and_the_repository_override_is_not_touched(
+    dry_run: bool, root: Path
+) -> None:
+    put(root / ISOLATION, OWN_OVERRIDE)
+    put(root / REPOSITORY_OVERRIDE, THEIRS)
+    before = state_of(root / REPOSITORY_OVERRIDE)
+    entry = entry_at(root, compose=exec_only(root))
+    record(entry)
+
+    release = release_of(entry, dry_run=dry_run)
+
+    assert release.failed == [] and release.kept_items == []
+    assert (ItemKind.COMPOSE_OVERRIDE, str(root / ISOLATION)) in [
+        (i.kind, i.name) for i in release.removed
+    ]
+    names = {i.name for i in [*release.removed, *release.already_absent, *release.failed]}
+    assert str(root / REPOSITORY_OVERRIDE) not in names
+    assert (root / REPOSITORY_OVERRIDE).exists()
+    assert state_of(root / REPOSITORY_OVERRIDE) == before
+    assert (root / ISOLATION).exists() is dry_run
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_an_isolation_file_without_wtenvs_header_is_left_alone(dry_run: bool, root: Path) -> None:
+    put(root / ISOLATION, THEIRS)  # untracked, and not wtenv's
+    original = exec_only(root)
+    entry = entry_at(root, compose=original)
+    record(entry)
+
+    release = release_of(entry, dry_run=dry_run)
+
+    assert (root / ISOLATION).read_bytes() == THEIRS
+    assert [f.kind for f in release.failed] == [ItemKind.COMPOSE_OVERRIDE]
+    assert "header" in release.failed[0].reason
+    assert registry.load().worktrees[GIT_DIR].compose == original
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+@pytest.mark.parametrize(
+    "value",
+    [".wtenv/notes.yaml", ".wtenv/sub/compose.isolation.yaml", "../.wtenv/compose.isolation.yaml"],
+)
+def test_a_recorded_path_that_is_not_exactly_the_isolation_file_is_left_alone(
+    value: str, dry_run: bool, root: Path
+) -> None:
+    decoy = where_it_leads(root, value)
+    put(decoy, OWN_OVERRIDE)  # even a file that looks like wtenv's own
+    original = compose_record(value)
+    entry = entry_at(root, compose=original)
+    record(entry)
+
+    release = release_of(entry, dry_run=dry_run)
+
+    assert decoy.read_bytes() == OWN_OVERRIDE
+    assert [(f.kind, f.name) for f in release.failed] == [
+        (ItemKind.COMPOSE_OVERRIDE, str(root / value))
+    ]
+    assert registry.load().worktrees[GIT_DIR].compose == original
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+@pytest.mark.parametrize("what", ["directory", "file"])
+def test_a_link_at_the_wtenv_directory_or_the_isolation_file_is_failed_and_not_followed(
+    what: str, dry_run: bool, root: Path, tmp_path: Path
+) -> None:
+    decoy = tmp_path / "decoy"
+    put(decoy / "compose.isolation.yaml", OWN_OVERRIDE)  # a header at the target
+    if what == "directory":
+        (root / ".wtenv").symlink_to(decoy)
+    else:
+        (root / ".wtenv").mkdir()
+        (root / ISOLATION).symlink_to(decoy / "compose.isolation.yaml")
+    before = (decoy / "compose.isolation.yaml").read_bytes()
+    original = exec_only(root)
+    entry = entry_at(root, compose=original)
+    record(entry)
+
+    release = release_of(entry, dry_run=dry_run)
+
+    assert (decoy / "compose.isolation.yaml").read_bytes() == before
+    assert [(f.kind, f.name, f.reason) for f in release.failed] == [
+        (ItemKind.COMPOSE_OVERRIDE, str(root / ISOLATION), "symlink")
+    ]
+    assert release.removed == [] or all(
+        i.kind is not ItemKind.COMPOSE_OVERRIDE for i in release.removed
+    )
+    assert registry.load().worktrees[GIT_DIR].compose == original
+
+
+@pytest.mark.parametrize("value", ["src/main.py", "../outside.yml", "ABSOLUTE"])
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_a_hand_edited_repository_override_record_is_never_deleted(
+    value: str, dry_run: bool, root: Path, tmp_path: Path
+) -> None:
+    value = str(tmp_path / "absolute.yml") if value == "ABSOLUTE" else value
+    decoy = where_it_leads(root, value)
+    put(decoy, OWN_OVERRIDE)  # even a file that looks like wtenv's own
+    put(root / ISOLATION, OWN_OVERRIDE)
+    before = state_of(decoy)
+    entry = entry_at(root, compose=exec_only(root, repository_override=value))
+    record(entry)
+
+    release = release_of(entry, dry_run=dry_run)
+
+    assert decoy.exists() and state_of(decoy) == before
+    names = {i.name for i in [*release.removed, *release.already_absent, *release.failed]}
+    assert str(decoy) not in names and release.kept_items == []
+    assert release.failed == []
+    assert (root / ISOLATION).exists() is dry_run
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_a_tracked_headerless_file_at_the_recorded_path_is_kept_not_failed(
+    dry_run: bool, root: Path
+) -> None:
+    put(root / "compose.override.yaml", THEIRS)
+    git_track(root, "compose.override.yaml")
+    before = state_of(root / "compose.override.yaml")
+    entry = entry_at(root, compose=compose_record("compose.override.yaml"))
+    record(entry)
+
+    release = release_of(entry, dry_run=dry_run)
+
+    assert [(k.kind, k.name, k.reason) for k in release.kept_items] == [
+        (ItemKind.COMPOSE_OVERRIDE, str(root / "compose.override.yaml"), "repository_owned")
+    ]
+    assert release.failed == []
+    assert state_of(root / "compose.override.yaml") == before
+    assert release.released is (not dry_run)
+    assert (GIT_DIR in registry.load().worktrees) is dry_run
+
+
+# --- the header is read again after the `removing` save (T134; FR-087, safety finding L1) --------
+
+
+@pytest.mark.parametrize("recheck_path", [False, True], ids=["down", "gc"])
+@pytest.mark.parametrize("override", ["compose.override.yaml", ISOLATION])
+def test_down_and_gc_do_not_delete_an_override_that_lost_the_header_after_the_removing_save(
+    override: str, recheck_path: bool, root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A checkout replaces the file while the release waits for the registry lock to save
+    `removing`: the file is read again right before the unlink, and survives byte for byte."""
+    put(root / override, OWN_OVERRIDE)
+    entry = entry_at(root, compose=compose_record(override))
+    record(entry)
+    saved = teardown._set_override_state
+
+    def save_then_replace(git_dir: str, state: ResourceState) -> None:
+        saved(git_dir, state)
+        (root / override).write_bytes(THEIRS)  # untracked, and without the header
+
+    monkeypatch.setattr(teardown, "_set_override_state", save_then_replace)
+
+    release = teardown.release_entry(entry, recheck_path=recheck_path)
+
+    assert (root / override).exists()
+    assert (root / override).read_bytes() == THEIRS
+    assert [(f.kind, f.name) for f in release.failed] == [
+        (ItemKind.COMPOSE_OVERRIDE, str(root / override))
+    ]
+    assert "header" in release.failed[0].reason
+    kept = registry.load().worktrees[GIT_DIR].compose
+    assert kept is not None and kept.override == override
+
+
+# --- a tracked file that keeps wtenv's header is the repository's too (T137; safety finding L2) ---
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+@pytest.mark.parametrize("path", ["compose.override.yaml", ISOLATION])
+def test_a_tracked_file_that_keeps_wtenvs_header_is_kept_not_removed(
+    path: str, dry_run: bool, root: Path
+) -> None:
+    put(root / path, OWN_OVERRIDE)
+    git_track(root, path)
+    before = state_of(root / path)
+    entry = entry_at(root, compose=compose_record(path))
+    record(entry)
+
+    release = release_of(entry, dry_run=dry_run)
+
+    assert [(k.kind, k.name, k.reason) for k in release.kept_items] == [
+        (ItemKind.COMPOSE_OVERRIDE, str(root / path), "repository_owned")
+    ]
+    assert release.failed == []
+    assert str(root / path) not in {i.name for i in release.removed}
+    assert (root / path).exists() and state_of(root / path) == before
+    assert (GIT_DIR in registry.load().worktrees) is dry_run
+
+
+@pytest.mark.parametrize("path", ["compose.override.yaml", ISOLATION])
+def test_a_file_that_became_tracked_after_the_removing_save_survives(
+    path: str, root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T137 with the race of T134: the file keeps its header, and git tracks it by the unlink."""
+    put(root / path, OWN_OVERRIDE)
+    git_track(root)  # an empty repository, so that `is_tracked` can answer
+    entry = entry_at(root, compose=compose_record(path))
+    record(entry)
+    saved = teardown._set_override_state
+
+    def save_then_track(git_dir: str, state: ResourceState) -> None:
+        saved(git_dir, state)
+        git_track(root, path)
+
+    monkeypatch.setattr(teardown, "_set_override_state", save_then_track)
+
+    release = teardown.release_entry(entry)
+
+    assert (root / path).exists()
+    assert (root / path).read_bytes() == OWN_OVERRIDE
+    assert [(k.kind, k.name) for k in release.kept_items] == [
+        (ItemKind.COMPOSE_OVERRIDE, str(root / path))
+    ]
+    assert release.failed == []
