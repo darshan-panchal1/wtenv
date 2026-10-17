@@ -1312,7 +1312,7 @@ in CI) and a named project volume.
 
 ## Phase 6: Compatibility and the agent contract (cross-cutting)
 
-- [ ] T091 Add failing compatibility and agent-contract tests to `tests/unit/test_v0_1_1_compatibility.py` (new) and `tests/contract/test_json_documents.py`
+- [X] T091 Add failing compatibility and agent-contract tests to `tests/unit/test_v0_1_1_compatibility.py` (new) and `tests/contract/test_json_documents.py`
   - FR-008, FR-028, FR-030, FR-032, SC-006, SC-009.
   - New `test_every_v0_1_1_config_fixture_is_accepted_and_provisions_identically`, both halves
     of FR-028: (1) for each of the three exception fixtures of T002 (`dup_port`,
@@ -1328,17 +1328,20 @@ in CI) and a named project volume.
   - Expected to pass if Phases 2–5 are right. Run them; a failure goes to T092.
   - **Done when** `uv run pytest tests/unit/test_v0_1_1_compatibility.py tests/contract/test_json_documents.py -q`
     has been run and its result (all passed, or the failing test IDs) is recorded under this task.
-- [ ] T092 Fix what T091 finds, in the module the failure points at
+  - **Result**: 70 passed on the first run (21 compatibility tests, 49 document tests), so T092 had nothing to fix.
+- [X] T092 Fix what T091 finds, in the module the failure points at
   - A difference from v0.1.1 that FR-028 does not allow is a bug. Do not change the golden.
     FR-028 allows exactly one difference: the `port_variable_conflict` refusal of its three
     exception setups. Keep that refusal (T015, T029); never remove it to match a golden.
   - **Done when** `uv run pytest tests/unit/test_v0_1_1_compatibility.py tests/contract -q` exits 0.
-- [ ] T093 Run spec 001's acceptance script (SC-006)
+  - **Result**: T091 passed first; nothing changed.
+- [X] T093 Run spec 001's acceptance script (SC-006)
   - `uv tool install --force --reinstall .`, then the script of
     `specs/001-worktree-runtime-isolation/quickstart.md`, extracted with the `awk` command at its
     top, with Docker. Read-only use of the 001 directory.
   - **Done when** the script prints `ACCEPTANCE PASSED`.
-- [ ] T094 Group check Phase 6: runs G5 from the repository root; edits no file
+  - **Result**: `ACCEPTANCE PASSED` (run 2026-10-17 with the build under test installed by `uv tool install --force --reinstall .` into a temporary `UV_TOOL_DIR` and `UV_TOOL_BIN_DIR`, so the maintainer's own install was not replaced).
+- [X] T094 Group check Phase 6: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `test(compat): pin v0.1.1 compatibility and the agent contract for spec 002`.
 
 ---
