@@ -1416,7 +1416,7 @@ fail.
 
 ### 7B. CI and release preparation (`.github/workflows/ci.yml`, `CHANGELOG.md`, `src/wtenv/__init__.py`)
 
-- [ ] T098 Make the `minimums` job (Compose 2.24.4) run the new integration tests with nothing skipped, in `.github/workflows/ci.yml`
+- [X] T098 Make the `minimums` job (Compose 2.24.4) run the new integration tests with nothing skipped, in `.github/workflows/ci.yml`
   - Plan.md, Test strategy and Coverage. In `minimums`: `pytest -m integration -rA` so passes are
     listed; a step that fails unless the log has `PASSED` for
     `test_the_isolation_file_replaces_the_repository_overrides_ports_on_this_compose` and has
@@ -1430,7 +1430,7 @@ fail.
   - **Done when** `grep -n 'test_the_isolation_file_replaces_the_repository_overrides_ports_on_this_compose' .github/workflows/ci.yml`
     and `grep -n "wtenv/isolation.py" .github/workflows/ci.yml` each print a line, and
     `grep -n 'uses: ' .github/workflows/ci.yml | grep -vE '@[0-9a-f]{40}'` prints nothing.
-- [ ] T099 [P] Add the 0.2.0 entry to `CHANGELOG.md`
+- [X] T099 [P] Add the 0.2.0 entry to `CHANGELOG.md`
   - Keep a Changelog format, `## [0.2.0] - <date of this task>` under `[Unreleased]`. **Added**:
     repository-owned override support (exec-only arrangement, `.wtenv/compose.isolation.yaml`,
     `wtenv exec`/post-up isolation), port variables, `[database] type = "compose"`, error codes
@@ -1452,12 +1452,12 @@ fail.
   - **Done when** `grep -n '## \[0.2.0\]' CHANGELOG.md` and
     `awk '/## \[0.2.0\]/,/## \[0.1.1\]/' CHANGELOG.md | grep -n 'port_variable_conflict'` both print a line, and
     the same `awk` piped to `grep -n 'my_api'` and to `grep -in 'downgrad'` each print a line.
-- [ ] T100 [P] Bump the version to 0.2.0 in `src/wtenv/__init__.py`, without tagging
+- [X] T100 [P] Bump the version to 0.2.0 in `src/wtenv/__init__.py`, without tagging
   - The single source of the version (hatch reads it). No tag, no push of a tag, no release.
   - **Done when** `uv run wtenv --version` prints `0.2.0`, `git tag --list 'v0.2*'` prints
     nothing, `uv build` succeeds, and `uv run pytest tests/integration/test_build_contents.py -q`
     exits 0.
-- [ ] T101 Group check 7B: runs G5 from the repository root; edits no file
+- [X] T101 Group check 7B: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED` and `grep -rn NotImplementedError src/` prints nothing.
     Commit `chore(release): prepare 0.2.0`.
 
