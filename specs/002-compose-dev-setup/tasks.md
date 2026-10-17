@@ -1353,7 +1353,7 @@ in CI) and a named project volume.
 For these tasks the failing check is the task's `grep` command, run before the edit and seen to
 fail.
 
-- [ ] T095 [P] ⚠RELAX(001:FR-030) Document spec 002 in `README.md`
+- [X] T095 [P] ⚠RELAX(001:FR-030) Document spec 002 in `README.md`
   - FR-002, FR-004, FR-011, FR-025, FR-033; cli.md, "User documentation (README) obligations";
     spec, Known limits.
   - **Override and `exec`**: in a repository that tracks its own Compose override, Compose
@@ -1399,7 +1399,7 @@ fail.
     `grep -n 'compose_override_excluded' README.md`, `grep -n 'COMPOSE_ENV_FILES' README.md`; and
     `grep -c 'already exists and wtenv did not' README.md` prints `0` (the v0.1 refusal line is
     gone).
-- [ ] T096 [P] Update `docs/roadmap.md`
+- [X] T096 [P] Update `docs/roadmap.md`
   - Principle X; plan.md, "Roadmap entries". New heading "From planning feature 002
     (2026-10-10)" with the four entries: a `--project-directory` equivalent so Compose 2.24.4 reads
     `.env` from any subdirectory; showing a compose-hosted database in `ls`; inspecting the image's
@@ -1411,7 +1411,7 @@ fail.
   - **Done when** `grep -n 'From planning feature 002' docs/roadmap.md`,
     `grep -c 'spec 002' docs/roadmap.md` (≥ 3) and `grep -n 'volumes_from' docs/roadmap.md` all
     succeed.
-- [ ] T097 Group check 7A: runs G5 from the repository root; edits no file
+- [X] T097 Group check 7A: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `docs: document overrides, port variables and compose-hosted databases`.
 
 ### 7B. CI and release preparation (`.github/workflows/ci.yml`, `CHANGELOG.md`, `src/wtenv/__init__.py`)
