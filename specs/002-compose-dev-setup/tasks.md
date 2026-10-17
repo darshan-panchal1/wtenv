@@ -1093,7 +1093,7 @@ byte-identical throughout.
 
 ### 4I. User Story 1 end to end
 
-- [ ] T072 [US1] Add end-to-end tests for User Story 1 to `tests/integration/test_us1_repository_override.py`
+- [X] T072 [US1] Add end-to-end tests for User Story 1 to `tests/integration/test_us1_repository_override.py`
   - User Story 1 scenarios 2, 3 (three worktrees started at the same time through `wtenv exec`:
     no shared host port, container, network or project-scoped volume), 4; SC-005 (10 repeats of
     `up`, with and without a repository override: identical ports, project, env file and
@@ -1104,11 +1104,14 @@ byte-identical throughout.
   - These test behaviour built in 4A–4H. Run them; a failure goes to T073.
   - **Done when** `uv run pytest tests/integration/test_us1_repository_override.py -q` has been
     run and its result (all passed, or the failing test IDs) is recorded under this task.
-- [ ] T073 [US1] Fix what T072 finds, in the module the failure points at
+  - **Result**: the seven new tests passed on their first run (7 passed), and the whole file
+    passed with them.
+- [X] T073 [US1] Fix what T072 finds, in the module the failure points at
   - Only within FR-001 to FR-009 and FR-033. A failure that needs a new behaviour: stop and ask.
   - **Done when** `uv run pytest tests/integration/test_us1_repository_override.py -q` exits 0
     (or T072 passed first, and this task says so).
-- [ ] T144 [US1] Mutation check: `up` never writes, deletes or excludes the repository override (FR-002), in `src/wtenv/provision.py` (restored afterwards)
+  - **Result**: T072 passed first; nothing needed fixing.
+- [X] T144 [US1] Mutation check: `up` never writes, deletes or excludes the repository override (FR-002), in `src/wtenv/provision.py` (restored afterwards)
   - Guard: plan.md, requirement map, FR-002; safety review, item 8 (T049 covers only the adoption
     unlink, T070 only teardown). Three mutations, one at a time: (1) in `_compose_step`, also
     write the isolation text to the path in `repository_override`; (2) when `[compose]` is
@@ -1118,7 +1121,7 @@ byte-identical throughout.
     fail on (1), the `[compose]`-removed case of T041 on (2), and the exclude assertion of T032
     ("never the repository override's path") on (3).
   - **Done when** as in Working rules, "Mutation check", for each of the three mutations.
-- [ ] T074 [US1] Group check 4I: runs G5 from the repository root; edits no file
+- [X] T074 [US1] Group check 4I: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `test(us1): run three worktrees with a repository-owned override end to end`.
 
 **Checkpoint**: User Story 1 works; the fastapi template provisions in exec-only mode.

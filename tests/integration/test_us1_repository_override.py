@@ -25,6 +25,7 @@ import subprocess
 import sys
 import uuid
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -891,6 +892,7 @@ def test_compose_removed_in_exec_only_removes_the_isolation_file_and_clears_the_
     assert record.override == ISOLATION_FILE
     assert record.override_state is ResourceState.REMOVING
     assert record.repository_override is None
+    assert repository_override.exists(), "the repository's override was deleted"
     assert sha256(repository_override) == before
     assert ("compose_override", "released") in kinds_and_actions(result)
     assert (worktree / REPOSITORY_OVERRIDE).exists()
@@ -1914,3 +1916,224 @@ networks:
         subprocess.run(
             [*docker, "network", "rm", external_network], capture_output=True, check=False
         )
+
+
+# --- User Story 1 end to end (T072; scenarios 2, 3, 4, 8; SC-005, SC-007) ----------------------
+
+# The repository's override also mounts a project-scoped named volume, so that three stacks can be
+# compared for a shared volume.
+OVERRIDE_WITH_DATA = (
+    OVERRIDE.replace("    command:", '    volumes:\n      - "data:/data"\n    command:')
+    + "volumes:\n  data: {}\n"
+)
+
+
+def exec_compose(run_wtenv: Run, worktree: Path, *args: str) -> "subprocess.CompletedProcess[str]":
+    """Run `wtenv exec -- docker compose <args>` in `worktree`."""
+    return run_wtenv(["exec", "--", "docker", "compose", *args], worktree)
+
+
+def host_ports_of(project: str) -> list[int]:
+    """The host ports the containers of `project` publish, from `docker inspect`."""
+    ports: list[int] = []
+    for container in project_resources(project)["containers"]:
+        process = subprocess.run(
+            ["docker", "inspect", "--format", "{{json .NetworkSettings.Ports}}", container],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        for bindings in (json.loads(process.stdout) or {}).values():
+            ports += [int(binding["HostPort"]) for binding in bindings or []]
+    return sorted(set(ports))
+
+
+def test_a_stack_started_through_exec_uses_block_ports_and_the_overrides_command(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "stack")
+    override = worktree / REPOSITORY_OVERRIDE
+    before = sha256(override)
+    up(run_wtenv, worktree)
+    project = compose_projects.track(project_of(worktree))
+
+    started = exec_compose(run_wtenv, worktree, "up", "-d")
+
+    assert started.returncode == 0, started.stdout + started.stderr
+    (container,) = project_resources(project)["containers"]
+    ports = host_ports_of(project)
+    assert ports and all(port in block_of(worktree) for port in ports)
+    assert 8000 not in ports  # the override's fixed port is remapped (scenario 8)
+    command = subprocess.run(
+        ["docker", "inspect", "--format", "{{json .Config.Cmd}}", container],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json.loads(command.stdout) == COMMAND  # the override's dev command took effect
+    assert sha256(override) == before
+
+
+def test_three_worktrees_started_together_through_exec_share_nothing(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+) -> None:
+    worktrees = [
+        make_worktree(repo, add_worktree, f"three-{n}", override=OVERRIDE_WITH_DATA)
+        for n in range(3)
+    ]
+    for worktree in worktrees:
+        up(run_wtenv, worktree)
+        compose_projects.track(project_of(worktree))
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        started = list(pool.map(lambda w: exec_compose(run_wtenv, w, "up", "-d"), worktrees))
+
+    for process in started:
+        assert process.returncode == 0, process.stdout + process.stderr
+    resources = [project_resources(project_of(worktree)) for worktree in worktrees]
+    ports = [host_ports_of(project_of(worktree)) for worktree in worktrees]
+    for kind in ("containers", "networks", "volumes"):
+        sets = [set(found[kind]) for found in resources]
+        assert all(sets), f"every stack has a {kind[:-1]}"
+        assert not (sets[0] & sets[1] or sets[0] & sets[2] or sets[1] & sets[2]), kind
+    for worktree, own in zip(worktrees, ports, strict=True):
+        assert own and all(port in block_of(worktree) for port in own)
+    flat = [port for own in ports for port in own]
+    assert len(flat) == len(set(flat)) and 8000 not in flat
+    assert len({project_of(worktree) for worktree in worktrees}) == 3
+
+
+@pytest.mark.parametrize("with_override", [True, False], ids=["repository override", "none"])
+def test_ten_repeats_of_up_give_identical_ports_project_env_file_and_override_bytes(
+    with_override: bool,
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+) -> None:
+    """SC-005: with a repository-owned override and without one (v0.1.1's arrangement)."""
+    worktree = make_worktree(
+        repo,
+        add_worktree,
+        "ten",
+        stack=STACK if with_override else TWO_PORTS,
+        override=OVERRIDE if with_override else None,
+    )
+    up(run_wtenv, worktree)
+    compose_projects.track(project_of(worktree))
+    wtenvs = worktree / (ISOLATION_FILE if with_override else OLD_OVERRIDE)
+
+    def fingerprint() -> tuple[Any, ...]:
+        entry = entry_of(worktree)
+        return (
+            entry.block,
+            entry.ports,
+            entry.published,
+            entry.compose,
+            (worktree / ".env.local").read_bytes(),
+            wtenvs.read_bytes(),
+        )
+
+    first = fingerprint()
+    for _ in range(10):
+        up(run_wtenv, worktree)
+        assert fingerprint() == first
+
+
+def test_the_repository_override_is_byte_identical_through_up_down_gc_and_dry_runs(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+    tmp_path: Path,
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "identical")
+    override = worktree / REPOSITORY_OVERRIDE
+    before = file_state(override)  # bytes, mode and modification time
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    up(run_wtenv, worktree)
+    compose_projects.track(project_of(worktree))
+    assert file_state(override) == before
+    up(run_wtenv, worktree)
+    assert file_state(override) == before
+    for arguments, cwd in (
+        (["down", "--dry-run", "--json"], worktree),
+        (["gc", "--dry-run", "--json"], outside),
+        (["gc", "--json"], outside),  # the worktree is live, so there is nothing to sweep
+    ):
+        process = run_wtenv(arguments, cwd)
+        assert process.returncode == 0, process.stdout + process.stderr
+        assert str(override) not in process.stdout  # never listed as an item
+        assert file_state(override) == before
+    down = parse_down(run_wtenv(["down", "--json"], worktree))
+    assert down.ok and str(override) not in {i.name for i in [*down.removed, *down.kept_items]}
+    assert file_state(override) == before
+    assert git(worktree, "status", "--short") == ""
+
+
+def test_an_override_edited_after_provisioning_is_recomputed_and_unchanged_ports_keep_their_numbers(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "edited")
+    up(run_wtenv, worktree)
+    compose_projects.track(project_of(worktree))
+    (first,) = entry_of(worktree).published
+    written = (worktree / ISOLATION_FILE).read_text(encoding="utf-8")
+    again = up(run_wtenv, worktree)  # nothing edited: the same numbers
+    assert entry_of(worktree).published == [first]
+    assert again.ok
+
+    (worktree / REPOSITORY_OVERRIDE).write_text(
+        OVERRIDE.replace('      - "8000:6379"\n', '      - "8000:6379"\n      - "8001:6380"\n'),
+        encoding="utf-8",
+    )
+    commit_all(worktree)
+    up(run_wtenv, worktree)
+
+    published = entry_of(worktree).published
+    assert len(published) == 2
+    kept = [port for port in published if port.target == 6379]
+    assert kept == [first]  # the port that still exists keeps its number
+    assert (worktree / ISOLATION_FILE).read_text(encoding="utf-8") != written
+    assert all(
+        f'"published": "{port.port}"' in (worktree / ISOLATION_FILE).read_text()
+        for port in published
+    )
+
+
+def test_a_repository_override_that_is_a_symbolic_link_is_only_read_and_works_through_exec(
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+    decoy: Path,
+) -> None:
+    target = decoy / "repository-override.yml"
+    target.write_text(OVERRIDE, encoding="utf-8")
+    worktree = make_worktree(repo, add_worktree, "linked-works", override=None)
+    link = worktree / REPOSITORY_OVERRIDE
+    link.symlink_to(target)
+    decoy_before = snapshot_tree(decoy)
+
+    up(run_wtenv, worktree)
+    compose_projects.track(project_of(worktree))
+    process = exec_compose(run_wtenv, worktree, "--profile", "*", "config", "--format", "json")
+
+    assert process.returncode == 0, process.stdout + process.stderr
+    backend = json.loads(process.stdout)["services"]["backend"]
+    (published,) = entry_of(worktree).published
+    assert [int(p["published"]) for p in backend["ports"]] == [published.port]
+    assert backend["command"] == COMMAND
+    assert link.is_symlink() and os.readlink(link) == str(target)
+    assert snapshot_tree(decoy) == decoy_before
