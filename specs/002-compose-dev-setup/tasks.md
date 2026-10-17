@@ -1728,6 +1728,10 @@ these fixes.
   header is removed, as in v0.1.1. Failing closed for every override file when git cannot be
   asked would also stop `gc --release` cleaning up wtenv's own override of a worktree whose
   repository is gone; decide before building it.
+- **`down`/`gc` text output does not list `kept_items`; JSON does** (found in group 4H). cli.md
+  specifies the new list for JSON only, so a tracked override that `down` keeps is invisible in
+  the text. Add a `kept` line per item, with its reason, to `render_down_text` and
+  `render_gc_text`.
 - **`compose_fixed_volume_name` judged under the wtenv project** (found while fixing safety H1).
   The v0.1.x warning still compares a volume's `name` with the repository's own model name, so
   `name: app_pgdata` in a repository named `app` is not warned about for services other than a
