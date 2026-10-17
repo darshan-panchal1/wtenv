@@ -14,9 +14,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
-from wtenv.config import ENV_PLACEHOLDER, LOCAL_HOSTS, PLACEHOLDER
+from wtenv.config import COMPOSE_ENV_PLACEHOLDER, ENV_PLACEHOLDER, LOCAL_HOSTS, PLACEHOLDER
 from wtenv.errors import ErrorCode, JsonValue, WtenvError
 from wtenv.identity import short_id, slug
 from wtenv.output import FailedItem, Item, ItemKind, KeptVolume
@@ -74,14 +74,20 @@ def resolve_url(
     *,
     name: str | None = None,
     path: str | None = None,
+    port: int | None = None,
+    compose_environment: Mapping[str, str] | None = None,
     environ: Mapping[str, str] | None = None,
     config_file: str | None = None,
 ) -> str:
-    """Return `pattern` with `{name}`, `{path}`, and `{env:NAME}` replaced (FR-026).
+    """Return `pattern` with `{name}`, `{path}`, `{port}`, `{env:NAME}` and `{compose_env:NAME}` replaced.
 
-    `environ` defaults to the process environment. Raises `config_invalid` for an unset
-    variable (`details.variable`), or when the result holds a single quote or a line break,
-    which the env file cannot carry; the message never repeats the URL.
+    `environ` defaults to the process environment. For a compose-hosted database (FR-018,
+    FR-020), `port` is the host port of the database service and `compose_environment` is the
+    service's `environment` as Compose resolved it; a `{compose_env:NAME}` value is
+    percent-encoded. Raises `config_invalid` for an unset variable (`details.variable`), a name
+    the service's environment does not have (`details.variable`), or when the result holds a
+    single quote or a line break, which the env file cannot carry; the message never repeats
+    the URL or a value.
     """
     variables = os.environ if environ is None else environ
 
@@ -91,6 +97,19 @@ def resolve_url(
             return name
         if text == "path" and path is not None:
             return path
+        if text == "port" and port is not None:
+            return str(port)
+        service_variable = COMPOSE_ENV_PLACEHOLDER.fullmatch(text)
+        if service_variable is not None and compose_environment is not None:
+            service_value = compose_environment.get(service_variable.group(1))
+            if service_value is None:
+                raise _url_invalid(
+                    f"the database service has no environment variable {service_variable.group(1)}",
+                    config_file,
+                    variable=service_variable.group(1),
+                )
+            # A raw value such as a password: nothing in it may change the host or the port.
+            return quote(service_value, safe="")
         variable = ENV_PLACEHOLDER.fullmatch(text)
         if variable is None:
             raise _url_invalid(f"{{{text}}} cannot be filled in here", config_file)

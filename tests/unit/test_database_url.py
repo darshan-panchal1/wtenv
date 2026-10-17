@@ -1,8 +1,13 @@
 """Resolving the URL pattern, and wtenv's own connection (config.md, The URL pattern; FR-025,
 FR-026)."""
 
+from functools import partial
+from pathlib import Path
+from urllib.parse import unquote, urlsplit
+
 import pytest
 
+from wtenv.config import load_config
 from wtenv.database import PostgresTarget, postgres_target, resolve_url
 from wtenv.errors import ErrorCode, WtenvError
 
@@ -158,3 +163,137 @@ def test_the_password_is_not_shown_when_the_target_is_printed() -> None:
 
     assert "hunter2" not in repr(target)
     assert "hunter2" not in str(target)
+
+
+# --- the URL of a compose-hosted database (T075; FR-018, FR-020; config.md) ----------------------
+
+COMPOSE_PATTERN = "postgresql://postgres:{compose_env:POSTGRES_PASSWORD}@localhost:{port}/app"
+PASSWORD = "p@ss/w:rd%41 &#?"  # holds @ / : % and more, none of which may leave the password
+
+
+def compose_url(pattern: str = COMPOSE_PATTERN, **overrides: object) -> str:
+    arguments: dict[str, object] = {
+        "port": 20003,
+        "compose_environment": {"POSTGRES_PASSWORD": PASSWORD},
+        "environ": {},
+    }
+    return resolve_url(pattern, **{**arguments, **overrides})  # type: ignore[arg-type]
+
+
+def test_port_is_the_host_port() -> None:
+    url = compose_url("postgresql://u:pw@localhost:{port}/app")
+
+    assert url == "postgresql://u:pw@localhost:20003/app"
+
+
+def test_env_is_still_inserted_as_it_stands_in_a_compose_url() -> None:
+    url = compose_url(
+        "postgresql://u:{env:DB_PASSWORD}@localhost:{port}/app", environ={"DB_PASSWORD": "a b"}
+    )
+
+    assert url == "postgresql://u:a b@localhost:20003/app"
+
+
+def test_a_compose_env_value_is_percent_encoded_completely() -> None:
+    url = compose_url()
+
+    encoded = "p%40ss%2Fw%3Ard%2541%20%26%23%3F"
+    assert url == f"postgresql://postgres:{encoded}@localhost:20003/app"
+    assert unquote(encoded) == PASSWORD
+
+
+def test_a_compose_env_value_cannot_move_the_host_or_the_port() -> None:
+    hostile = "x@evil.example:5432/other?host=evil.example#"
+
+    url = compose_url(compose_environment={"POSTGRES_PASSWORD": hostile})
+
+    parts = urlsplit(url)
+    assert (parts.hostname, parts.port, parts.path, parts.query) == ("localhost", 20003, "/app", "")
+    assert unquote(parts.password or "") == hostile
+
+
+def test_a_compose_url_must_name_a_local_host(tmp_path: Path) -> None:
+    """001:FR-025 applied by FR-018: a remote host is refused when the file is read, and
+    nothing a value holds can make the resolved URL name another one."""
+    (tmp_path / "wtenv.toml").write_text(
+        '[compose]\nfile = "compose.yaml"\n\n[database]\ntype = "compose"\nservice = "db"\n'
+        'url = "postgresql://postgres:pw@db.example.com:{port}/app"\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(WtenvError) as caught:
+        load_config(tmp_path)
+
+    assert caught.value.code is ErrorCode.CONFIG_INVALID
+    assert "db.example.com" not in caught.value.message  # the message never repeats the pattern
+    assert urlsplit(compose_url()).hostname == "localhost"
+
+
+def test_a_name_the_service_does_not_have_is_config_invalid_and_names_the_variable() -> None:
+    error = config_invalid(lambda: compose_url(compose_environment={"OTHER": "x"}))
+
+    assert error.details["setting"] == "database.url"
+    assert error.details["variable"] == "POSTGRES_PASSWORD"
+
+
+def test_an_empty_compose_env_value_counts_as_set() -> None:
+    url = compose_url(compose_environment={"POSTGRES_PASSWORD": ""})
+
+    assert url == "postgresql://postgres:@localhost:20003/app"
+
+
+def test_an_unset_env_variable_is_config_invalid_in_a_compose_url_too() -> None:
+    error = config_invalid(
+        lambda: compose_url("postgresql://u:{env:DB_PASSWORD}@localhost:{port}/app")
+    )
+
+    assert error.details["variable"] == "DB_PASSWORD"
+
+
+STAND_IN_CASES = [
+    (COMPOSE_PATTERN, {"OTHER": "x"}, "POSTGRES_PASSWORD"),
+    (
+        "postgresql://u:{env:DB_PASSWORD}@localhost:{port}/app",
+        {"POSTGRES_PASSWORD": "x"},
+        "DB_PASSWORD",
+    ),
+]
+
+
+@pytest.mark.parametrize(("pattern", "environment", "variable"), STAND_IN_CASES)
+def test_the_stand_in_port_of_step_7_fails_for_the_same_two_cases(
+    pattern: str, environment: dict[str, str], variable: str
+) -> None:
+    """Step 7 resolves the pattern with a port of the stand-in block before anything changes."""
+    error = config_invalid(
+        partial(resolve_url, pattern, port=20000, compose_environment=environment, environ={})
+    )
+
+    assert error.details["variable"] == variable
+
+
+def test_no_error_message_contains_the_resolved_password() -> None:
+    secret = "s3cr3t-value-123"
+    errors = [
+        config_invalid(
+            lambda: compose_url(
+                "postgresql://u:{compose_env:POSTGRES_PASSWORD}@localhost:{port}/{compose_env:MISSING}",
+                compose_environment={"POSTGRES_PASSWORD": secret},
+            )
+        ),
+        config_invalid(
+            lambda: compose_url(
+                "postgresql://u:{compose_env:POSTGRES_PASSWORD}:{env:GONE}@localhost:{port}/app",
+                compose_environment={"POSTGRES_PASSWORD": secret},
+            )
+        ),
+        config_invalid(
+            lambda: compose_url(
+                "postgresql://u:{env:RAW}@localhost:{port}/app", environ={"RAW": f"{secret}'"}
+            )
+        ),
+    ]
+
+    for error in errors:
+        assert secret not in error.message and secret not in str(error.details)
+        assert secret not in (error.hint or "")

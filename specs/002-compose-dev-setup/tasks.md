@@ -1138,7 +1138,7 @@ in CI) and a named project volume.
 
 ### 5A. The URL (`database.py`)
 
-- [ ] T075 [P] [US3] Add failing tests for compose URLs to `tests/unit/test_database_url.py`
+- [X] T075 [P] [US3] Add failing tests for compose URLs to `tests/unit/test_database_url.py`
   - FR-018, FR-020; config.md, "The URL pattern for `type = "compose"`".
   - `{port}` → the host port. `{env:NAME}` → the process environment, verbatim (v0.1.x).
     `{compose_env:NAME}` → the service's resolved `environment[NAME]`,
@@ -1149,15 +1149,15 @@ in CI) and a named project volume.
   - New `test_a_compose_url_must_name_a_local_host` (001:FR-025).
   - No error message contains the resolved password.
   - **Done when** the new cases fail under the failing-test rule.
-- [ ] T076 [US3] Resolve `{port}` and `{compose_env:NAME}` in `resolve_url`, in `src/wtenv/database.py`
+- [X] T076 [US3] Resolve `{port}` and `{compose_env:NAME}` in `resolve_url`, in `src/wtenv/database.py`
   - **Done when** `uv run pytest tests/unit/test_database_url.py -q` exits 0.
-- [ ] T145 [US3] Mutation check: `{compose_env:NAME}` values are percent-encoded, in `src/wtenv/database.py` (restored afterwards)
+- [X] T145 [US3] Mutation check: `{compose_env:NAME}` values are percent-encoded, in `src/wtenv/database.py` (restored afterwards)
   - Guard: plan.md, "Points the maintainer should confirm" 5; data-model.md, Compose-hosted
     database, `url`; safety review, item 8 (it keeps the URL's host local, FR-018, 001:FR-025).
     Insert the value verbatim; the T075 case with a password holding `@`, `/`, `:` and `%` must
     fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T077 [US3] Group check 5A: runs G5 from the repository root; edits no file
+- [X] T077 [US3] Group check 5A: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(database): build the URL of a compose-hosted database`.
 
 ### 5B. The database service's port and its data storage (`compose.py`)
