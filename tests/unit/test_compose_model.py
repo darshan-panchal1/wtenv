@@ -509,3 +509,47 @@ def test_the_same_container_port_published_again_by_the_override_is_a_port_varia
     error = caught.value
     assert error.code is ErrorCode.PORT_VARIABLE_CONFLICT
     assert error.details["variable"] == "WTENV_PORT_WEB_80_TCP"
+
+
+# --- resolving under the wtenv project, for a compose-hosted database (T112; FR-027, H1) -------
+
+
+def test_the_resolution_command_with_a_project_names_it_before_the_subcommand() -> None:
+    command = compose.resolution_command(COMPOSE_FILE, None, "wtenv-feature-x-3f9a1c2b")
+
+    assert command == [
+        "docker",
+        "compose",
+        "-p",
+        "wtenv-feature-x-3f9a1c2b",
+        "-f",
+        "/w/compose.yaml",
+        "--profile",
+        "*",
+        "config",
+        "--format",
+        "json",
+    ]
+
+
+def test_the_project_and_the_override_go_in_one_command() -> None:
+    command = compose.resolution_command(COMPOSE_FILE, REPOSITORY_OVERRIDE, "wtenv-x-12345678")
+
+    assert command[2:4] == ["-p", "wtenv-x-12345678"]
+    assert command[4:8] == ["-f", "/w/compose.yaml", "-f", "/w/compose.override.yml"]
+
+
+def test_the_command_without_a_project_is_unchanged_by_the_parameter() -> None:
+    assert compose.resolution_command(COMPOSE_FILE, None, None) == compose.resolution_command(
+        COMPOSE_FILE
+    )
+    assert "-p" not in compose.resolution_command(COMPOSE_FILE, REPOSITORY_OVERRIDE)
+
+
+def test_resolving_with_a_project_runs_the_command_with_it() -> None:
+    runner = StubRunner('{"name": "wtenv-x-12345678", "services": {}}')
+
+    compose.resolve_model(COMPOSE_FILE, [], project="wtenv-x-12345678", run=runner, environ={})
+
+    ((command, _, _),) = runner.calls
+    assert command == compose.resolution_command(COMPOSE_FILE, None, "wtenv-x-12345678")

@@ -1162,7 +1162,7 @@ in CI) and a named project volume.
 
 ### 5B. The database service's port and its data storage (`compose.py`)
 
-- [ ] T078 [P] [US3] Add failing tests for the port and the storage classifier to `tests/unit/test_compose_database.py` (new)
+- [X] T078 [P] [US3] Add failing tests for the port and the storage classifier to `tests/unit/test_compose_database.py` (new)
   - FR-021, FR-026, FR-027; data-model.md, "Compose-hosted database" and "Data storage
     classification"; research R4.
   - `database_port`: no such service, zero published ports, two or more → `config_invalid`,
@@ -1179,9 +1179,9 @@ in CI) and a named project volume.
   - New `test_a_bind_through_a_symlink_to_outside_the_worktree_is_refused`.
   - Other services' fixed-name volumes still only warn `compose_fixed_volume_name` (R8 unchanged).
   - **Done when** the file fails under the failing-test rule.
-- [ ] T079 [US3] Implement `database_port()` and `database_storage()` in `src/wtenv/compose.py`
+- [X] T079 [US3] Implement `database_port()` and `database_storage()` in `src/wtenv/compose.py`
   - **Done when** `uv run pytest tests/unit/test_compose_database.py -q` exits 0.
-- [ ] T112 [US3] Add failing tests for volume names judged under the wtenv project to `tests/unit/test_compose_database.py`, `tests/unit/test_compose_model.py`, and `tests/integration/test_us3_storage_names.py` (new; `pytestmark = pytest.mark.integration`; Docker)
+- [X] T112 [US3] Add failing tests for volume names judged under the wtenv project to `tests/unit/test_compose_database.py`, `tests/unit/test_compose_model.py`, and `tests/integration/test_us3_storage_names.py` (new; `pytestmark = pytest.mark.integration`; Docker)
   - FR-027, SC-003, SC-004; safety finding H1; data-model.md, Data storage classification;
     research R4, R7 (last paragraph).
   - The case: the compose file sets `name: app`; service `db` mounts volume `pgdata`; top-level
@@ -1199,13 +1199,13 @@ in CI) and a named project volume.
   - Integration: the same files resolved by the real Compose through `compose.resolve_model` and
     `compose.database_storage`. Only `docker compose config` runs; nothing is created.
   - **Done when** the new cases fail under the failing-test rule.
-- [ ] T113 [US3] Resolve with `-p <project>` for the storage check, in `src/wtenv/compose.py` and `src/wtenv/provision.py`
+- [X] T113 [US3] Resolve with `-p <project>` for the storage check, in `src/wtenv/compose.py` and `src/wtenv/provision.py`
   - Needs T079. `resolution_command` takes an optional project; `_compose_plan` passes the
     recorded or generated project when `[database] type = "compose"`. `database_storage`
     compares a volume's `name` with `<project>_<key>`. Without `type = "compose"`, the command
     and every result are v0.1.1's (FR-008, FR-028).
   - **Done when** `uv run pytest tests/unit/test_compose_database.py tests/unit/test_compose_model.py tests/integration/test_us3_storage_names.py -q` exits 0.
-- [ ] T125 [US3] Add failing tests for a volume device that is not an absolute path to `tests/unit/test_compose_database.py`
+- [X] T125 [US3] Add failing tests for a volume device that is not an absolute path to `tests/unit/test_compose_database.py`
   - FR-027 (amended by safety finding M4); data-model.md, Data storage classification, row
     `device_not_absolute`; research R4.
   - `database_storage_shared`, `storage` `device_not_absolute`, `details.name` the device as
@@ -1217,32 +1217,32 @@ in CI) and a named project volume.
   - Unchanged: an absolute device is still judged as a bind (inside → warning
     `worktree_directory`, outside → `host_directory`); a volume without `driver_opts`.
   - **Done when** the new cases fail under the failing-test rule.
-- [ ] T126 [US3] Refuse a non-absolute `nfs`, `cifs` or local-bind device, in `database_storage` (`src/wtenv/compose.py`)
+- [X] T126 [US3] Refuse a non-absolute `nfs`, `cifs` or local-bind device, in `database_storage` (`src/wtenv/compose.py`)
   - Needs T113. `os.path.isabs(device)` on the device as written; a relative device is never
     passed to `realpath`.
   - **Done when** `uv run pytest tests/unit/test_compose_database.py -q` exits 0.
-- [ ] T127 [US3] Mutation check: the non-absolute device row, in `src/wtenv/compose.py` (restored afterwards)
+- [X] T127 [US3] Mutation check: the non-absolute device row, in `src/wtenv/compose.py` (restored afterwards)
   - Guard: FR-027, safety finding M4. Judge a relative device as a bind resolved against the
     current directory (the plan before M4); the `device: ./data` case of T125 must fail (it is
     then classed `worktree_directory`).
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T080 [US3] Mutation check: FR-027 row "external volume", in `src/wtenv/compose.py` (restored afterwards)
+- [X] T080 [US3] Mutation check: FR-027 row "external volume", in `src/wtenv/compose.py` (restored afterwards)
   - Classify `external: true` as accepted; its case must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T081 [US3] Mutation check: FR-027 row "fixed-name volume" (R8 name rule, judged under the wtenv project), in `src/wtenv/compose.py` (restored afterwards)
+- [X] T081 [US3] Mutation check: FR-027 row "fixed-name volume" (R8 name rule, judged under the wtenv project), in `src/wtenv/compose.py` (restored afterwards)
   - Restore the old comparison: resolve without `-p` and compare the volume's `name` with
     `<model name>_<key>`. The case of T112 (compose `name: app`, volume `name: app_pgdata`, a
     wtenv project other than `app`) must fail, in the unit and in the integration test. A case
     whose fixed name has nothing in common with the project name does not count: it is refused
     under the old comparison too, so it cannot show safety finding H1.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T082 [US3] Mutation check: FR-027 row "`driver_opts.device`", in `src/wtenv/compose.py` (restored afterwards)
+- [X] T082 [US3] Mutation check: FR-027 row "`driver_opts.device`", in `src/wtenv/compose.py` (restored afterwards)
   - Ignore `device`; the case of a project-named volume whose device is outside the worktree must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T083 [US3] Mutation check: FR-027 row "bind outside the worktree" (real paths), in `src/wtenv/compose.py` (restored afterwards)
+- [X] T083 [US3] Mutation check: FR-027 row "bind outside the worktree" (real paths), in `src/wtenv/compose.py` (restored afterwards)
   - Compare unresolved paths instead of `realpath`; `test_a_bind_through_a_symlink_to_outside_the_worktree_is_refused` must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T084 [US3] Group check 5B: runs G5 from the repository root; edits no file
+- [X] T084 [US3] Group check 5B: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `feat(compose): find the database port and refuse shared data storage`.
 
 ### 5C. `up` with a compose-hosted database (`provision.py`, `output.py`)

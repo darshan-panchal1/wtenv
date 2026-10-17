@@ -12,7 +12,7 @@ import re
 import subprocess
 import tempfile
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol
 from urllib.parse import urlsplit
@@ -87,23 +87,29 @@ class ComposeModel:
 
     mappings: list[PortMapping]
     warnings: list[WarningInfo]
+    # The resolved document itself, for the database service's environment and data mounts.
+    document: Mapping[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
 
 # --- resolving the compose file (research.md §4, Decision) -------------------------------------
 
 
 def resolution_command(
-    file: str | Path, repository_override: str | Path | None = None
+    file: str | Path,
+    repository_override: str | Path | None = None,
+    project: str | None = None,
 ) -> list[str]:
     """Return the command that resolves `file` with every profile (research.md §4).
 
     With a `repository_override`, Compose reads it after `file`, so the model is the combined one
-    (FR-003). Without one the command is exactly v0.1.1's.
+    (FR-003). With a `project` (a compose-hosted database, FR-027) Compose names the model and
+    its project-scoped volumes after it. Without either the command is exactly v0.1.1's.
     """
+    name = [] if project is None else ["-p", project]
     files = ["-f", str(file)]
     if repository_override is not None:
         files += ["-f", str(repository_override)]
-    return ["docker", "compose", *files, "--profile", "*", "config", "--format", "json"]
+    return ["docker", "compose", *name, *files, "--profile", "*", "config", "--format", "json"]
 
 
 def marker_environment(variables: Sequence[str]) -> dict[str, str]:
@@ -120,18 +126,20 @@ def resolve_model(
     variables: Sequence[str],
     *,
     repository_override: Path | None = None,
+    project: str | None = None,
     run: Runner = run_command,
     environ: Mapping[str, str] | None = None,
 ) -> ComposeModel:
     """Have Compose resolve `file` with the markers of `variables`, and parse the result.
 
-    With a `repository_override` the model is the combined one of `file` and that override.
+    With a `repository_override` the model is the combined one of `file` and that override. With
+    a `project` it is resolved under that project name (`resolution_command`).
     Raises `config_invalid` (naming `compose.file`) when Compose cannot resolve the file, and
     `unsupported` for a published range (FR-033). `environ` defaults to the process environment.
     """
     base = os.environ if environ is None else environ
     process = run(
-        resolution_command(file, repository_override),
+        resolution_command(file, repository_override, project),
         {**base, **marker_environment(variables)},
         file.parent,
     )
@@ -182,7 +190,7 @@ def parse_model(document: Mapping[str, Any]) -> ComposeModel:
                 raise _port_range(service, mapping.published)
             mappings.append(mapping)
     warnings += _fixed_volume_names(document)
-    return ComposeModel(mappings=mappings, warnings=warnings)
+    return ComposeModel(mappings=mappings, warnings=warnings, document=document)
 
 
 def _fixed_volume_names(document: Mapping[str, Any]) -> list[WarningInfo]:
@@ -249,6 +257,143 @@ def _fixed_container_name(service: str, container_name: str) -> WarningInfo:
             "both run it"
         ),
         details={"service": service, "container_name": container_name},
+    )
+
+
+# --- the compose-hosted database service (FR-021, FR-026, FR-027; research R4) -----------------
+
+
+def database_port(
+    model: ComposeModel, service: str, *, config_file: str | None = None
+) -> PortMapping:
+    """Return the one published port of the database `service`, or raise `config_invalid`.
+
+    The error has `setting` `database.service` and names the service and what was found: no such
+    service, no published port, or several (FR-021).
+    """
+    services: Mapping[str, Any] = model.document.get("services") or {}
+    if service not in services:
+        raise _database_service_problem(
+            service, f"the compose file has no service {service}", config_file
+        )
+    published = [m for m in model.mappings if m.service == service and m.published is not None]
+    if not published:
+        raise _database_service_problem(
+            service, f"service {service} has no published port", config_file
+        )
+    if len(published) > 1:
+        raise _database_service_problem(
+            service, f"service {service} has {len(published)} published ports, not one", config_file
+        )
+    return published[0]
+
+
+def _database_service_problem(service: str, found: str, config_file: str | None) -> WtenvError:
+    return WtenvError(
+        ErrorCode.CONFIG_INVALID,
+        f"database.service {service}: {found}",
+        hint="Name a service that publishes exactly one port, then run `wtenv up` again. "
+        "Nothing was changed.",
+        details={"file": config_file, "setting": "database.service", "service": service},
+    )
+
+
+# The `driver_opts.type` values whose `device` names a place on the host or a share (data-model.md).
+_DEVICE_DRIVER_TYPES = ("nfs", "cifs", "none")
+
+
+def database_storage(
+    model: ComposeModel, service: str, *, root: Path, project: str
+) -> list[WarningInfo]:
+    """Classify where the database `service` keeps its data; return the warnings to report.
+
+    `model` was resolved with `-p <project>`, and `root` is the worktree root. The data mounts are
+    the service's `volume` and `bind` entries that are not `read_only`. Raises
+    `database_storage_shared` (exit 23) for the first shared storage in mount order; every
+    accepted mount that keeps data outside a project volume adds a `compose_database_data_kept`
+    warning (FR-026, FR-027; data-model.md, "Data storage classification").
+    """
+    services: Mapping[str, Mapping[str, Any]] = model.document.get("services") or {}
+    top: Mapping[str, Mapping[str, Any] | None] = model.document.get("volumes") or {}
+    mounts = [
+        mount
+        for mount in services[service].get("volumes") or []
+        if mount.get("type") in ("volume", "bind") and not mount.get("read_only")
+    ]
+    if not mounts:
+        return [_data_kept(service, "no_volume", None)]
+    warnings: list[WarningInfo] = []
+    for mount in mounts:
+        warnings += _judge_mount(service, mount, top, root, project)
+    return warnings
+
+
+def _judge_mount(
+    service: str,
+    mount: Mapping[str, Any],
+    top: Mapping[str, Mapping[str, Any] | None],
+    root: Path,
+    project: str,
+) -> list[WarningInfo]:
+    """Return the warning for one data mount, or raise `database_storage_shared`."""
+    if mount["type"] == "bind":
+        return _judge_directory(service, str(mount["source"]), root)
+    key = mount.get("source")
+    if not key:
+        return [_data_kept(service, "anonymous_volume", None)]
+    settings = top.get(key) or {}
+    name = str(settings.get("name", key))
+    if settings.get("external"):
+        raise _storage_shared(service, "external_volume", name)
+    if name != f"{project}_{key}":
+        raise _storage_shared(service, "fixed_name_volume", name)
+    options = settings.get("driver_opts") or {}
+    device = options.get("device")
+    if isinstance(device, str):
+        # A relative device is never resolved against any directory: that would place it inside
+        # the worktree when the current directory is its root (safety finding M4).
+        if options.get("type") in _DEVICE_DRIVER_TYPES and not os.path.isabs(device):
+            raise _storage_shared(service, "device_not_absolute", device)
+        if os.path.isabs(device):
+            return _judge_directory(service, device, root)
+    return []
+
+
+def _judge_directory(service: str, path: str, root: Path) -> list[WarningInfo]:
+    """Judge a host directory by its real path: inside the worktree warns, outside is refused."""
+    real, real_root = os.path.realpath(path), os.path.realpath(root)
+    if real == real_root or real.startswith(real_root + os.sep):
+        return [_data_kept(service, "worktree_directory", real)]
+    raise _storage_shared(service, "host_directory", real)
+
+
+def _data_kept(service: str, storage: str, name: str | None) -> WarningInfo:
+    details = {"service": service, "storage": storage}
+    if name is not None:
+        details["name"] = name
+    where = {
+        "no_volume": "in the container or in a volume its image declares",
+        "anonymous_volume": "in an anonymous volume",
+        "worktree_directory": f"in the directory {name}",
+    }[storage]
+    return WarningInfo(
+        code=WarningCode.COMPOSE_DATABASE_DATA_KEPT,
+        message=(
+            f"service {service} keeps its data {where}; `wtenv down` and `wtenv gc` keep it "
+            "and never remove it"
+        ),
+        details=details,
+    )
+
+
+def _storage_shared(service: str, storage: str, name: str) -> WtenvError:
+    return WtenvError(
+        ErrorCode.DATABASE_STORAGE_SHARED,
+        f"service {service} keeps its data where other worktrees or the main checkout would "
+        f"share it ({storage}: {name})",
+        hint="Store the data in a project volume (no `name:`, not `external`) or in a directory "
+        "inside the worktree. Nothing was changed.",
+        details={"service": service, "storage": storage, "name": name},
     )
 
 

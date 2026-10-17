@@ -410,10 +410,19 @@ def _compose_plan(
         excluded = _excluded_override_warning(root, identity, repository_override)
         plan_warnings += () if excluded is None else (excluded,)
     compose.check_environment(root, settings.file, os.environ)
+    project = (
+        recorded.project
+        if recorded is not None
+        else compose.project_name(Path(identity.path).name, identity.git_dir)
+    )
     model = compose.resolve_model(
         root / settings.file,
         config.ports,
         repository_override=None if repository_override is None else root / repository_override,
+        # A compose-hosted database judges its volume names under the wtenv project (H1, FR-027).
+        project=project
+        if config.database is not None and config.database.type == "compose"
+        else None,
     )
     ports.check_port_variables(
         model.mappings,
@@ -424,11 +433,7 @@ def _compose_plan(
         override=(
             compose.override_path(settings.file) if repository_override is None else ISOLATION_FILE
         ),
-        project=(
-            recorded.project
-            if recorded is not None
-            else compose.project_name(Path(identity.path).name, identity.git_dir)
-        ),
+        project=project,
         model=model,
         repository_override=repository_override,
         adopted_override=inventory.adopted,
