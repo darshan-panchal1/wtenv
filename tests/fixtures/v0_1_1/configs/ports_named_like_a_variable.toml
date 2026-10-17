@@ -1,0 +1,4 @@
+ports = ["PORT", "WTENV_PORT_WEB_80_TCP"]
+
+[compose]
+file = "compose.yaml"

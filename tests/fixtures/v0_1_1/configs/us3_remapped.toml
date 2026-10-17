@@ -1,0 +1,5 @@
+ports = ["PORT"]
+block_size = 10
+
+[compose]
+file = "compose.yaml"

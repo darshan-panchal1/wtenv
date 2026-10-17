@@ -52,6 +52,7 @@ from wtenv.output import (
     FailedItem,
     Item,
     ItemKind,
+    KeptItem,
     KeptVolume,
     ResourceState,
     WarningCode,
@@ -85,6 +86,7 @@ class Release:
     already_absent: list[Item] = field(default_factory=list)
     failed: list[FailedItem] = field(default_factory=list)
     kept_volumes: list[KeptVolume] = field(default_factory=list)
+    kept_items: list[KeptItem] = field(default_factory=list)
     released: bool = False
 
     def add(self, removal: Removal) -> None:
@@ -151,6 +153,7 @@ def _release(
     release.removed = [_for_worktree(item, entry) for item in release.removed]
     release.already_absent = [_for_worktree(item, entry) for item in release.already_absent]
     release.failed = [_for_worktree(item, entry) for item in release.failed]
+    release.kept_items = [_for_worktree(item, entry) for item in release.kept_items]
     return release
 
 
@@ -242,6 +245,13 @@ def _override_step(
     if symlinked_part(root, record.override) is not None:
         release.failed.append(FailedItem(kind=item.kind, name=item.name, reason=SYMLINK_REASON))
         return
+    name_problem = compose.override_name_problem(record.override)
+    if name_problem is not None:
+        release.failed.append(FailedItem(kind=item.kind, name=item.name, reason=name_problem))
+        return
+    if _git_tracks(root, record.override):
+        _keep_override(entry, item, release, dry_run, project_failed)
+        return
     not_wtenvs = compose.override_problem(root, record.override)
     if not_wtenvs is not None:
         release.failed.append(FailedItem(kind=item.kind, name=item.name, reason=not_wtenvs))
@@ -253,6 +263,14 @@ def _override_step(
     else:
         if record.override_state is not ResourceState.REMOVING:
             _set_override_state(entry.git_dir, ResourceState.REMOVING)
+        # The save waited for the registry lock, long enough for a checkout to replace the file.
+        if _git_tracks(root, record.override):
+            _keep_override(entry, item, release, dry_run, project_failed)
+            return
+        replaced = compose.override_problem(root, record.override)
+        if replaced is not None:
+            release.failed.append(FailedItem(kind=item.kind, name=item.name, reason=replaced))
+            return
         try:
             override.unlink()
         except OSError as error:
@@ -264,8 +282,20 @@ def _override_step(
         _update(entry.git_dir, _drop_compose_record)
 
 
+def _keep_override(
+    entry: WorktreeEntry, item: Item, release: Release, dry_run: bool, project_failed: bool
+) -> None:
+    """Report the recorded override as the repository's and drop its record (FR-006, safety L2).
+
+    Git tracks the file, with or without wtenv's header, so it is never deleted or changed.
+    """
+    release.kept_items.append(KeptItem(kind=item.kind, name=item.name, reason="repository_owned"))
+    if not dry_run and not project_failed:
+        _update(entry.git_dir, _drop_compose_record)
+
+
 def _git_tracks(root: Path, relative: str) -> bool:
-    """Return whether git tracks the env file `relative`, which `down` must then leave as it is.
+    """Return whether git tracks the file `relative`, which `down` must then leave as it is.
 
     FR-018: a file the developer force-added after `up` is theirs, and rewriting or deleting it
     would show up as a change in git. A file that is not there has nothing to protect. When git
@@ -665,4 +695,5 @@ def _result(
         already_absent=release.already_absent,
         failed=release.failed,
         kept_volumes=release.kept_volumes,
+        kept_items=release.kept_items,
     )

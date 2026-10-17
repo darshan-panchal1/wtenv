@@ -1,0 +1,23 @@
+fastapi template (compose.yml + compose.override.yml, every profile, Compose 2.24.4):
+  adminer:8080/tcp       -> WTENV_PORT_ADMINER_8080_TCP
+  backend:8000/tcp       -> WTENV_PORT_BACKEND_8000_TCP
+  db:5432/tcp            -> WTENV_PORT_DB_5432_TCP
+  mailpit:8025/tcp       -> WTENV_PORT_MAILPIT_8025_TCP
+  mailpit:1025/tcp       -> WTENV_PORT_MAILPIT_1025_TCP
+  playwright:9323/tcp    -> WTENV_PORT_PLAYWRIGHT_9323_TCP
+  proxy:80/tcp           -> WTENV_PORT_PROXY_80_TCP
+  proxy:8080/tcp         -> WTENV_PORT_PROXY_8080_TCP
+synthetic:
+  coredns:53/udp         -> WTENV_PORT_COREDNS_53_UDP
+  coredns:53/tcp         -> WTENV_PORT_COREDNS_53_TCP
+  api.v2:8000/tcp        -> WTENV_PORT_API_V2_8000_TCP
+  2fa:9000/tcp           -> WTENV_PORT_2FA_9000_TCP
+collisions:
+  my-api:8000/tcp        -> WTENV_PORT_MY_API_8000_TCP
+  my_api:8000/tcp        -> WTENV_PORT_MY_API_8000_TCP   COLLISION with my-api:8000/tcp -> up refuses (FR-012)
+  API:80/tcp             -> WTENV_PORT_API_80_TCP
+  api:80/tcp             -> WTENV_PORT_API_80_TCP   COLLISION with API:80/tcp -> up refuses (FR-012)
+  web:6379/tcp           -> WTENV_PORT_WEB_6379_TCP
+  web:6379/tcp           -> WTENV_PORT_WEB_6379_TCP   COLLISION with web:6379/tcp -> up refuses (FR-012)
+  a-b:1/tcp              -> WTENV_PORT_A_B_1_TCP
+  a--b:1/tcp             -> WTENV_PORT_A__B_1_TCP

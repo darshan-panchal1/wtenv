@@ -1,0 +1,4 @@
+services:
+  cache:
+    image: valkey/valkey:latest
+    pull_policy: never

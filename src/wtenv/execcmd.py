@@ -13,7 +13,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from wtenv import registry
+from wtenv import isolation, registry
 from wtenv.envfile import read_section
 from wtenv.errors import EXEC_COMMAND_NOT_EXECUTABLE, EXEC_COMMAND_NOT_FOUND, ErrorCode, WtenvError
 from wtenv.gitutil import git_listing
@@ -28,12 +28,15 @@ def command_environment(cwd: str | Path | None = None) -> dict[str, str]:
 
     The worktree is the one that contains `cwd` (default: the current directory) and must be
     `provisioned`, as `classify` says (FR-057). A variable of the section replaces one of the
-    same name in the current environment. `exec` takes the registry lock only to read, and no
-    worktree lock (FR-076).
+    same name in the current environment. In the exec-only arrangement (the entry records
+    `repository_override`) the seven checks of FR-033 run, and the environment also holds
+    `COMPOSE_FILE` and `COMPOSE_PATH_SEPARATOR`; in every other worktree only checks A and B run. `exec` takes the registry lock only to read,
+    and no worktree lock (FR-076). It does not import `wtenv.compose` (NFR-001).
 
     Raises `not_in_worktree`; `not_provisioned` (`details.status` is `unprovisioned`,
     `incomplete`, `unverifiable`, or `orphaned`); `env_file_unusable` with reason `missing`,
-    `no_section`, or `markers_damaged`; and the registry errors.
+    `no_section`, or `markers_damaged`; `isolation_unavailable` (FR-033); and the registry
+    errors.
     """
     identity = current_worktree(cwd)
     with registry_lock():
@@ -44,7 +47,22 @@ def command_environment(cwd: str | Path | None = None) -> dict[str, str]:
     if status is not Status.PROVISIONED or entry.env_file is None:
         raise _not_provisioned(entry.path, Status.INCOMPLETE if entry.env_file is None else status)
     variables = read_section(Path(entry.path) / entry.env_file.path)
-    return {**os.environ, **dict(variables)}
+    environment = {**os.environ, **dict(variables)}
+    record = entry.compose
+    if record is not None and record.repository_override is not None:
+        # The exec-only arrangement is decided by this field alone (data-model.md): the isolation
+        # file is applied through `COMPOSE_FILE`, after the seven checks (FR-033).
+        root = Path(entry.path)
+        isolation.check_isolation(root, record, os.environ)
+        environment.update(isolation.compose_environment(root, record))
+    else:
+        # Every other worktree: only check A (FR-033, safety finding M1). The environment is
+        # v0.1.1's plus the section.
+        isolation.check_inherited_compose_file(Path(entry.path), os.environ)
+        if record is not None:
+            # Check B (safety finding M5): an override that appeared beside wtenv's own.
+            isolation.check_automatic_override(Path(entry.path), record)
+    return environment
 
 
 def replace_process(command: Sequence[str], environment: Mapping[str, str]) -> int:

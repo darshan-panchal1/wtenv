@@ -1,0 +1,38 @@
+=== v2.24.4: Docker Compose version v2.24.4
+
+## E2.13 COMPOSE_PROJECT_DIRECTORY beside COMPOSE_FILE, from a subdirectory
+
+$ cd <W>/wtenv-research-e2/backend && COMPOSE_FILE=<W>/wtenv-research-e2/compose.yaml:<W>/wtenv-research-e2/compose.override.yaml:<W>/wtenv-research-e2/.wtenv/override.yaml COMPOSE_PROJECT_DIRECTORY=<W>/wtenv-research-e2 docker compose config --format json | jq -c '{name, web: [.services.web.ports[] | .published], dotenv: .services.api.environment.FROM_DOT_ENV}'
+{"name":"wtenv-research-e2-iso","web":["28001","28002"],"dotenv":"unset"}
+[exit 0]
+
+## E2.14 --project-directory flag, from a subdirectory
+
+$ cd <W>/wtenv-research-e2/backend && COMPOSE_FILE=<W>/wtenv-research-e2/compose.yaml:<W>/wtenv-research-e2/compose.override.yaml:<W>/wtenv-research-e2/.wtenv/override.yaml docker compose --project-directory <W>/wtenv-research-e2 config --format json | jq -c '{name, web: [.services.web.ports[] | .published], dotenv: .services.api.environment.FROM_DOT_ENV}'
+{"name":"wtenv-research-e2-iso","web":["28001","28002"],"dotenv":"from-dot-env"}
+[exit 0]
+
+## E2.15 no COMPOSE_FILE, plain command from a subdirectory (Compose finds the files by walking up)
+
+$ cd <W>/wtenv-research-e2/backend && docker compose config --format json | jq -c '{name, web: [.services.web.ports[] | .published], dotenv: .services.api.environment.FROM_DOT_ENV}'
+{"name":"wtenv-research-e2-base","web":["18001","18002"],"dotenv":"unset"}
+[exit 0]
+=== v5.1.4: Docker Compose version v5.1.4
+
+## E2.13 COMPOSE_PROJECT_DIRECTORY beside COMPOSE_FILE, from a subdirectory
+
+$ cd <W>/wtenv-research-e2/backend && COMPOSE_FILE=<W>/wtenv-research-e2/compose.yaml:<W>/wtenv-research-e2/compose.override.yaml:<W>/wtenv-research-e2/.wtenv/override.yaml COMPOSE_PROJECT_DIRECTORY=<W>/wtenv-research-e2 docker compose config --format json | jq -c '{name, web: [.services.web.ports[] | .published], dotenv: .services.api.environment.FROM_DOT_ENV}'
+{"name":"wtenv-research-e2-iso","web":["28001","28002"],"dotenv":"from-dot-env"}
+[exit 0]
+
+## E2.14 --project-directory flag, from a subdirectory
+
+$ cd <W>/wtenv-research-e2/backend && COMPOSE_FILE=<W>/wtenv-research-e2/compose.yaml:<W>/wtenv-research-e2/compose.override.yaml:<W>/wtenv-research-e2/.wtenv/override.yaml docker compose --project-directory <W>/wtenv-research-e2 config --format json | jq -c '{name, web: [.services.web.ports[] | .published], dotenv: .services.api.environment.FROM_DOT_ENV}'
+{"name":"wtenv-research-e2-iso","web":["28001","28002"],"dotenv":"from-dot-env"}
+[exit 0]
+
+## E2.15 no COMPOSE_FILE, plain command from a subdirectory (Compose finds the files by walking up)
+
+$ cd <W>/wtenv-research-e2/backend && docker compose config --format json | jq -c '{name, web: [.services.web.ports[] | .published], dotenv: .services.api.environment.FROM_DOT_ENV}'
+{"name":"wtenv-research-e2-base","web":["18001","18002"],"dotenv":"from-dot-env"}
+[exit 0]

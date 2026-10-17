@@ -32,6 +32,19 @@ class WarningCode(StrEnum):
     COMPOSE_FIXED_VOLUME_NAME = "compose_fixed_volume_name"
     WORKTREE_MOVED = "worktree_moved"
     CONFIG_IGNORED = "config_ignored"
+    # Spec 002 (FR-031). The repository owns its override, so Compose commands are isolated only
+    # through `wtenv exec`; a plain `docker compose` runs without isolation (FR-004, FR-005).
+    COMPOSE_ISOLATION_EXEC_ONLY = "compose_isolation_exec_only"
+    # The compose-hosted database's data is in an anonymous volume, in no volume, or in a
+    # directory inside the worktree, which `down` and `gc` keep (FR-026, FR-027).
+    COMPOSE_DATABASE_DATA_KEPT = "compose_database_data_kept"
+    # A git-tracked file at the recorded override path, with or without wtenv's header, is now
+    # treated as the repository's; wtenv stopped recording it and never touched it (FR-006).
+    COMPOSE_OVERRIDE_ADOPTED = "compose_override_adopted"
+    # Git ignores the untracked repository override because of a line of wtenv's exclude block
+    # written for another worktree; a checkout or `git clean -X` could then overwrite or delete
+    # it (FR-002).
+    COMPOSE_OVERRIDE_EXCLUDED = "compose_override_excluded"
 
 
 class FindingCode(StrEnum):
@@ -134,6 +147,9 @@ class PortView(Model):
     target: int | None = None  # container port
     protocol: Literal["tcp", "udp"] | None = None
     host_ip: str | None = None
+    # The port variable of this published port, `WTENV_PORT_<SERVICE>_<PORT>_<PROTOCOL>`
+    # (FR-011, FR-014). Set when `service` is set; null for a port of `ports` only.
+    port_variable: str | None = None
 
 
 class DatabaseView(Model):
@@ -161,6 +177,13 @@ class WorktreeView(Model):
     databases: list[DatabaseView] = Field(default_factory=list)
     compose_project: str | None = None
     env_file: str | None = None  # relative to the worktree root
+    # How Compose commands get the worktree's isolation (FR-005). "automatic": plain
+    # `docker compose` loads wtenv's generated override. "exec_only": the repository owns its
+    # override; only `wtenv exec` and post-up commands are isolated. Null without compose.
+    compose_isolation: Literal["automatic", "exec_only"] | None = None
+    # The repository-owned override the worktree uses, relative to the worktree root; set only
+    # when `compose_isolation` is "exec_only".
+    compose_repository_override: str | None = None
 
 
 class ItemKind(StrEnum):
@@ -197,6 +220,16 @@ class FailedItem(Item):
     reason: str
 
 
+class KeptItem(Item):
+    """002: a recorded item that `down` or `gc` found to be the repository's and left alone.
+
+    "repository_owned": the recorded override path holds a file that git tracks, with or without
+    wtenv's header (FR-006). Its record was dropped; the file was not touched.
+    """
+
+    reason: Literal["repository_owned"]
+
+
 class KeptVolume(Model):
     """A Docker volume that `down` or `gc` found and did not remove (FR-039, FR-041)."""
 
@@ -221,6 +254,21 @@ class VersionResult(Result):
     version: str
 
 
+class ComposeDatabaseView(Model):
+    """002: a database that runs as a service of the worktree's compose project (FR-017 to FR-021).
+
+    Shown by port and variable names only; the URL can hold a password and is never shown
+    (FR-020).
+    """
+
+    service: str
+    target: int  # the container port of its one published port
+    protocol: Literal["tcp", "udp"]
+    port: int  # the host port assigned to it
+    port_variable: str  # e.g. WTENV_PORT_DB_5432_TCP
+    url_variable: Literal["DATABASE_URL"] = "DATABASE_URL"
+
+
 class UpChange(Model):
     item: Item
     action: Literal["created", "updated", "unchanged", "released"]
@@ -238,6 +286,8 @@ class UpResult(Result):
     worktree: WorktreeView | None = None
     changes: list[UpChange] = Field(default_factory=list)
     post_up: list[PostUpRun] = Field(default_factory=list)
+    # Set when `[database] type = "compose"`.
+    compose_database: ComposeDatabaseView | None = None
 
 
 class DownResult(Result):
@@ -254,6 +304,8 @@ class DownResult(Result):
     already_absent: list[Item] = Field(default_factory=list)
     failed: list[FailedItem] = Field(default_factory=list)
     kept_volumes: list[KeptVolume] = Field(default_factory=list)
+    # Recorded items found to be the repository's and left alone (FR-006).
+    kept_items: list[KeptItem] = Field(default_factory=list)
 
 
 class KeptEntry(Model):
@@ -278,6 +330,8 @@ class GcResult(Result):
     already_absent: list[Item] = Field(default_factory=list)
     failed: list[FailedItem] = Field(default_factory=list)
     kept_volumes: list[KeptVolume] = Field(default_factory=list)
+    # Recorded items found to be the repository's and left alone (FR-006).
+    kept_items: list[KeptItem] = Field(default_factory=list)
     kept: list[KeptEntry] = Field(default_factory=list)
     # Entries whose worktree lock was held; not waited for (FR-077).
     skipped_busy: list[str] = Field(default_factory=list)
@@ -398,8 +452,16 @@ def render_up_text(result: UpResult) -> str:
             lines.append(f"  {'released':<11}{change.item.kind.value} {change.item.name}")
     for database in worktree.databases:
         lines.append(_database_line(database, result.changes))
+    if result.compose_database is not None:
+        view = result.compose_database
+        lines.append(
+            f"  {'database':<11}compose service {view.service} on localhost:{view.port}"
+            f"  ({view.url_variable})"
+        )
     if worktree.compose_project is not None:
         lines.append(_compose_line(worktree.compose_project, worktree.path, result.changes))
+    if worktree.compose_isolation == "exec_only":
+        lines += _isolation_lines(worktree.compose_repository_override)
     if worktree.env_file is not None:
         # The section of the env file that is in use, not one that was released.
         action = next(
@@ -549,9 +611,10 @@ def _published_cells(result: LsResult) -> list[str]:
 
 
 def _published_cell(port: PortView) -> str:
-    """Return `service:target->port`; a port that is not tcp shows `/protocol`."""
+    """Return `service:target->port (NAME)`; a port that is not tcp shows `/protocol` (FR-014)."""
     protocol = "" if port.protocol in (None, "tcp") else f"/{port.protocol}"
-    return f"{port.service}:{port.target}{protocol}->{port.port}"
+    named = "" if port.port_variable is None else f" ({port.port_variable})"
+    return f"{port.service}:{port.target}{protocol}->{port.port}{named}"
 
 
 def _ls_row(view: WorktreeView) -> tuple[str, str, str, str, str, str]:
@@ -577,10 +640,15 @@ def _ls_row(view: WorktreeView) -> tuple[str, str, str, str, str, str]:
 
 
 def _published_text(port: PortView) -> str:
-    """Return `service:target -> port (VARIABLE)`; a port that is not tcp shows `/protocol`."""
+    """Return `service:target -> port (NAMES)`; a port that is not tcp shows `/protocol`.
+
+    The names are the `ports` variable the port is tied to, if any, then its port variable
+    (FR-014): `db:5432 -> 20011 (DB_PORT, WTENV_PORT_DB_5432_TCP)`.
+    """
     protocol = "" if port.protocol in (None, "tcp") else f"/{port.protocol}"
-    tied = "" if port.variable is None else f" ({port.variable})"
-    return f"{port.service}:{port.target}{protocol} -> {port.port}{tied}"
+    names = [name for name in (port.variable, port.port_variable) if name is not None]
+    shown = f" ({', '.join(names)})" if names else ""
+    return f"{port.service}:{port.target}{protocol} -> {port.port}{shown}"
 
 
 def _compose_line(project: str, root: str, changes: Sequence[UpChange]) -> str:
@@ -598,6 +666,16 @@ def _compose_line(project: str, root: str, changes: Sequence[UpChange]) -> str:
     name = override.item.name
     shown = os.path.relpath(name, root) if name.startswith(root.rstrip("/") + "/") else name
     return f"  {'compose':<11}{project}  {shown} ({override.action})"
+
+
+def _isolation_lines(repository_override: str | None) -> list[str]:
+    """Return the `isolation` lines: Compose is isolated only through `wtenv exec` here (FR-004)."""
+    first = f"  {'isolation':<11}exec only: the repository owns {repository_override}. Run Compose through"
+    second = (
+        f"  {'':<11}`wtenv exec -- docker compose ...`; "
+        "a plain `docker compose` here runs WITHOUT isolation."
+    )
+    return [first, second]
 
 
 def _database_line(database: DatabaseView, changes: Sequence[UpChange]) -> str:

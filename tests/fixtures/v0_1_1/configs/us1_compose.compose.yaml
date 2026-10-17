@@ -1,0 +1,6 @@
+services:
+  cache:
+    image: valkey/valkey:latest
+    pull_policy: never
+    ports:
+      - "${CACHE_PORT:-6379}:6379"

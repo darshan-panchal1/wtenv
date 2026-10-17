@@ -1,0 +1,175 @@
+=== v5.1.4: Docker Compose version v5.1.4
+
+## E6.1 a1 KEY=value (control): .env is  C O M P O S E _ P R O J E C T _
+ N A M E = w t e n v - r e s e a
+ r c h - e 6 - e q \n 
+
+$ cd <W>/wtenv-research-e6a && COMPOSE_FILE=<W>/wtenv-research-e6a/compose.yaml docker compose config --format json | jq -c '{name, web: [.services.web.ports[]? | .published], dotenv: .services.web.environment.FROM_DOT_ENV}'
+{"name":"wtenv-research-e6-eq","web":[],"dotenv":"unset"}
+[exit 0]
+
+$ python3 -I <research>/e6_pattern.py <W>/wtenv-research-e6a/.env
+v0.1.1 '=' only: COMPOSE_PROJECT_NAME
+'[=:]':          COMPOSE_PROJECT_NAME
+'[=:]' + BOM:    COMPOSE_PROJECT_NAME
+[exit 0]
+
+## E6.1 a2 KEY: value: .env is  C O M P O S E _ P R O J E C T _
+ N A M E : w t e n v - r e s e
+ a r c h - e 6 - c o l o n \n 
+
+$ cd <W>/wtenv-research-e6a && COMPOSE_FILE=<W>/wtenv-research-e6a/compose.yaml docker compose config --format json | jq -c '{name, web: [.services.web.ports[]? | .published], dotenv: .services.web.environment.FROM_DOT_ENV}'
+{"name":"wtenv-research-e6-colon","web":[],"dotenv":"unset"}
+[exit 0]
+
+$ python3 -I <research>/e6_pattern.py <W>/wtenv-research-e6a/.env
+v0.1.1 '=' only: -
+'[=:]':          COMPOSE_PROJECT_NAME
+'[=:]' + BOM:    COMPOSE_PROJECT_NAME
+[exit 0]
+
+## E6.1 a3 KEY:value: .env is  C O M P O S E _ P R O J E C T _
+ N A M E : w t e n v - r e s e a
+ r c h - e 6 - c o l o n - n o s
+ p a c e \n 
+
+$ cd <W>/wtenv-research-e6a && COMPOSE_FILE=<W>/wtenv-research-e6a/compose.yaml docker compose config --format json | jq -c '{name, web: [.services.web.ports[]? | .published], dotenv: .services.web.environment.FROM_DOT_ENV}'
+{"name":"wtenv-research-e6-colon-nospace","web":[],"dotenv":"unset"}
+[exit 0]
+
+$ python3 -I <research>/e6_pattern.py <W>/wtenv-research-e6a/.env
+v0.1.1 '=' only: -
+'[=:]':          COMPOSE_PROJECT_NAME
+'[=:]' + BOM:    COMPOSE_PROJECT_NAME
+[exit 0]
+
+## E6.1 a4 export KEY: value: .env is  e x p o r t C O M P O S E _ P
+ R O J E C T _ N A M E : w t e
+ n v - r e s e a r c h - e 6 - e
+ x p o r t - c o l o n \n
+
+$ cd <W>/wtenv-research-e6a && COMPOSE_FILE=<W>/wtenv-research-e6a/compose.yaml docker compose config --format json | jq -c '{name, web: [.services.web.ports[]? | .published], dotenv: .services.web.environment.FROM_DOT_ENV}'
+{"name":"wtenv-research-e6-export-colon","web":[],"dotenv":"unset"}
+[exit 0]
+
+$ python3 -I <research>/e6_pattern.py <W>/wtenv-research-e6a/.env
+v0.1.1 '=' only: -
+'[=:]':          COMPOSE_PROJECT_NAME
+'[=:]' + BOM:    COMPOSE_PROJECT_NAME
+[exit 0]
+
+## E6.1 a5 indented KEY : value: .env is  C O M P O S E _ P R O J E
+ C T _ N A M E : w t e n v -
+ r e s e a r c h - e 6 - s p a c
+ e d - c o l o n \n 
+
+$ cd <W>/wtenv-research-e6a && COMPOSE_FILE=<W>/wtenv-research-e6a/compose.yaml docker compose config --format json | jq -c '{name, web: [.services.web.ports[]? | .published], dotenv: .services.web.environment.FROM_DOT_ENV}'
+{"name":"wtenv-research-e6-spaced-colon","web":[],"dotenv":"unset"}
+[exit 0]
+
+$ python3 -I <research>/e6_pattern.py <W>/wtenv-research-e6a/.env
+v0.1.1 '=' only: -
+'[=:]':          COMPOSE_PROJECT_NAME
+'[=:]' + BOM:    COMPOSE_PROJECT_NAME
+[exit 0]
+
+## E6.1 a6 UTF-8 BOM, then KEY=value: .env is  357 273 277 C O M P O S E _ P R O J E
+ C T _ N A M E = w t e n v - r e
+ s e a r c h - e 6 - b o m \n 
+
+$ cd <W>/wtenv-research-e6a && COMPOSE_FILE=<W>/wtenv-research-e6a/compose.yaml docker compose config --format json | jq -c '{name, web: [.services.web.ports[]? | .published], dotenv: .services.web.environment.FROM_DOT_ENV}'
+{"name":"wtenv-research-e6-bom","web":[],"dotenv":"unset"}
+[exit 0]
+
+$ python3 -I <research>/e6_pattern.py <W>/wtenv-research-e6a/.env
+v0.1.1 '=' only: -
+'[=:]':          -
+'[=:]' + BOM:    COMPOSE_PROJECT_NAME
+[exit 0]
+
+## E6.1 a7 CRLF line end, KEY: value: .env is  C O M P O S E _ P R O J E C T _
+ N A M E : w t e n v - r e s e
+ a r c h - e 6 - c r l f \r \n 
+
+$ cd <W>/wtenv-research-e6a && COMPOSE_FILE=<W>/wtenv-research-e6a/compose.yaml docker compose config --format json | jq -c '{name, web: [.services.web.ports[]? | .published], dotenv: .services.web.environment.FROM_DOT_ENV}'
+{"name":"wtenv-research-e6-crlf","web":[],"dotenv":"unset"}
+[exit 0]
+
+$ python3 -I <research>/e6_pattern.py <W>/wtenv-research-e6a/.env
+v0.1.1 '=' only: -
+'[=:]':          COMPOSE_PROJECT_NAME
+'[=:]' + BOM:    COMPOSE_PROJECT_NAME
+[exit 0]
+
+## E6.1 a8 COMPOSE_FILE: other.yaml (no COMPOSE_FILE in the environment): .env is  C O M P O S E _ F I L E : o t
+ h e r . y a m l \n 
+
+$ cd <W>/wtenv-research-e6a && COMPOSE_FILE=<W>/wtenv-research-e6a/compose.yaml docker compose config --format json | jq -c '{name, web: [.services.web.ports[]? | .published], dotenv: .services.web.environment.FROM_DOT_ENV}'
+{"name":"wtenv-research-e6-iso","web":[],"dotenv":"unset"}
+[exit 0]
+
+$ python3 -I <research>/e6_pattern.py <W>/wtenv-research-e6a/.env
+v0.1.1 '=' only: -
+'[=:]':          COMPOSE_FILE
+'[=:]' + BOM:    COMPOSE_FILE
+[exit 0]
+
+## E6.1 a8b the same .env, plain command with no COMPOSE_FILE in the environment
+
+$ cd <W>/wtenv-research-e6a && docker compose config --format json | jq -c '{name, web: [.services.web.ports[]? | .published], dotenv: .services.web.environment.FROM_DOT_ENV}'
+service "web" has neither an image nor a build context specified: invalid compose project
+[exit 1]
+
+## E6.2a compose.yaml + compose.override.yml (18002) + compose.override.yaml (18003); stderr shown after the JSON
+
+$ cd <W>/wtenv-research-e6b && docker compose config --format json 2><W>/wtenv-research-e6b/stderr.txt | jq -c '{name, web: [.services.web.ports[]? | .published], dotenv: .services.web.environment.FROM_DOT_ENV}'; echo '--- stderr:'; cat <W>/wtenv-research-e6b/stderr.txt
+{"name":"wtenv-research-e6b","web":["18001","18002"],"dotenv":null}
+--- stderr:
+time=<t> level=warning msg="Found multiple override files with supported names: <W>/wtenv-research-e6b/compose.override.yml, <W>/wtenv-research-e6b/compose.override.yaml"
+time=<t> level=warning msg="Using <W>/wtenv-research-e6b/compose.override.yml"
+[exit 0]
+
+## E6.2b all four override names (yml 18002, yaml 18003, docker-compose yml 18004, docker-compose yaml 18005)
+
+$ cd <W>/wtenv-research-e6b && docker compose config --format json 2><W>/wtenv-research-e6b/stderr.txt | jq -c '{name, web: [.services.web.ports[]? | .published], dotenv: .services.web.environment.FROM_DOT_ENV}'; echo '--- stderr:'; cat <W>/wtenv-research-e6b/stderr.txt
+{"name":"wtenv-research-e6b","web":["18001","18002"],"dotenv":null}
+--- stderr:
+time=<t> level=warning msg="Found multiple override files with supported names: <W>/wtenv-research-e6b/compose.override.yml, <W>/wtenv-research-e6b/compose.override.yaml, <W>/wtenv-research-e6b/docker-compose.override.yml, <W>/wtenv-research-e6b/docker-compose.override.yaml"
+time=<t> level=warning msg="Using <W>/wtenv-research-e6b/compose.override.yml"
+[exit 0]
+
+## E6.3a from sub/, whose .env sets COMPOSE_PROJECT_NAME; COMPOSE_FILE only
+
+$ cd <W>/wtenv-research-e6c/sub && COMPOSE_FILE=<W>/wtenv-research-e6c/compose.yaml docker compose config --format json | jq -c '{name, dotenv: .services.web.environment.FROM_DOT_ENV, only_project: .services.web.environment.ONLY_PROJECT}'
+{"name":"wtenv-research-e6c-subdir","dotenv":"subdir","only_project":"yes"}
+[exit 0]
+
+## E6.3b the same, plus COMPOSE_ENV_FILES=<project>/.env (absolute)
+
+$ cd <W>/wtenv-research-e6c/sub && COMPOSE_FILE=<W>/wtenv-research-e6c/compose.yaml COMPOSE_ENV_FILES=<W>/wtenv-research-e6c/.env docker compose config --format json | jq -c '{name, dotenv: .services.web.environment.FROM_DOT_ENV, only_project: .services.web.environment.ONLY_PROJECT}'
+{"name":"wtenv-research-e6c-iso","dotenv":"project","only_project":"yes"}
+[exit 0]
+
+## E6.3c the same, plus COMPOSE_ENV_FILES=/dev/null (no project .env)
+
+$ cd <W>/wtenv-research-e6c/sub && COMPOSE_FILE=<W>/wtenv-research-e6c/compose.yaml COMPOSE_ENV_FILES=/dev/null docker compose config --format json | jq -c '{name, dotenv: .services.web.environment.FROM_DOT_ENV, only_project: .services.web.environment.ONLY_PROJECT}'
+{"name":"wtenv-research-e6c-iso","dotenv":"unset","only_project":"unset"}
+[exit 0]
+
+## E6.3d from the project directory, COMPOSE_ENV_FILES names a file that sets COMPOSE_PROJECT_NAME
+
+$ cd <W>/wtenv-research-e6c && COMPOSE_FILE=<W>/wtenv-research-e6c/compose.yaml COMPOSE_ENV_FILES=<W>/wtenv-research-e6c/named.env docker compose config --format json | jq -c '{name, dotenv: .services.web.environment.FROM_DOT_ENV, only_project: .services.web.environment.ONLY_PROJECT}'
+{"name":"wtenv-research-e6c-envfiles","dotenv":"envfiles","only_project":"unset"}
+[exit 0]
+
+## E6.3e from sub/, plain command, no COMPOSE_FILE (Compose finds compose.yaml by walking up)
+
+$ cd <W>/wtenv-research-e6c/sub && docker compose config --format json | jq -c '{name, dotenv: .services.web.environment.FROM_DOT_ENV, only_project: .services.web.environment.ONLY_PROJECT}'
+{"name":"wtenv-research-e6c-subdir","dotenv":"subdir","only_project":"yes"}
+[exit 0]
+
+## E6.3f control: from sub/ after removing sub/.env, COMPOSE_FILE only
+
+$ cd <W>/wtenv-research-e6c/sub && COMPOSE_FILE=<W>/wtenv-research-e6c/compose.yaml docker compose config --format json | jq -c '{name, dotenv: .services.web.environment.FROM_DOT_ENV, only_project: .services.web.environment.ONLY_PROJECT}'
+{"name":"wtenv-research-e6c-iso","dotenv":"project","only_project":"yes"}
+[exit 0]

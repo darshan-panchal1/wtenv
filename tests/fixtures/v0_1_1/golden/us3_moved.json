@@ -1,0 +1,47 @@
+{
+  "config": {
+    "block_size": 10,
+    "compose": {
+      "file": "docker-compose.yaml"
+    },
+    "database": null,
+    "env_file": ".env.local",
+    "ports": [
+      "PORT",
+      "CACHE_PORT"
+    ],
+    "post_up": []
+  },
+  "database": null,
+  "env_section": "# >>> wtenv managed (rewritten by `wtenv up`; do not edit) >>>\nPORT=20000\nCACHE_PORT=20001\n# <<< wtenv managed <<<\n",
+  "ports": [
+    {
+      "port": 20000,
+      "variable": "PORT"
+    },
+    {
+      "port": 20001,
+      "variable": "CACHE_PORT"
+    }
+  ],
+  "project": "wtenv-feature-x-175a0f1d",
+  "published": [
+    {
+      "host_ip": null,
+      "port": 20001,
+      "protocol": "tcp",
+      "service": "cache",
+      "target": 6379,
+      "variable": "CACHE_PORT"
+    },
+    {
+      "host_ip": null,
+      "port": 20002,
+      "protocol": "tcp",
+      "service": "web",
+      "target": 6379,
+      "variable": null
+    }
+  ],
+  "warnings": []
+}

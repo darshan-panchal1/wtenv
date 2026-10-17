@@ -242,64 +242,100 @@ def test_a_version_that_cannot_be_read_is_not_installed() -> None:
 
 
 @pytest.mark.parametrize("name", list(compose.OVERRIDE_FILE_NAMES))
-def test_any_of_the_four_override_names_that_is_not_recorded_is_an_ownership_conflict(
+def test_any_of_the_four_override_names_that_is_not_recorded_is_the_repository_override(
     tmp_path: Path, name: str
 ) -> None:
+    """Was `..._is_an_ownership_conflict`: v0.1.x refused the file; now it selects exec-only (FR-001)."""
     (tmp_path / name).write_text("services: {}\n")
 
-    with pytest.raises(WtenvError) as caught:
-        compose.check_override_files(tmp_path, "compose.yaml", None)
+    inventory = compose.override_inventory(tmp_path, "compose.yaml", None)
 
-    error = caught.value
-    assert error.code is ErrorCode.OWNERSHIP_CONFLICT
-    assert error.details["kind"] == "compose_override"
-    assert error.details["name"] == str(tmp_path / name)
+    assert inventory.arrangement == "exec_only"
+    assert inventory.repository_override == name
+    assert inventory.remove == ()
     assert (tmp_path / name).read_text() == "services: {}\n"
 
 
 def test_the_recorded_override_passes(tmp_path: Path) -> None:
-    (tmp_path / "compose.override.yaml").write_text("# wtenv\n")
+    """Calls `override_inventory` since T033 removed `check_override_files`; same outcome.
 
-    compose.check_override_files(tmp_path, "compose.yaml", "compose.override.yaml")
+    No refusal, and wtenv's own recorded file is not the repository's, so the arrangement is
+    automatic. The file now carries the real header line: the old fixture, `# wtenv`, was not
+    wtenv's header, which the inventory (like 001:FR-087) does not accept as wtenv's.
+    """
+    (tmp_path / "compose.override.yaml").write_text(OWN_HEADER)
+
+    inventory = compose.override_inventory(tmp_path, "compose.yaml", "compose.override.yaml")
+
+    assert inventory.arrangement == "automatic"
+    assert inventory.repository_override is None
+    assert inventory.remove == ()
 
 
 def test_no_override_file_passes(tmp_path: Path) -> None:
-    compose.check_override_files(tmp_path, "compose.yaml", None)
-    compose.check_override_files(tmp_path, "compose.yaml", "compose.override.yaml")
+    """Calls `override_inventory` since T033 removed `check_override_files`; same outcome."""
+    for recorded in (None, "compose.override.yaml"):
+        inventory = compose.override_inventory(tmp_path, "compose.yaml", recorded)
+
+        assert inventory.files == ()
+        assert inventory.arrangement == "automatic"
 
 
-def test_a_second_override_name_beside_the_recorded_one_is_a_conflict(tmp_path: Path) -> None:
-    (tmp_path / "compose.override.yaml").write_text("# wtenv\n")
-    (tmp_path / "compose.override.yml").write_text("# developer\n")
+def test_a_second_override_name_beside_the_recorded_one_is_honoured_and_wtenvs_own_is_removed(
+    tmp_path: Path,
+) -> None:
+    """Was `test_a_second_override_name_beside_the_recorded_one_is_a_conflict` (FR-007)."""
+    wtenvs = tmp_path / "compose.override.yaml"
+    developers = tmp_path / "compose.override.yml"
+    wtenvs.write_text(OWN_HEADER + 'name: "old"\n')
+    developers.write_text("# developer\n")
 
-    with pytest.raises(WtenvError) as caught:
-        compose.check_override_files(tmp_path, "compose.yaml", "compose.override.yaml")
+    inventory = compose.override_inventory(tmp_path, "compose.yaml", "compose.override.yaml")
 
-    assert caught.value.details["name"] == str(tmp_path / "compose.override.yml")
+    assert inventory.arrangement == "exec_only"
+    assert inventory.repository_override == "compose.override.yml"
+    assert inventory.remove == ("compose.override.yaml",)
+    assert developers.read_text() == "# developer\n"
+    assert wtenvs.read_text() == OWN_HEADER + 'name: "old"\n'  # marked, not removed here
 
 
-def test_only_the_directory_of_the_compose_file_is_searched(tmp_path: Path) -> None:
+def test_a_root_override_beside_a_nested_compose_file_is_not_counted_but_one_beside_it_is(
+    tmp_path: Path,
+) -> None:
+    """Was `test_only_the_directory_of_the_compose_file_is_searched` (FR-001)."""
     (tmp_path / "deploy").mkdir()
     (tmp_path / "compose.override.yaml").write_text("# elsewhere\n")
 
-    compose.check_override_files(tmp_path, "deploy/compose.yaml", None)
+    elsewhere = compose.override_inventory(tmp_path, "deploy/compose.yaml", None)
+
+    assert elsewhere.arrangement == "automatic"
+    assert elsewhere.repository_override is None
 
     (tmp_path / "deploy" / "compose.override.yaml").write_text("# developer\n")
-    with pytest.raises(WtenvError) as caught:
-        compose.check_override_files(tmp_path, "deploy/compose.yaml", None)
-    assert caught.value.details["name"] == str(tmp_path / "deploy" / "compose.override.yaml")
+    beside = compose.override_inventory(tmp_path, "deploy/compose.yaml", None)
+
+    assert beside.arrangement == "exec_only"
+    assert beside.repository_override == "deploy/compose.override.yaml"
 
 
-def test_an_override_recorded_beside_the_old_compose_file_does_not_cover_the_new_directory(
+def test_an_override_recorded_beside_the_old_compose_file_is_not_counted_in_the_new_directory(
     tmp_path: Path,
 ) -> None:
+    """Was `test_an_override_recorded_beside_the_old_compose_file_does_not_cover_the_new_directory`.
+
+    The file in `deploy/` is the repository's override (FR-001). The root file that the record
+    names is beside the old compose file, so it is not counted and not marked for removal here
+    (FR-007; the move itself is the path-change branch of step 11).
+    """
     (tmp_path / "deploy").mkdir()
+    (tmp_path / "compose.override.yaml").write_text(OWN_HEADER)
     (tmp_path / "deploy" / "compose.override.yaml").write_text("# developer\n")
 
-    with pytest.raises(WtenvError) as caught:
-        compose.check_override_files(tmp_path, "deploy/compose.yaml", "compose.override.yaml")
+    inventory = compose.override_inventory(tmp_path, "deploy/compose.yaml", "compose.override.yaml")
 
-    assert caught.value.code is ErrorCode.OWNERSHIP_CONFLICT
+    assert inventory.arrangement == "exec_only"
+    assert inventory.repository_override == "deploy/compose.override.yaml"
+    assert inventory.remove == ()
 
 
 # --- a recorded override that is not wtenv's is not rewritten (FR-087; T212) --------------------
@@ -344,6 +380,84 @@ def test_a_stale_override_that_keeps_the_header_passes(tmp_path: Path) -> None:
 
 def test_a_recorded_override_that_is_missing_passes(tmp_path: Path) -> None:
     compose.check_recorded_override(tmp_path, "compose.override.yaml")
+
+
+# --- the isolation file's path is accepted exactly (FR-009; plan.md S4; analysis O1) -----------
+
+ISOLATION_FILE = ".wtenv/compose.isolation.yaml"
+
+
+def test_a_missing_isolation_file_has_no_problem(tmp_path: Path) -> None:
+    assert compose.override_problem(tmp_path, ISOLATION_FILE) is None
+    compose.check_recorded_override(tmp_path, ISOLATION_FILE)
+
+
+def test_an_isolation_file_with_the_header_has_no_problem(tmp_path: Path) -> None:
+    (tmp_path / ".wtenv").mkdir()
+    (tmp_path / ISOLATION_FILE).write_text(OWN_HEADER + 'name: "old"\n')
+
+    assert compose.override_problem(tmp_path, ISOLATION_FILE) is None
+    compose.check_recorded_override(tmp_path, ISOLATION_FILE)
+
+
+@pytest.mark.parametrize("text", ["services: {}\n", "", OWN_HEADER.replace("Generated", "Written")])
+def test_an_isolation_file_without_the_header_is_a_problem_and_an_ownership_conflict(
+    tmp_path: Path, text: str
+) -> None:
+    path = tmp_path / ISOLATION_FILE
+    path.parent.mkdir()
+    path.write_bytes(text.encode())
+
+    assert compose.override_problem(tmp_path, ISOLATION_FILE) is not None
+    with pytest.raises(WtenvError) as caught:
+        compose.check_recorded_override(tmp_path, ISOLATION_FILE)
+
+    error = caught.value
+    assert error.code is ErrorCode.OWNERSHIP_CONFLICT
+    assert error.details == {"kind": "compose_override", "name": str(path)}
+    assert path.read_bytes() == text.encode()
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        ".wtenv/notes.yaml",
+        ".wtenv/sub/compose.isolation.yaml",
+        "../.wtenv/compose.isolation.yaml",
+        "compose.isolation.yaml",
+    ],
+)
+@pytest.mark.parametrize(
+    "contents", [None, "services: {}\n", OWN_HEADER], ids=["missing", "plain", "header"]
+)
+def test_any_other_path_under_or_near_wtenv_is_a_problem_whatever_it_holds(
+    tmp_path: Path, relative: str, contents: str | None
+) -> None:
+    root = tmp_path / "root"
+    (root / ".wtenv" / "sub").mkdir(parents=True)
+    path = root / relative
+    if contents is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(contents)
+
+    assert compose.override_problem(root, relative) is not None
+    with pytest.raises(WtenvError) as caught:
+        compose.check_recorded_override(root, relative)
+
+    assert caught.value.code is ErrorCode.OWNERSHIP_CONFLICT
+    assert (path.read_text() if contents is not None else None) == contents  # left alone
+
+
+@pytest.mark.parametrize("name", list(compose.OVERRIDE_FILE_NAMES))
+def test_the_four_override_names_keep_their_v0_1_1_cases(tmp_path: Path, name: str) -> None:
+    assert compose.override_problem(tmp_path, name) is None  # missing: already gone
+    (tmp_path / name).write_text("services: {}\n")
+    assert compose.override_problem(tmp_path, name) is not None  # not wtenv's
+    (tmp_path / name).write_text(OWN_HEADER)
+    assert compose.override_problem(tmp_path, name) is None
+    (tmp_path / "deploy").mkdir()
+    (tmp_path / "deploy" / name).write_text(OWN_HEADER)
+    assert compose.override_problem(tmp_path, f"deploy/{name}") is None
 
 
 # --- COMPOSE_PROJECT_NAME and COMPOSE_FILE (research.md §4, "v1 limits") -----------------------
@@ -473,3 +587,84 @@ def test_a_listing_that_fails_is_dependency_unavailable_and_not_a_free_name() ->
 
     assert raised.value.code is ErrorCode.DEPENDENCY_UNAVAILABLE
     assert raised.value.details["dependency"] == "docker"
+
+
+# --- `up` refuses every `.env` form that Compose honours (safety finding M2; research R7, E6.1) --
+
+DOT_ENV_FORMS = {
+    "colon": "{k}: elsewhere\n",
+    "colon, no space": "{k}:elsewhere\n",
+    "export, colon": "export {k}: elsewhere\n",
+    "spaces around a colon": "   {k} : elsewhere\n",
+    "CRLF line end": "{k}=elsewhere\r\n",
+    "byte-order mark": "\ufeff{k}=elsewhere\n",
+}
+
+
+@pytest.mark.parametrize("variable", ["COMPOSE_PROJECT_NAME", "COMPOSE_FILE"])
+@pytest.mark.parametrize("form", list(DOT_ENV_FORMS))
+def test_every_dot_env_form_that_compose_honours_is_unsupported(
+    tmp_path: Path, variable: str, form: str
+) -> None:
+    (tmp_path / ".env").write_bytes(DOT_ENV_FORMS[form].format(k=variable).encode("utf-8"))
+
+    error = env_override(tmp_path, {})
+
+    assert error.details["variable"] == variable
+    assert error.details["file"] == str(tmp_path / ".env")
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["# COMPOSE_PROJECT_NAME: x\n", "COMPOSE_PROJECT_NAME=\n", "COMPOSE_PROJECT_NAME:\n"],
+    ids=["comment", "empty with =", "empty with :"],
+)
+def test_a_comment_and_an_empty_value_still_pass_in_every_form(tmp_path: Path, text: str) -> None:
+    (tmp_path / ".env").write_text(text)
+
+    compose.check_environment(tmp_path, "compose.yaml", {})
+
+
+# --- a ':' in a path COMPOSE_FILE would have to carry (research R2; FR-003) ---------------------
+
+COMPOSE = Path("/w/app/compose.yaml")
+REPOSITORY_OVERRIDE = Path("/w/app/compose.override.yml")
+ISOLATION = Path("/w/app/.wtenv/compose.isolation.yaml")
+
+
+def path_separator(files: Sequence[Path]) -> WtenvError:
+    with pytest.raises(WtenvError) as caught:
+        compose.check_path_separator(files)
+    return caught.value
+
+
+def test_paths_without_a_colon_pass() -> None:
+    compose.check_path_separator([COMPOSE, REPOSITORY_OVERRIDE, ISOLATION])
+
+
+@pytest.mark.parametrize(
+    ("position", "bad"),
+    [
+        (0, Path("/w:x/app/compose.yaml")),
+        (1, Path("/w/app/compose.override:v2.yml")),
+        (2, Path("/w/app:1/.wtenv/compose.isolation.yaml")),
+    ],
+    ids=["compose file", "repository override", "isolation file"],
+)
+def test_an_absolute_path_with_a_colon_is_unsupported_and_names_the_path(
+    position: int, bad: Path
+) -> None:
+    files = [COMPOSE, REPOSITORY_OVERRIDE, ISOLATION]
+    files[position] = bad
+
+    error = path_separator(files)
+
+    assert error.code is ErrorCode.UNSUPPORTED
+    assert error.details == {"reason": "compose_path_separator", "file": str(bad)}
+    assert str(bad) in error.message
+
+
+def test_the_first_path_with_a_colon_is_the_one_named() -> None:
+    first, second = Path("/a:b/compose.yaml"), Path("/c:d/compose.override.yml")
+
+    assert path_separator([COMPOSE, first, second]).details["file"] == str(first)

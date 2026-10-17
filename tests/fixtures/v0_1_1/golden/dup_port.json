@@ -1,0 +1,42 @@
+{
+  "config": {
+    "block_size": 10,
+    "compose": {
+      "file": "compose.yaml"
+    },
+    "database": null,
+    "env_file": ".env.local",
+    "ports": [
+      "PORT"
+    ],
+    "post_up": []
+  },
+  "database": null,
+  "env_section": "# >>> wtenv managed (rewritten by `wtenv up`; do not edit) >>>\nPORT=20000\n# <<< wtenv managed <<<\n",
+  "ports": [
+    {
+      "port": 20000,
+      "variable": "PORT"
+    }
+  ],
+  "project": "wtenv-feature-x-175a0f1d",
+  "published": [
+    {
+      "host_ip": "127.0.0.1",
+      "port": 20001,
+      "protocol": "tcp",
+      "service": "web",
+      "target": 80,
+      "variable": null
+    },
+    {
+      "host_ip": "127.0.0.2",
+      "port": 20002,
+      "protocol": "tcp",
+      "service": "web",
+      "target": 80,
+      "variable": null
+    }
+  ],
+  "warnings": []
+}

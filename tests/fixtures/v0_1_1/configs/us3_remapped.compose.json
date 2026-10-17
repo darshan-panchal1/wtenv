@@ -1,0 +1,45 @@
+{
+  "name": "app",
+  "networks": {
+    "default": {
+      "ipam": {},
+      "name": "app_default"
+    }
+  },
+  "services": {
+    "backend": {
+      "command": null,
+      "entrypoint": null,
+      "image": "valkey/valkey:latest",
+      "networks": {
+        "default": null
+      },
+      "ports": [
+        {
+          "mode": "ingress",
+          "protocol": "tcp",
+          "published": "8000",
+          "target": 6379
+        }
+      ],
+      "pull_policy": "never"
+    },
+    "frontend": {
+      "command": null,
+      "entrypoint": null,
+      "image": "valkey/valkey:latest",
+      "networks": {
+        "default": null
+      },
+      "ports": [
+        {
+          "mode": "ingress",
+          "protocol": "tcp",
+          "published": "5173",
+          "target": 6379
+        }
+      ],
+      "pull_policy": "never"
+    }
+  }
+}

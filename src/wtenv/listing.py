@@ -9,6 +9,7 @@ views, so the two commands show a worktree the same way.
 import os
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Literal
 
 from wtenv import registry
 from wtenv.errors import ErrorCode, WtenvError
@@ -17,13 +18,15 @@ from wtenv.identity import current_worktree, points_to
 from wtenv.locks import registry_lock
 from wtenv.orphans import Classification, classify
 from wtenv.output import BlockView, DatabaseView, LsResult, PortView, Status, WorktreeView
+from wtenv.ports import port_variable_name
 from wtenv.registry import DatabaseRecord, PublishedPort, WorktreeEntry
 
 
 def port_views(entry: WorktreeEntry) -> list[PortView]:
     """Describe the block's ports: each variable's port, then the published ports without one.
 
-    A published port tied to a variable shows on that variable's view, with its service.
+    A published port tied to a variable shows on that variable's view, with its service. Every
+    published port has its port variable name (FR-014); a `ports` variable alone has none.
     """
     tied: dict[str, PublishedPort] = {}
     others: list[PublishedPort] = []
@@ -43,6 +46,7 @@ def port_views(entry: WorktreeEntry) -> list[PortView]:
                 target=None if match is None else match.target,
                 protocol=None if match is None else match.protocol,
                 host_ip=None if match is None else match.host_ip,
+                port_variable=None if match is None else _port_variable(match),
             )
         )
     for published in others:
@@ -54,9 +58,15 @@ def port_views(entry: WorktreeEntry) -> list[PortView]:
                 target=published.target,
                 protocol=published.protocol,
                 host_ip=published.host_ip,
+                port_variable=_port_variable(published),
             )
         )
     return views
+
+
+def _port_variable(published: PublishedPort) -> str:
+    """Return the name of the variable the rule gives a published port (FR-011, FR-014)."""
+    return port_variable_name(published.service, published.target, published.protocol)
 
 
 def database_view(worktree_path: str, record: DatabaseRecord) -> DatabaseView:
@@ -72,9 +82,26 @@ def database_view(worktree_path: str, record: DatabaseRecord) -> DatabaseView:
     )
 
 
+def compose_arrangement(
+    entry: WorktreeEntry,
+) -> tuple[Literal["automatic", "exec_only"] | None, str | None]:
+    """Return how Compose commands get the worktree's isolation, and the override it owns (FR-005).
+
+    No compose record: neither. A record with a `repository_override`: `exec_only` and that path,
+    relative to the worktree root. Any other record: `automatic` (v0.1.1's arrangement).
+    """
+    record = entry.compose
+    if record is None:
+        return None, None
+    if record.repository_override is None:
+        return "automatic", None
+    return "exec_only", record.repository_override
+
+
 def worktree_view(entry: WorktreeEntry, classification: Classification) -> WorktreeView:
     """Return the row of `ls` for a registry entry, with the status `classify` gave it."""
     block = entry.block
+    arrangement, repository_override = compose_arrangement(entry)
     return WorktreeView(
         repository=entry.repository,
         git_dir=entry.git_dir,
@@ -87,6 +114,8 @@ def worktree_view(entry: WorktreeEntry, classification: Classification) -> Workt
         databases=[database_view(entry.path, record) for record in entry.databases],
         compose_project=None if entry.compose is None else entry.compose.project,
         env_file=None if entry.env_file is None else entry.env_file.path,
+        compose_isolation=arrangement,
+        compose_repository_override=repository_override,
     )
 
 

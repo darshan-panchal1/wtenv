@@ -1,6 +1,7 @@
 """`wtenv up` interrupted at each step, then run again (data-model.md, Write order of `up`;
 FR-067, FR-069)."""
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -37,7 +38,7 @@ KILLED = 137
 # `registry.save`), it exits instead of saving the entry as `provisioned`.
 CHILD = """
 import os, sys
-import wtenv.envfile, wtenv.exclude, wtenv.registry
+import wtenv.compose, wtenv.envfile, wtenv.exclude, wtenv.registry
 
 module = {module}
 name = "{function}"
@@ -65,6 +66,20 @@ POINTS = {
 }
 
 
+# The exec-only arrangement has one step more: the isolation file is written after the exclude
+# step and before the env-file step (data-model.md, Transitions; plan.md S1).
+EXEC_ONLY_POINTS = {
+    **POINTS,
+    "after the compose step": ("wtenv.compose", "write_and_verify_override", "after"),
+}
+ISOLATION_FILE = ".wtenv/compose.isolation.yaml"
+REPOSITORY_OVERRIDE = "compose.override.yml"
+# The existing cases keep their IDs (`[after the registry step]`); the exec-only ones are new.
+ARRANGEMENT_POINTS = [pytest.param("plain", point, id=point) for point in POINTS] + [
+    pytest.param("exec_only", point, id=f"exec-only {point}") for point in EXEC_ONLY_POINTS
+]
+
+
 def interrupt_up(worktree: Path, module: str, function: str, when: str) -> None:
     """Run `wtenv up` in `worktree` in a child process that dies at the given point."""
     code = CHILD.format(module=module, function=function, when=when, killed=KILLED)
@@ -83,14 +98,39 @@ def entry_of(worktree: Path) -> WorktreeEntry:
     return load().worktrees[current_worktree(worktree).git_dir]
 
 
-@pytest.mark.parametrize("point", list(POINTS))
+def exec_only_worktree(repo: Path, add_worktree: Callable[[Path, str, str], Path]) -> Path:
+    """A worktree whose repository owns its override: a compose file with no ports, and an override."""
+    worktree = add_worktree(repo, "feature-x", "feature-x")
+    (worktree / "compose.yaml").write_text(
+        "services:\n  backend:\n    image: valkey/valkey:latest\n    pull_policy: never\n",
+        encoding="utf-8",
+    )
+    (worktree / REPOSITORY_OVERRIDE).write_text(
+        'services:\n  backend:\n    ports:\n      - "8000:6379"\n', encoding="utf-8"
+    )
+    (worktree / "wtenv.toml").write_text(
+        'ports = ["PORT"]\n\n[compose]\nfile = "compose.yaml"\n', encoding="utf-8"
+    )
+    commit_all(worktree)
+    return worktree
+
+
+@pytest.mark.parametrize(("arrangement", "point"), ARRANGEMENT_POINTS)
 def test_up_interrupted_at_any_point_leaves_only_recorded_resources_and_recovers(
+    arrangement: str,
     point: str,
+    request: pytest.FixtureRequest,
     make_repo: Callable[[str], Path],
     add_worktree: Callable[[Path, str, str], Path],
     run_wtenv: Callable[..., "subprocess.CompletedProcess[str]"],
 ) -> None:
     repo = make_repo("app")
+    if arrangement == "exec_only":
+        request.getfixturevalue("compose_docker")  # skips with a message without Docker
+        worktree = exec_only_worktree(repo, add_worktree)
+        interrupt_up(worktree, *EXEC_ONLY_POINTS[point])
+        check_exec_only_interruption(repo, worktree, point, run_wtenv)
+        return
     worktree = add_worktree(repo, "feature-x", "feature-x")
     env_file = worktree / ".env.local"
 
@@ -133,6 +173,64 @@ def test_up_interrupted_at_any_point_leaves_only_recorded_resources_and_recovers
     # The file was created by the interrupted run, which recorded that before writing.
     assert entry.env_file.created_file is True
     assert os.stat(env_file).st_mode & 0o777 == 0o600
+
+
+def check_exec_only_interruption(
+    repo: Path,
+    worktree: Path,
+    point: str,
+    run_wtenv: Callable[..., "subprocess.CompletedProcess[str]"],
+) -> None:
+    """The exec-only half of the test above: record before create (001:FR-067; plan.md S1).
+
+    Whatever step the run died after, the isolation file is on disk only when the entry records
+    it, the repository's override is byte-identical and never recorded as excluded, and the next
+    `up` finishes the job.
+    """
+    repository_override = worktree / REPOSITORY_OVERRIDE
+    override_before = hashlib.sha256(repository_override.read_bytes()).hexdigest()
+    isolation_file = worktree / ISOLATION_FILE
+    entry = entry_of(worktree)
+    assert entry.state == "incomplete"
+    assert set(block_lines(exclude_file(repo))) <= set(entry.exclude_patterns)
+    assert f"/{REPOSITORY_OVERRIDE}" not in entry.exclude_patterns
+    assert f"/{REPOSITORY_OVERRIDE}" not in block_lines(exclude_file(repo))
+    compose = entry.compose
+    # The record exists from the registry step on, before the file it names.
+    assert compose is not None
+    assert (compose.override, compose.repository_override) == (ISOLATION_FILE, REPOSITORY_OVERRIDE)
+    assert f"/{ISOLATION_FILE}" in entry.exclude_patterns
+    if isolation_file.exists():
+        assert compose.override == ISOLATION_FILE  # nothing on disk that the entry does not record
+    if point in ("after the registry step", "after the exclude step"):
+        assert not isolation_file.exists()
+        assert compose.override_state.value == "creating"
+    if point == "after the compose step":
+        assert isolation_file.read_text(encoding="utf-8").startswith("# Generated by wtenv")
+        assert compose.override_state.value == "creating"  # written, not yet saved as created
+    if point in ("after the env-file step", "before the completion step"):
+        assert isolation_file.exists()
+        assert compose.override_state.value == "created"
+    assert hashlib.sha256(repository_override.read_bytes()).hexdigest() == override_before
+    interrupted_block = entry.block
+
+    process = run_wtenv(["up", "--json"], worktree)
+
+    assert process.returncode == 0, process.stdout + process.stderr
+    entry = entry_of(worktree)
+    assert entry.state == "provisioned"
+    assert entry.block == interrupted_block
+    assert entry.compose is not None
+    assert entry.compose.override_state.value == "created"
+    assert (entry.compose.override, entry.compose.repository_override) == (
+        ISOLATION_FILE,
+        REPOSITORY_OVERRIDE,
+    )
+    assert isolation_file.read_text(encoding="utf-8").startswith("# Generated by wtenv")
+    assert block_lines(exclude_file(repo)) == sorted(["/.env.local", f"/{ISOLATION_FILE}"])
+    assert hashlib.sha256(repository_override.read_bytes()).hexdigest() == override_before
+    # Nothing was started: there is no resource of the project to remove.
+    assert not (worktree / "compose.override.yaml").exists()
 
 
 # --- the database step (T063; FR-067, FR-069; data-model.md, Resource states) -------------------

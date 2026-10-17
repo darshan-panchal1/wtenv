@@ -1,0 +1,160 @@
+{
+  "version": 1,
+  "worktrees": {
+    "/golden/repo/.git/worktrees/compose": {
+      "git_dir": "/golden/repo/.git/worktrees/compose",
+      "path": "/golden/worktrees/compose",
+      "repository": "/golden/repo/.git",
+      "state": "provisioned",
+      "block": {
+        "start": 20000,
+        "size": 10
+      },
+      "ports": [
+        {
+          "variable": "PORT",
+          "port": 20000
+        },
+        {
+          "variable": "CACHE_PORT",
+          "port": 20001
+        }
+      ],
+      "published": [
+        {
+          "service": "cache",
+          "target": 6379,
+          "protocol": "tcp",
+          "host_ip": null,
+          "port": 20001,
+          "variable": "CACHE_PORT"
+        },
+        {
+          "service": "web",
+          "target": 6379,
+          "protocol": "tcp",
+          "host_ip": null,
+          "port": 20002,
+          "variable": null
+        }
+      ],
+      "env_file": {
+        "path": ".env.local",
+        "created_file": true,
+        "added_newline": false,
+        "state": "created"
+      },
+      "databases": [],
+      "compose": {
+        "project": "wtenv-compose-e490687d",
+        "file": "compose.yaml",
+        "override": "compose.override.yaml",
+        "override_state": "created"
+      },
+      "exclude_patterns": []
+    },
+    "/golden/repo/.git/worktrees/postgres": {
+      "git_dir": "/golden/repo/.git/worktrees/postgres",
+      "path": "/golden/worktrees/postgres",
+      "repository": "/golden/repo/.git",
+      "state": "provisioned",
+      "block": {
+        "start": 20010,
+        "size": 10
+      },
+      "ports": [
+        {
+          "variable": "PORT",
+          "port": 20010
+        }
+      ],
+      "published": [],
+      "env_file": {
+        "path": ".env.local",
+        "created_file": true,
+        "added_newline": false,
+        "state": "created"
+      },
+      "databases": [
+        {
+          "kind": "postgres",
+          "name": "wtenv_postgres_2fb2f3a1",
+          "host": "localhost",
+          "port": 5432,
+          "user": "postgres",
+          "path": null,
+          "state": "created"
+        }
+      ],
+      "compose": null,
+      "exclude_patterns": []
+    },
+    "/golden/repo/.git/worktrees/sqlite": {
+      "git_dir": "/golden/repo/.git/worktrees/sqlite",
+      "path": "/golden/worktrees/sqlite",
+      "repository": "/golden/repo/.git",
+      "state": "provisioned",
+      "block": {
+        "start": 20020,
+        "size": 10
+      },
+      "ports": [
+        {
+          "variable": "PORT",
+          "port": 20020
+        }
+      ],
+      "published": [],
+      "env_file": {
+        "path": ".env.local",
+        "created_file": true,
+        "added_newline": false,
+        "state": "created"
+      },
+      "databases": [
+        {
+          "kind": "sqlite",
+          "name": null,
+          "host": null,
+          "port": null,
+          "user": null,
+          "path": ".wtenv/dev.sqlite3",
+          "state": "created"
+        }
+      ],
+      "compose": null,
+      "exclude_patterns": []
+    },
+    "/golden/repo/.git/worktrees/plain": {
+      "git_dir": "/golden/repo/.git/worktrees/plain",
+      "path": "/golden/worktrees/plain",
+      "repository": "/golden/repo/.git",
+      "state": "provisioned",
+      "block": {
+        "start": 20030,
+        "size": 10
+      },
+      "ports": [
+        {
+          "variable": "PORT",
+          "port": 20030
+        },
+        {
+          "variable": "CACHE_PORT",
+          "port": 20031
+        }
+      ],
+      "published": [],
+      "env_file": {
+        "path": ".env.local",
+        "created_file": true,
+        "added_newline": false,
+        "state": "created"
+      },
+      "databases": [],
+      "compose": null,
+      "exclude_patterns": []
+    }
+  },
+  "hooks": {}
+}

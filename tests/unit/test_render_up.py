@@ -1,5 +1,9 @@
 """The text `wtenv up` prints for people: the database line (cli.md, `wtenv up`; T066; FR-019)."""
 
+from typing import Literal
+
+import pytest
+
 from wtenv.output import (
     BlockView,
     DatabaseView,
@@ -162,3 +166,120 @@ def test_a_project_that_stays_recorded_without_an_override_shows_no_override() -
 
     assert f"  compose    {PROJECT}  (no override)" in lines
     assert f"  released   compose_override {OVERRIDE}" in lines
+
+
+# --- the port variable of each published port (cli.md, `wtenv up`; T022; FR-014) --------------
+
+
+TIED_AND_UNTIED_WITH_NAMES = [
+    PortView(port=20010, variable="PORT"),
+    PortView(
+        port=20011,
+        variable="DB_PORT",
+        service="db",
+        target=5432,
+        protocol="tcp",
+        port_variable="WTENV_PORT_DB_5432_TCP",
+    ),
+    PortView(
+        port=20012,
+        service="cache",
+        target=6379,
+        protocol="tcp",
+        port_variable="WTENV_PORT_CACHE_6379_TCP",
+    ),
+]
+
+
+def test_a_published_port_shows_its_port_variable() -> None:
+    text = render_up_text(compose_result(TIED_AND_UNTIED_WITH_NAMES))
+
+    assert "cache:6379 -> 20012 (WTENV_PORT_CACHE_6379_TCP)" in text
+
+
+def test_a_tied_port_shows_both_names() -> None:
+    text = render_up_text(compose_result(TIED_AND_UNTIED_WITH_NAMES))
+
+    assert "db:5432 -> 20011 (DB_PORT, WTENV_PORT_DB_5432_TCP)" in text
+    assert (
+        "  published  db:5432 -> 20011 (DB_PORT, WTENV_PORT_DB_5432_TCP)"
+        "  cache:6379 -> 20012 (WTENV_PORT_CACHE_6379_TCP)"
+    ) in text.splitlines()
+
+
+def test_a_port_variable_is_shown_for_a_port_that_is_not_tcp() -> None:
+    ports = [
+        PortView(
+            port=20011,
+            service="dns",
+            target=53,
+            protocol="udp",
+            port_variable="WTENV_PORT_DNS_53_UDP",
+        )
+    ]
+
+    text = render_up_text(compose_result(ports))
+
+    assert "  published  dns:53/udp -> 20011 (WTENV_PORT_DNS_53_UDP)" in text.splitlines()
+
+
+def test_up_json_carries_the_port_variable_of_each_published_port() -> None:
+    result = compose_result(TIED_AND_UNTIED_WITH_NAMES)
+
+    document = UpResult.model_validate_json(result.model_dump_json()).model_dump(mode="json")
+
+    shown = [port["port_variable"] for port in document["worktree"]["ports"]]
+    assert shown == [None, "WTENV_PORT_DB_5432_TCP", "WTENV_PORT_CACHE_6379_TCP"]
+
+
+# --- the arrangement: how Compose commands get isolation (cli.md, `wtenv up`; T062; FR-004, FR-005) ---
+
+
+def arrangement_result(
+    isolation: Literal["automatic", "exec_only"] | None, repository_override: str | None
+) -> UpResult:
+    result = compose_result(TIED_AND_UNTIED)
+    assert result.worktree is not None
+    result.worktree.compose_isolation = isolation
+    result.worktree.compose_repository_override = repository_override
+    return result
+
+
+def test_the_exec_only_arrangement_says_a_plain_docker_compose_runs_without_isolation() -> None:
+    result = arrangement_result("exec_only", "compose.override.yml")
+
+    lines = render_up_text(result).splitlines()
+
+    start = lines.index(
+        "  isolation  exec only: the repository owns compose.override.yml. Run Compose through"
+    )
+    assert lines[start + 1] == (
+        "             `wtenv exec -- docker compose ...`; "
+        "a plain `docker compose` here runs WITHOUT isolation."
+    )
+
+
+def test_the_isolation_line_names_the_repository_override_it_was_given() -> None:
+    result = arrangement_result("exec_only", "deploy/docker-compose.override.yaml")
+
+    text = render_up_text(result)
+
+    assert "the repository owns deploy/docker-compose.override.yaml. Run" in text
+
+
+def test_the_isolation_lines_come_after_the_compose_line_and_before_the_env_file() -> None:
+    lines = render_up_text(arrangement_result("exec_only", "compose.override.yml")).splitlines()
+
+    kinds = [line.split()[0] for line in lines]
+    assert kinds.index("compose") < kinds.index("isolation") < kinds.index("env")
+    assert lines[kinds.index("isolation") + 2].startswith("  env file")
+
+
+@pytest.mark.parametrize("isolation", ["automatic", None])
+def test_without_a_repository_override_the_text_has_no_isolation_line(
+    isolation: Literal["automatic", "exec_only"] | None,
+) -> None:
+    text = render_up_text(arrangement_result(isolation, None))
+
+    assert "isolation" not in text
+    assert "WITHOUT" not in text

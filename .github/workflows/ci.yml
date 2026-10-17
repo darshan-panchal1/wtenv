@@ -96,6 +96,8 @@ jobs:
         run: uv run coverage report --fail-under=80 --include='*/wtenv/orphans.py'
       - name: Env-file writing
         run: uv run coverage report --fail-under=80 --include='*/wtenv/envfile.py'
+      - name: Isolation checks of exec
+        run: uv run coverage report --fail-under=80 --include='*/wtenv/isolation.py'
 
   # The supported minimums: git 2.31 (research.md, section 6) and Docker Compose 2.24.4
   # (FR-031). Both are installed from pinned, checksummed downloads, and the whole suite
@@ -146,9 +148,24 @@ jobs:
       - name: Integration tests, none skipped but the one that needs a newer git
         run: |
           set -o pipefail
-          uv run pytest -m integration -rs | tee integration.log
+          # -rA lists the passes too, so the next step can see which tests ran on this Compose.
+          uv run pytest -m integration -rA | tee integration.log
           # `git worktree add --orphan` exists from git 2.42 (T224); nothing else may skip.
           if grep '^SKIPPED' integration.log | grep -v -- '--orphan'; then
             echo "an integration test was skipped although Docker is available" >&2
             exit 1
           fi
+      - name: The tests of spec 002 ran on Compose 2.24.4
+        run: |
+          # The test that needs `!override` and the combined files of Compose 2.24.4 must have passed.
+          if ! grep -q '^PASSED .*test_the_isolation_file_replaces_the_repository_overrides_ports_on_this_compose' integration.log; then
+            echo "the isolation-file test did not pass on Compose ${COMPOSE_VERSION}" >&2
+            exit 1
+          fi
+          for file in test_us1_repository_override.py test_us1_exec_isolation.py \
+            test_us2_port_variables.py test_us3_compose_database.py test_us3_storage_names.py; do
+            if ! grep -q "^PASSED .*${file}" integration.log; then
+              echo "no test of ${file} passed on Compose ${COMPOSE_VERSION}" >&2
+              exit 1
+            fi
+          done

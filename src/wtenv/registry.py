@@ -99,6 +99,12 @@ class ComposeRecord(RegistryModel):
     file: str  # relative to the worktree root
     override: str  # relative to the worktree root
     override_state: ResourceState
+    # The repository-owned override file the worktree uses, relative to the worktree root. Set
+    # only when `override` is the isolation file; written to the registry only when set, so a
+    # registry without it stays byte for byte what v0.1.1 wrote (FR-029). The rule "set if and
+    # only if" is checked where the record is used, not here, so a hand-edited registry is
+    # reported and not unreadable.
+    repository_override: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class HookRecord(RegistryModel):
