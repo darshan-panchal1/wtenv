@@ -13,7 +13,9 @@ import json
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+import uuid
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -26,6 +28,8 @@ from helpers import (
     commit_all,
     git,
     make_sqlite_template,
+    parse_down,
+    parse_gc,
     parse_up,
     project_resources,
     snapshot_tree,
@@ -514,3 +518,137 @@ def test_changing_the_service_makes_the_url_and_the_port_follow(
     assert again.compose_database.port == published.port
     assert database_url(worktree) != before and f":{published.port}/" in database_url(worktree)
     assert "other-pw" in database_url(worktree)
+
+
+# --- teardown of the compose-hosted database (T088; FR-023, SC-004, SC-007; scenario 5) -------------------
+# No new code: the unchanged compose teardown removes what carries the project's label and the
+# `<project>_` prefix, and nothing a compose file names.
+
+LABEL = "com.docker.compose.project"
+RESOURCE_KINDS = ("compose_container", "compose_network", "compose_volume")
+MARKER_IMAGE = "valkey/valkey:latest"  # already local; used only to write and read a marker file
+
+
+def docker(*args: str) -> "subprocess.CompletedProcess[str]":
+    return subprocess.run(["docker", *args], capture_output=True, text=True, check=False)
+
+
+def write_marker(volume: str) -> None:
+    done = docker(
+        "run", "--rm", "--entrypoint", "sh", "-v", f"{volume}:/data", MARKER_IMAGE,
+        "-c", f"echo marker-{volume} > /data/marker",
+    )  # fmt: skip
+    assert done.returncode == 0, done.stderr
+
+
+def read_marker(volume: str) -> str | None:
+    """The marker file of `volume`, or None when the volume is gone."""
+    if docker("volume", "inspect", volume).returncode != 0:
+        return None
+    done = docker(
+        "run", "--rm", "--entrypoint", "cat", "-v", f"{volume}:/data", MARKER_IMAGE, "/data/marker"
+    )
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
+@dataclass
+class Decoys:
+    """Resources the test creates with a random suffix, and removes by exactly those names."""
+
+    fixed: str  # labelled with the worktree's project, but named by a compose file
+    external: str  # no label: a volume the compose file calls `external`
+    other_project: str
+    other_volume: str
+    other_container: str
+
+    def everything(self) -> list[str]:
+        return [self.fixed, self.external, self.other_volume]
+
+
+@pytest.fixture
+def decoys() -> Iterator[Decoys]:
+    token = uuid.uuid4().hex[:10]
+    other = f"wtenv-test-other-{token}"
+    found = Decoys(
+        fixed=f"wtenv-test-fixed-{token}",
+        external=f"wtenv-test-ext-{token}",
+        other_project=other,
+        other_volume=f"{other}_data",
+        other_container=f"{other}-c1",
+    )
+    try:
+        yield found
+    finally:
+        docker("rm", "-f", found.other_container)
+        docker("volume", "rm", "-f", *found.everything())
+
+
+def plant(found: Decoys, project: str) -> None:
+    """Create the decoys; the fixed-name volume carries the worktree's own project label."""
+    for name, label in (
+        (found.fixed, project),
+        (found.external, None),
+        (found.other_volume, found.other_project),
+    ):
+        labels = [] if label is None else ["--label", f"{LABEL}={label}"]
+        assert docker("volume", "create", *labels, name).returncode == 0
+        write_marker(name)
+    created = docker(
+        "create", "--name", found.other_container, "--label", f"{LABEL}={found.other_project}",
+        "-v", f"{found.other_volume}:/data", MARKER_IMAGE,
+    )  # fmt: skip
+    assert created.returncode == 0, created.stderr
+
+
+def survivors(found: Decoys) -> dict[str, str | None]:
+    return {name: read_marker(name) for name in found.everything()}
+
+
+@pytest.mark.parametrize("mode", ["down", "gc"])
+def test_down_removes_the_database_container_and_its_project_volume_only(
+    mode: str,
+    repo: Path,
+    add_worktree: AddWorktree,
+    run_wtenv: Run,
+    compose_projects: ComposeProjects,
+    decoys: Decoys,
+    tmp_path: Path,
+) -> None:
+    worktree = make_worktree(repo, add_worktree, "teardown")
+    up(run_wtenv, worktree)
+    project = compose_projects.track(project_of(worktree))
+    started = exec_in(run_wtenv, worktree, "docker", "compose", "up", "-d")
+    assert started.returncode == 0, started.stdout + started.stderr
+    plant(decoys, project)
+    expected = {
+        ("compose_container", f"{project}-db-1"),
+        ("compose_network", f"{project}_default"),
+        ("compose_volume", f"{project}_pgdata"),
+    }
+    before = survivors(decoys)
+    assert before == {name: f"marker-{name}" for name in decoys.everything()}
+
+    dry = parse_down(run_wtenv(["down", "--dry-run", "--json"], worktree))
+
+    assert {
+        (i.kind.value, i.name) for i in dry.would_remove if i.kind.value in RESOURCE_KINDS
+    } == expected
+    assert survivors(decoys) == before and project_resources(project)["containers"]
+    assert (decoys.fixed, "fixed_name") in [(v.name, v.reason) for v in dry.kept_volumes]
+
+    if mode == "down":
+        result = parse_down(run_wtenv(["down", "--json"], worktree))
+    else:
+        git(repo, "worktree", "remove", "--force", str(worktree))
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        result = parse_gc(run_wtenv(["gc", "--json"], outside))
+
+    assert result.ok and result.failed == []
+    removed = {(i.kind.value, i.name) for i in result.removed if i.kind.value in RESOURCE_KINDS}
+    assert removed == expected
+    left = project_resources(project)
+    assert left["containers"] == [] and left["networks"] == []
+    assert survivors(decoys) == before  # every decoy survives with its contents
+    assert docker("ps", "-a", "-q", "--filter", f"name={decoys.other_container}").stdout.strip()
+    assert (decoys.fixed, "fixed_name") in [(v.name, v.reason) for v in result.kept_volumes]

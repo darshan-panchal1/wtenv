@@ -1288,7 +1288,7 @@ in CI) and a named project volume.
 
 ### 5D. Safety group — teardown of the compose-hosted database (no new code by design; plan.md S6)
 
-- [ ] T088 [US3] Add teardown tests for the compose-hosted database to `tests/integration/test_us3_compose_database.py`
+- [X] T088 [US3] Add teardown tests for the compose-hosted database to `tests/integration/test_us3_compose_database.py`
   - FR-023, SC-004, SC-007; User Story 3 scenario 5.
   - New `test_down_removes_the_database_container_and_its_project_volume_only`: planted decoys,
     each created by the test with a random suffix and removed in a `finally`: a fixed-name volume
@@ -1300,10 +1300,10 @@ in CI) and a named project volume.
   - FR-023 says teardown needs no new code. If a case fails, stop and ask. Do not add teardown code.
   - **Done when** `uv run pytest tests/integration/test_us3_compose_database.py -q` exits 0 and
     `git diff --quiet HEAD -- src/` exits 0 (no source change in this group).
-- [ ] T089 [US3] Mutation check: the `<project>_` prefix rule (reading R8) in `compose.remove_project`, in `src/wtenv/compose.py` (restored afterwards)
+- [X] T089 [US3] Mutation check: the `<project>_` prefix rule (reading R8) in `compose.remove_project`, in `src/wtenv/compose.py` (restored afterwards)
   - Remove the prefix filter; the fixed-name decoy case of T088 must fail.
   - **Done when** as in Working rules, "Mutation check".
-- [ ] T090 [US3] Group check 5D: runs G5 from the repository root; edits no file
+- [X] T090 [US3] Group check 5D: runs G5 from the repository root; edits no file
   - **Done when** G5 prints `G5 PASSED`. Commit `test(us3): prove teardown of a compose-hosted database touches only its project`.
 
 **Checkpoint**: all three stories work.
