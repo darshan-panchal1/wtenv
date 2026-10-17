@@ -1461,7 +1461,7 @@ fail.
   - **Done when** G5 prints `G5 PASSED` and `grep -rn NotImplementedError src/` prints nothing.
     Commit `chore(release): prepare 0.2.0`.
 
-- [ ] T111 Push the branch and see CI green on the final commit
+- [X] T111 Push the branch and see CI green on the final commit
   - Plan.md, Test strategy and Coverage; analysis O3. Runs after T101, so CI checks every commit
     of T095–T101. Needs the maintainer's go-ahead to push (normal push, never force).
   - **Done when** the branch is pushed and
@@ -1469,6 +1469,13 @@ fail.
     shows `conclusion` `success` with `headSha` equal to `git rev-parse HEAD`, and
     `gh run view <id> --log --job <minimums job id> | grep -c 'PASSED .*test_the_isolation_file_replaces_the_repository_overrides_ports_on_this_compose'`
     prints at least 1.
+  - **Recorded (2026-10-17, evidence from the maintainer, who pushed the branch):** branch
+    `002-compose-dev-setup` pushed, pull request #5 open against `main`. The CI run on HEAD
+    `f5a8f50474b36014c49bff2f3f51035053266cf0` has `conclusion` `success` and a `headSha` equal to
+    `git rev-parse HEAD`. All 12 checks succeeded, each for the push and for the pull request:
+    coverage (NFR-003), gates (macos and ubuntu, Python 3.11 and 3.12), and minimums (git 2.31.0,
+    Compose 2.24.4). `grep -c 'PASSED .*test_the_isolation_file_replaces_the_repository_overrides_ports_on_this_compose'`
+    on the minimums job log printed 2.
 
 ### 7C. Acceptance
 
@@ -1496,7 +1503,7 @@ fail.
     and the three baseline `diff` commands print only the allowed image lines (no container,
     volume or network line). The outputs are recorded under this task.
   - **Recorded (2026-10-17)**, wtenv 0.2.0 built from the working tree (`uv tool install --force --reinstall .` into a temporary `UV_TOOL_DIR`/`UV_TOOL_BIN_DIR`), a temporary `XDG_STATE_HOME`, standard input `/dev/null`, the template cloned with `--depth 1` (commit `b1125d8`), Docker 29.5.3. Once with the newest Compose (5.1.4) and once with Compose 2.24.4 (the darwin-aarch64 release binary, SHA-256 `e5d7dd8f0cccbbb729200cc1bf7fbf626cda79e36689ee8b4fd3d878cbbb09d9` equal to the release's `checksums.txt`; `DOCKER_CONFIG` holding only `cli-plugins/docker-compose`, `DOCKER_HOST` from `docker context inspect`; `docker compose version --short` printed `2.24.4`). Both runs printed, in this order: step 2 `wt1 exit 0` (three times), `ok: true`, `isolation: "exec_only"`, `repo: "compose.override.yml"`, `db: service db, target 5432, port_variable WTENV_PORT_DB_5432_TCP`, `ports: 9`, three `override intact, status clean`, three identical `sha256` lines, three different `WTENV_PORT_BACKEND_8000_TCP` values (20002, 20012, 20022), plain `docker compose config` `wt1` / `8000` and through `wtenv exec` `wtenv-wt1-<id8>` / `20002`; step 3 three `stack exit 0` and `SC-001 ports: 15 distinct, all in block`, three `<project>_app-db-data` volumes, three `override intact`; step 4 three `ok` lines, then `wt1 answers`, `wt2 refused`, `wt3 answers`; step 5 `wt1 sees ['wt1']`, `wt2 sees ['wt2']`, `wt3 sees ['wt3']` and `0` changed lines in `git status`; step 6 `3`, `exit 125`, `command not run`, `{"code": "isolation_unavailable", "reason": "compose_env_override"}`; step 7 `["wtenv-wt1-<id8>_app-db-data"]`, `[]`, three `exit 0`, `0`, three `override intact, isolation file gone`, and the three baseline `diff` commands printed nothing. The 10-run loop in a scratch repository without an override of its own printed `3` and `compose_isolation` `"automatic"`. The only differences left in `docker images` are the template's `adminer`, `axllent/mailpit`, `postgres:18` and `backend:latest`. The driver is not committed; two deviations from quickstart.md: the clone is shallow, and step 7 stops the three `watch` clients by the process ids the run recorded, not with `pkill -f`, so another `docker compose watch` of the maintainer is never touched.
-- [ ] T103 Final check
+- [X] T103 Final check
   - G5 once more; the coverage rows of `.github/workflows/ci.yml` locally
     (`uv run pytest --cov=wtenv` then each `coverage report --fail-under=80 --include=…`,
     including `isolation.py`); `CLAUDE.md` still matches the constitution; every task in this file
@@ -1515,6 +1522,9 @@ fail.
     `git worktree add` in the integration tests, Docker tests skip when Docker is missing). What
     stays open: `grep -c '^- \[ \] T'` prints 2, because T111 (push, and green CI on the final
     commit) is the maintainer's, and this task closes after it.
+  - **Closed (2026-10-17):** T111 is checked (CI evidence recorded under it, on HEAD
+    `f5a8f50474b36014c49bff2f3f51035053266cf0`), and `grep -c '^- \[ \] T'` now prints 0. No file
+    other than this one changed after the partial result above.
 
 ---
 
